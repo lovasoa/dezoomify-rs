@@ -1,2 +1,4 @@
 /target
 **/*.rs.bk
+dezoomify-rs.iml
+.idea/
