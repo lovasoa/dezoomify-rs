@@ -4,6 +4,8 @@ use std::io::BufRead;
 use std::str::FromStr;
 
 use structopt::StructOpt;
+use std::convert::TryFrom;
+use std::convert::TryInto;
 
 #[derive(StructOpt, Debug)]
 struct Conf {
@@ -41,12 +43,12 @@ struct Vec2d {
     y: u32,
 }
 
-struct Tile {
-    image: image::DynamicImage,
+struct TileReference {
+    url: String,
     position: Vec2d,
 }
 
-impl FromStr for Tile {
+impl FromStr for TileReference {
     type Err = ZoomError;
 
     fn from_str(tile_str: &str) -> Result<Self, Self::Err> {
@@ -56,10 +58,8 @@ impl FromStr for Tile {
         if let (Some(x), Some(y), Some(url)) = (parts.next(), parts.next(), parts.next()) {
             let x: u32 = x.parse().map_err(|_| make_error())?;
             let y: u32 = y.parse().map_err(|_| make_error())?;
-            let mut buf: Vec<u8> = vec![];
-            reqwest::get(url)?.copy_to(&mut buf)?;
-            Ok(Tile {
-                image: image::load_from_memory(&buf)?,
+            Ok(TileReference {
+                url: String::from(url),
                 position: Vec2d { x, y },
             })
         } else {
@@ -69,8 +69,34 @@ impl FromStr for Tile {
 }
 
 
+struct Tile {
+    image: image::DynamicImage,
+    position: Vec2d,
+}
+
+impl TryFrom<TileReference> for Tile {
+    type Error = ZoomError;
+
+    fn try_from(tile_reference: TileReference) -> Result<Self, Self::Error> {
+        let mut buf: Vec<u8> = vec![];
+        reqwest::get(&tile_reference.url)?.copy_to(&mut buf)?;
+        Ok(Tile {
+            image: image::load_from_memory(&buf)?,
+            position: tile_reference.position,
+        })
+    }
+}
+
+impl FromStr for Tile {
+    type Err = ZoomError;
+
+    fn from_str(tile_str: &str) -> Result<Self, Self::Err> {
+        TileReference::from_str(tile_str)?.try_into()
+    }
+}
+
+
 fn dezoomify<T: Iterator<Item=Tile>>(conf: Conf, tiles: T) -> Result<(), ZoomError> {
-    // Create a new ImgBuf with width: imgx and height: imgy
     let mut canvas = Canvas::new();
     for tile in tiles { canvas.add_tile(&tile)?; }
     canvas.image.save(conf.outfile)?;
