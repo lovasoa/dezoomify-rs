@@ -7,6 +7,8 @@ use structopt::StructOpt;
 use std::convert::TryFrom;
 use std::convert::TryInto;
 
+mod tile_logic;
+
 #[derive(StructOpt, Debug)]
 struct Conf {
     outfile: std::path::PathBuf,
