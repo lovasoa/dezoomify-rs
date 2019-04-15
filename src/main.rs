@@ -8,6 +8,7 @@ use std::convert::TryFrom;
 use std::convert::TryInto;
 
 mod tile_logic;
+mod variable;
 
 #[derive(StructOpt, Debug)]
 struct Conf {
