@@ -38,7 +38,6 @@ impl<'a> Iterator for VariableIterator<'a> {
     type Item = i64;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let next = self.current + self.variable.step;
         if self.variable.in_range(self.current) {
             let current = self.current;
             self.current += self.variable.step;
@@ -59,7 +58,7 @@ impl<'a> IntoIterator for &'a Variable {
 }
 
 custom_error! {pub BadVariableError
-    BadName{name: String} = "invalid name: '{name}'",
+    BadName{name: String} = "invalid variable name: '{name}'",
     TooManyValues{name:String, steps:i64}= "the range of values for {name} is too wide: {steps} steps",
     Infinite{name:String}= "the range of values for {name} is incorrect",
 }
@@ -73,15 +72,15 @@ mod tests {
         let var = Variable {
             name: "hello".to_string(),
             from: 3,
-            to: -2,
-            step: -1,
+            to: -3,
+            step: -3,
         };
-        assert_eq!(var.into_iter().collect::<Vec<i64>>(), vec![3, 2, 1, 0, -1, -2]);
+        assert_eq!(var.into_iter().collect::<Vec<i64>>(), vec![3, 0, -3]);
     }
 
     #[test]
-    fn variable_validity_check() {
+    fn variable_validity_check_name() {
         let check = Variable { name: "hello world".to_string(), from: 0, to: 1, step: 1 }.check();
-        assert!(check.is_err())
+        assert!(check.unwrap_err().to_string().contains("invalid variable name"))
     }
 }
