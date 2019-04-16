@@ -7,7 +7,7 @@ use structopt::StructOpt;
 use std::convert::TryFrom;
 use std::convert::TryInto;
 
-mod tile_logic;
+mod tile_set;
 mod variable;
 
 #[derive(StructOpt, Debug)]
@@ -41,11 +41,13 @@ fn print_err<T, E: std::fmt::Display>(r: Result<T, E>) -> Result<T, E> {
     }
 }
 
+#[derive(Debug, PartialEq)]
 struct Vec2d {
     x: u32,
     y: u32,
 }
 
+#[derive(Debug, PartialEq)]
 struct TileReference {
     url: String,
     position: Vec2d,
@@ -70,7 +72,6 @@ impl FromStr for TileReference {
         }
     }
 }
-
 
 struct Tile {
     image: image::DynamicImage,
@@ -147,4 +148,5 @@ custom_error! {
                                  on a canvas of size {width}x{height}",
     MalformedTileStr{tile_str: String} = "Malformed tile string: '{tile_str}' \
                                           expected 'x y url'",
+    TemplateError{source: tile_set::UrlTemplateError} = "Templating error: {source}"
 }

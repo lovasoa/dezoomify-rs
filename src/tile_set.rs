@@ -3,23 +3,32 @@ use std::str::FromStr;
 use regex::Regex;
 use lazy_static::lazy_static;
 use std::convert::TryInto;
-use evalexpr::Context;
-use crate::variable::{Variable, BadVariableError};
+use crate::variable::{Variables, BadVariableError};
+use crate::{Vec2d, TileReference};
 
 struct TileSet {
-    variables: Vec<Variable>,
+    variables: Variables,
     url_template: UrlTemplate,
     x_template: IntTemplate,
     y_template: IntTemplate,
 }
 
-impl TileSet {
-    fn iter_contexts() -> impl Iterator<Item=Result<evalexpr::HashMapContext, UrlTemplateError>> {
-        let mut ctx = evalexpr::HashMapContext::new();
-        std::iter::from_fn(move || {
-            ctx.set_value("x".into(), 0.into());
-            None
-        })
+
+impl<'a> IntoIterator for &'a TileSet {
+    type Item = Result<TileReference, UrlTemplateError>;
+    type IntoIter = Box<dyn Iterator<Item=Self::Item> + 'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Box::new(self.variables.iter_contexts().map(move |ctx| {
+            let ctx = ctx?;
+            Ok(TileReference {
+                url: self.url_template.eval(&ctx)?,
+                position: Vec2d {
+                    x: self.x_template.eval(&ctx)?,
+                    y: self.y_template.eval(&ctx)?,
+                },
+            })
+        }))
     }
 }
 
@@ -93,7 +102,7 @@ impl UrlPart {
     }
 }
 
-custom_error! {UrlTemplateError
+custom_error! {pub UrlTemplateError
     BadExpression{expr:String, source:evalexpr::EvalexprError} = "'{expr}' is not a valid expression: {source}",
     EvalError{source:evalexpr::EvalexprError} = "{source}",
     NumberError{source:std::num::TryFromIntError} = "Number too large: {source}",
@@ -102,9 +111,11 @@ custom_error! {UrlTemplateError
 
 #[cfg(test)]
 mod tests {
-    use crate::tile_logic::{UrlTemplateError, UrlTemplate};
+    use crate::tile_set::{UrlTemplateError, UrlTemplate, TileSet, IntTemplate};
     use std::str::FromStr;
     use evalexpr::Context;
+    use crate::variable::{Variable, Variables};
+    use crate::TileReference;
 
     #[test]
     fn url_template_evaluation() -> Result<(), UrlTemplateError> {
@@ -113,6 +124,28 @@ mod tests {
         ctx.set_value("x".into(), 0.into());
         ctx.set_value("y".into(), 10.into());
         assert_eq!(tpl.eval(&ctx)?, "a 0 b 10 c");
+        Ok(())
+    }
+
+    #[test]
+    fn tile_iteration() -> Result<(), crate::ZoomError> {
+        let ts = TileSet {
+            variables: Variables::new(vec![
+                Variable::new("x", 0, 1, 1),
+                Variable::new("y", 0, 1, 1),
+            ]),
+            url_template: UrlTemplate::from_str("{{x}}/{{y}}")?,
+            x_template: IntTemplate::from_str("x")?,
+            y_template: IntTemplate::from_str("y")?,
+        };
+        let tile_refs: Vec<_> = ts.into_iter().collect::<Result<_, _>>()?;
+        let expected: Vec<_> = vec![
+            "0 0 0/0",
+            "0 1 0/1",
+            "1 0 1/0",
+            "1 1 1/1",
+        ].into_iter().map(TileReference::from_str).collect::<Result<_, _>>()?;
+        assert_eq!(expected, tile_refs);
         Ok(())
     }
 }
