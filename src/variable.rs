@@ -3,8 +3,9 @@ use regex::Regex;
 use lazy_static::lazy_static;
 use evalexpr::HashMapContext;
 use itertools::Itertools;
+use serde::Deserialize;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Variable {
     name: String,
     from: i64,
@@ -68,7 +69,7 @@ impl<'a> IntoIterator for &'a Variable {
     }
 }
 
-
+#[derive(Deserialize, Debug)]
 pub struct Variables(Vec<Variable>);
 
 impl Variables {

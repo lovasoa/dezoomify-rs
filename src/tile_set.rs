@@ -5,7 +5,10 @@ use lazy_static::lazy_static;
 use std::convert::TryInto;
 use crate::variable::{Variables, BadVariableError};
 use crate::{Vec2d, TileReference};
+use serde::{Deserialize, Deserializer, de};
 
+
+#[derive(Deserialize, Debug)]
 struct TileSet {
     variables: Variables,
     url_template: UrlTemplate,
@@ -32,6 +35,7 @@ impl<'a> IntoIterator for &'a TileSet {
     }
 }
 
+#[derive(Debug)]
 struct IntTemplate(evalexpr::Node);
 
 impl IntTemplate {
@@ -51,6 +55,16 @@ impl FromStr for IntTemplate {
     }
 }
 
+impl<'de> Deserialize<'de> for IntTemplate {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where D: Deserializer<'de>
+    {
+        let s = String::deserialize(deserializer)?;
+        FromStr::from_str(&s).map_err(de::Error::custom)
+    }
+}
+
+#[derive(Debug)]
 struct UrlTemplate {
     parts: Vec<UrlPart>
 }
@@ -82,6 +96,16 @@ impl FromStr for UrlTemplate {
     }
 }
 
+impl<'de> Deserialize<'de> for UrlTemplate {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where D: Deserializer<'de>
+    {
+        let s = String::deserialize(deserializer)?;
+        FromStr::from_str(&s).map_err(de::Error::custom)
+    }
+}
+
+#[derive(Debug)]
 enum UrlPart {
     Constant(String),
     Expression(IntTemplate),
@@ -147,5 +171,32 @@ mod tests {
         ].into_iter().map(TileReference::from_str).collect::<Result<_, _>>()?;
         assert_eq!(expected, tile_refs);
         Ok(())
+    }
+
+    #[test]
+    fn tileset_from_yaml() {
+        let serialized = r#"
+variables:
+    - name: x
+      from: 0
+      to: 1
+      step: 1
+    - name: y
+      from: 0
+      to: 1
+      step: 1
+url_template: "{{x}}/{{y}}"
+x_template: x
+y_template: y
+        "#;
+        let ts: TileSet = serde_yaml::from_str(serialized).unwrap();
+        let tile_refs: Vec<_> = ts.into_iter().collect::<Result<_, _>>().unwrap();
+        let expected: Vec<_> = vec![
+            "0 0 0/0",
+            "0 1 0/1",
+            "1 0 1/0",
+            "1 1 1/1",
+        ].into_iter().map(TileReference::from_str).collect::<Result<_, _>>().unwrap();
+        assert_eq!(expected, tile_refs);
     }
 }
