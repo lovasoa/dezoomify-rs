@@ -13,8 +13,9 @@ pub struct Variable {
 }
 
 impl Variable {
-    pub fn new(name: &str, from: i64, to: i64, step: i64) -> Variable {
-        Variable { name: name.to_string(), from, to, step }
+    pub fn new(name: &str, from: i64, to: i64, step: i64) -> Result<Variable, BadVariableError> {
+        let var = Variable { name: name.to_string(), from, to, step };
+        var.check().and(Ok(var))
     }
     fn check(&self) -> Result<(), BadVariableError> {
         lazy_static! {
@@ -122,8 +123,8 @@ mod tests {
     #[test]
     fn iter_contexts() {
         let vars = Variables(vec![
-            Variable::new("x", 0, 1, 1),
-            Variable::new("y", 8, 9, 1),
+            Variable::new("x", 0, 1, 1).unwrap(),
+            Variable::new("y", 8, 9, 1).unwrap(),
         ]);
         let ctxs: Vec<_> = vars.iter_contexts().collect::<Result<_, _>>().unwrap();
         assert_eq!(4, ctxs.len());

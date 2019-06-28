@@ -131,8 +131,8 @@ mod tests {
     fn tile_iteration() -> Result<(), crate::ZoomError> {
         let ts = TileSet {
             variables: Variables::new(vec![
-                Variable::new("x", 0, 1, 1),
-                Variable::new("y", 0, 1, 1),
+                Variable::new("x", 0, 1, 1).unwrap(),
+                Variable::new("y", 0, 1, 1).unwrap(),
             ]),
             url_template: UrlTemplate::from_str("{{x}}/{{y}}")?,
             x_template: IntTemplate::from_str("x")?,

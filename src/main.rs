@@ -108,7 +108,10 @@ fn dezoomify<T: Iterator<Item=Tile>>(conf: Conf, tiles: T) -> Result<(), ZoomErr
 }
 
 struct Canvas {
-    image: ImageBuffer<image::Rgba<u8>, Vec<<image::Rgba<u8> as image::Pixel>::Subpixel>>
+    image: ImageBuffer<
+        image::Rgba<u8>,
+        Vec<<image::Rgba<u8> as image::Pixel>::Subpixel>
+    >
 }
 
 impl Canvas {
