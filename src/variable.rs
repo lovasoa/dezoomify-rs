@@ -10,8 +10,11 @@ pub struct Variable {
     name: String,
     from: i64,
     to: i64,
+    #[serde(default = "default_step")]
     step: i64,
 }
+
+fn default_step() -> i64 { 1 }
 
 impl Variable {
     pub fn new(name: &str, from: i64, to: i64, step: i64) -> Result<Variable, BadVariableError> {

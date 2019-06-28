@@ -12,10 +12,17 @@ use serde::{Deserialize, Deserializer, de};
 struct TileSet {
     variables: Variables,
     url_template: UrlTemplate,
+
+    #[serde(default = "default_x_template")]
     x_template: IntTemplate,
+    #[serde(default = "default_y_template")]
     y_template: IntTemplate,
 }
 
+
+fn default_x_template() -> IntTemplate { "x".parse().unwrap() }
+
+fn default_y_template() -> IntTemplate { "y".parse().unwrap() }
 
 impl<'a> IntoIterator for &'a TileSet {
     type Item = Result<TileReference, UrlTemplateError>;
@@ -180,14 +187,10 @@ variables:
     - name: x
       from: 0
       to: 1
-      step: 1
     - name: y
       from: 0
       to: 1
-      step: 1
 url_template: "{{x}}/{{y}}"
-x_template: x
-y_template: y
         "#;
         let ts: TileSet = serde_yaml::from_str(serialized).unwrap();
         let tile_refs: Vec<_> = ts.into_iter().collect::<Result<_, _>>().unwrap();
