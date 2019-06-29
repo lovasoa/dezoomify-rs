@@ -1,11 +1,11 @@
 use custom_error::custom_error;
 use image::{GenericImage, GenericImageView, ImageBuffer};
-use std::io::BufRead;
 use std::str::FromStr;
 
 use structopt::StructOpt;
 use std::convert::TryFrom;
 use std::convert::TryInto;
+use std::fs::File;
 
 mod tile_set;
 mod variable;
@@ -13,18 +13,12 @@ mod variable;
 #[derive(StructOpt, Debug)]
 struct Conf {
     outfile: std::path::PathBuf,
+    infile: std::path::PathBuf,
 }
 
 fn main() {
-    let stdin = std::io::stdin();
-    let tiles = stdin.lock()
-        .lines()
-        .flatten()
-        .map(|s| Tile::from_str(&s))
-        .flat_map(print_err);
-
-    let conf = Conf::from_args();
-    if let Err(err) = dezoomify(conf, tiles) {
+    let conf: Conf = Conf::from_args();
+    if let Err(err) = dezoomify(conf) {
         eprintln!("{}", err);
         std::process::exit(1);
     } else {
@@ -48,7 +42,7 @@ struct Vec2d {
 }
 
 #[derive(Debug, PartialEq)]
-struct TileReference {
+pub struct TileReference {
     url: String,
     position: Vec2d,
 }
@@ -100,9 +94,15 @@ impl FromStr for Tile {
 }
 
 
-fn dezoomify<T: Iterator<Item=Tile>>(conf: Conf, tiles: T) -> Result<(), ZoomError> {
+fn dezoomify(conf: Conf) -> Result<(), ZoomError> {
+    let file = File::open(&conf.infile)?;
+    let ts: tile_set::TileSet = serde_yaml::from_reader(file)?;
+
     let mut canvas = Canvas::new();
-    for tile in tiles { canvas.add_tile(&tile)?; }
+    for tileref_result in ts.into_iter() {
+        let tile: Tile = tileref_result?.try_into()?;
+        canvas.add_tile(&tile)?;
+    }
     canvas.image.save(conf.outfile)?;
     Ok(())
 }
@@ -141,10 +141,11 @@ impl Canvas {
 }
 
 custom_error! {
-    ZoomError
+    pub ZoomError
     Networking{source: reqwest::Error} = "network error: {source}",
     Image{source: image::ImageError} = "invalid image error: {source}",
     Io{source: std::io::Error} = "Input/Output error: {source}",
+    Yaml{source: serde_yaml::Error} = "Invalid YAML configuration file: {source}",
     TileCopyError{x:u32, y:u32, twidth:u32, theight:u32, width:u32, height:u32} =
                                 "Unable to copy a {twidth}x{theight} tile \
                                  at position {x},{y} \

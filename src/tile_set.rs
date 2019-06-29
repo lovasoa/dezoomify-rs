@@ -9,7 +9,7 @@ use serde::{Deserialize, Deserializer, de};
 
 
 #[derive(Deserialize, Debug)]
-struct TileSet {
+pub struct TileSet {
     variables: Variables,
     url_template: UrlTemplate,
 
