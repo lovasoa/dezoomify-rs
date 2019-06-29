@@ -100,10 +100,12 @@ fn dezoomify(conf: Conf) -> Result<(), ZoomError> {
 
     let mut canvas = Canvas::new();
     for tile_ref_result in ts.into_iter() {
-        println!("downloading {:?}", tile_ref_result);
-        let tile: Tile = tile_ref_result?.try_into()?;
+        let tile_ref: TileReference = tile_ref_result?;
+        println!("downloading tile at x={} y={}", tile_ref.position.x, tile_ref.position.y);
+        let tile: Tile = tile_ref.try_into()?;
         canvas.add_tile(&tile)?;
     }
+    println!("Saving the image to");
     canvas.image.save(conf.outfile)?;
     Ok(())
 }

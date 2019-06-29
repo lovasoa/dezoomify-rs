@@ -1,0 +1,17 @@
+# The url of individual tiles, where {{ expressions }} will be evaluated using the variables below
+url_template: "http://www.asmilano.it/fast/iipsrv.fcgi?deepzoom=/opt/divenire/files/./tifs/05/63/563559.tif_files/13/{{x/tile_size}}_{{y/tile_size}}.jpg"
+
+variables:
+  # The x position of tiles goes from 0 to the image width with an increment of the tile width
+  - name: x
+    from: 0
+    to: 7520 # Image width
+    step: 256 # Tile width
+
+  - name: y
+    from: 0
+    to: 6000 # Image height
+    step: 256 # Tile height
+
+  - name: tile_size
+    value: 256
