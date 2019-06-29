@@ -12,8 +12,8 @@ mod variable;
 
 #[derive(StructOpt, Debug)]
 struct Conf {
-    outfile: std::path::PathBuf,
     infile: std::path::PathBuf,
+    outfile: std::path::PathBuf,
 }
 
 fn main() {
@@ -99,8 +99,9 @@ fn dezoomify(conf: Conf) -> Result<(), ZoomError> {
     let ts: tile_set::TileSet = serde_yaml::from_reader(file)?;
 
     let mut canvas = Canvas::new();
-    for tileref_result in ts.into_iter() {
-        let tile: Tile = tileref_result?.try_into()?;
+    for tile_ref_result in ts.into_iter() {
+        println!("downloading {:?}", tile_ref_result);
+        let tile: Tile = tile_ref_result?.try_into()?;
         canvas.add_tile(&tile)?;
     }
     canvas.image.save(conf.outfile)?;
@@ -130,7 +131,9 @@ impl Canvas {
         let new_height = height.max(y + theight);
 
         if (new_width, new_height) != (width, height) {
-            self.image = image::ImageBuffer::new(new_width, new_height);
+            let mut new_image = image::ImageBuffer::new(new_width, new_height);
+            new_image.copy_from(&self.image, 0, 0);
+            self.image = new_image;
         }
 
         let success = self.image.copy_from(&tile.image, tile.position.x, tile.position.y);
