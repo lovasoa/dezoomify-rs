@@ -1,5 +1,7 @@
 # dezoomify-rs
 
+[![Build Status](https://travis-ci.org/lovasoa/dezoomify-rs.svg?branch=master)](https://travis-ci.org/lovasoa/dezoomify-rs)
+
 This is a prototype for a new version of
 [dezoomify](https://github.com/lovasoa/dezoomify)
 written in [rust](https://www.rust-lang.org/).
