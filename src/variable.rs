@@ -4,6 +4,7 @@ use lazy_static::lazy_static;
 use evalexpr::HashMapContext;
 use itertools::Itertools;
 use serde::Deserialize;
+use crate::variable::VarOrConst::Var;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Variable {
@@ -17,10 +18,6 @@ pub struct Variable {
 fn default_step() -> i64 { 1 }
 
 impl Variable {
-    pub fn new(name: &str, from: i64, to: i64, step: i64) -> Result<Variable, BadVariableError> {
-        let var = Variable { name: name.to_string(), from, to, step };
-        var.check().and(Ok(var))
-    }
     fn check(&self) -> Result<(), BadVariableError> {
         lazy_static! {
             static ref RE: Regex = Regex::new(r"^\w+$").unwrap();
@@ -37,25 +34,33 @@ impl Variable {
         Ok(())
     }
 
-    fn in_range(&self, i: i64) -> bool {
-        (self.from <= i && i <= self.to) || (self.to <= i && i <= self.from)
-    }
-
     pub fn name(&self) -> &str {
         &self.name
     }
 }
 
 #[derive(Clone)]
-pub struct VariableIterator<'a> { variable: &'a Variable, current: i64 }
+pub struct VariableIterator {
+    from: i64,
+    to: i64,
+    step: i64,
+    current: i64,
+}
 
-impl<'a> Iterator for VariableIterator<'a> {
+impl<'a> VariableIterator {
+    fn in_range(&'a self) -> bool {
+        let i = self.current;
+        (self.from <= i && i <= self.to) || (self.to <= i && i <= self.from)
+    }
+}
+
+impl Iterator for VariableIterator {
     type Item = i64;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.variable.in_range(self.current) {
+        if self.in_range() {
             let current = self.current;
-            self.current += self.variable.step;
+            self.current += self.step;
             Some(current)
         } else {
             None
@@ -65,25 +70,71 @@ impl<'a> Iterator for VariableIterator<'a> {
 
 impl<'a> IntoIterator for &'a Variable {
     type Item = i64;
-    type IntoIter = VariableIterator<'a>;
+    type IntoIter = VariableIterator;
 
     fn into_iter(self) -> Self::IntoIter {
-        VariableIterator { variable: self, current: self.from }
+        VariableIterator { from: self.from, to: self.to, step: self.step, current: self.from }
+    }
+}
+
+/// Represents a Variable that can have only a single value
+#[derive(Deserialize, Clone, Debug)]
+pub struct Constant {
+    name: String,
+    value: i64,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum VarOrConst { Var(Variable), Const(Constant) }
+
+impl VarOrConst {
+    pub fn var(name: &str, from: i64, to: i64, step: i64) -> Result<VarOrConst, BadVariableError> {
+        let var = Variable { name: name.to_string(), from, to, step };
+        var.check().and(Ok(Var(var)))
+    }
+    pub fn name(&self) -> &str {
+        match self {
+            VarOrConst::Var(v) => { v.name() }
+            VarOrConst::Const(c) => { &c.name }
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a VarOrConst {
+    type Item = i64;
+    type IntoIter = VariableIterator;
+
+    fn into_iter(self) -> Self::IntoIter {
+        match self {
+            VarOrConst::Var(v) => {
+                v.into_iter()
+            }
+            VarOrConst::Const(c) => {
+                VariableIterator {
+                    from: c.value,
+                    to: c.value,
+                    current: c.value,
+                    step: 1,
+                }
+            }
+        }
     }
 }
 
 #[derive(Deserialize, Debug)]
-pub struct Variables(Vec<Variable>);
+pub struct Variables(Vec<VarOrConst>);
 
 impl Variables {
-    pub fn new(vars: Vec<Variable>) -> Variables {
+    pub fn new(vars: Vec<VarOrConst>) -> Variables {
         Variables(vars)
     }
     pub fn iter_contexts<'a>(&'a self)
                              -> impl Iterator<Item=Result<HashMapContext, BadVariableError>> + 'a {
-        self.0.iter().map(|variable| {
-            variable.into_iter().map(move |val| (variable.name(), val))
-        }).multi_cartesian_product().map(|var_values| {
+        self.0.iter()
+            .map(|variable| {
+                variable.into_iter().map(move |val| (variable.name(), val))
+            }).multi_cartesian_product().map(|var_values| {
             // Iterator on all the combination of values for the variables
             use evalexpr::Context;
             let mut ctx = HashMapContext::new();
@@ -104,8 +155,9 @@ custom_error! {pub BadVariableError
 
 #[cfg(test)]
 mod tests {
-    use super::{Variable, BadVariableError, Variables};
+    use super::{Variable, Variables};
     use evalexpr::Context;
+    use crate::variable::VarOrConst;
 
     #[test]
     fn variable_iteration() {
@@ -127,8 +179,8 @@ mod tests {
     #[test]
     fn iter_contexts() {
         let vars = Variables(vec![
-            Variable::new("x", 0, 1, 1).unwrap(),
-            Variable::new("y", 8, 9, 1).unwrap(),
+            VarOrConst::var("x", 0, 1, 1).unwrap(),
+            VarOrConst::var("y", 8, 9, 1).unwrap(),
         ]);
         let ctxs: Vec<_> = vars.iter_contexts().collect::<Result<_, _>>().unwrap();
         assert_eq!(4, ctxs.len());

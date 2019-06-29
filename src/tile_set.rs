@@ -145,7 +145,7 @@ mod tests {
     use crate::tile_set::{UrlTemplateError, UrlTemplate, TileSet, IntTemplate};
     use std::str::FromStr;
     use evalexpr::Context;
-    use crate::variable::{Variable, Variables};
+    use crate::variable::{Variables, VarOrConst};
     use crate::TileReference;
 
     #[test]
@@ -162,8 +162,8 @@ mod tests {
     fn tile_iteration() -> Result<(), crate::ZoomError> {
         let ts = TileSet {
             variables: Variables::new(vec![
-                Variable::new("x", 0, 1, 1).unwrap(),
-                Variable::new("y", 0, 1, 1).unwrap(),
+                VarOrConst::var("x", 0, 1, 1).unwrap(),
+                VarOrConst::var("y", 0, 1, 1).unwrap(),
             ]),
             url_template: UrlTemplate::from_str("{{x}}/{{y}}")?,
             x_template: IntTemplate::from_str("x")?,
@@ -190,15 +190,17 @@ variables:
     - name: y
       from: 0
       to: 1
-url_template: "{{x}}/{{y}}"
+    - name: tile_size
+      value: 100
+url_template: "{{x*tile_size}}/{{y*tile_size}}"
         "#;
         let ts: TileSet = serde_yaml::from_str(serialized).unwrap();
         let tile_refs: Vec<_> = ts.into_iter().collect::<Result<_, _>>().unwrap();
         let expected: Vec<_> = vec![
             "0 0 0/0",
-            "0 1 0/1",
-            "1 0 1/0",
-            "1 1 1/1",
+            "0 1 0/100",
+            "1 0 100/0",
+            "1 1 100/100",
         ].into_iter().map(TileReference::from_str).collect::<Result<_, _>>().unwrap();
         assert_eq!(expected, tile_refs);
     }
