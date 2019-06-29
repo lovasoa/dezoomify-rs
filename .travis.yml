@@ -1,0 +1,75 @@
+# Based on the "trust" template v0.1.2
+# https://github.com/japaric/trust/tree/v0.1.2
+
+dist: trusty
+language: rust
+services: docker
+sudo: required
+
+# TODO Rust builds on stable by default, this can be
+# overridden on a case by case basis down below.
+
+env:
+  global:
+    # TODO Update this to match the name of your project.
+    - CRATE_NAME=dezoomify-rs
+
+matrix:
+  # TODO These are all the build jobs. Adjust as necessary. Comment out what you
+  # don't need
+  include:
+    # Linux
+    - env: TARGET=aarch64-unknown-linux-gnu
+
+    # OSX
+    - env: TARGET=x86_64-apple-darwin
+      os: osx
+
+    # Windows
+    - env: TARGET=x86_64-pc-windows-gnu
+
+before_install:
+  - set -e
+  - rustup self update
+
+install:
+  - sh ci/install.sh
+  - source ~/.cargo/env || true
+
+script:
+  - bash ci/script.sh
+
+after_script: set +e
+
+before_deploy:
+  - sh ci/before_deploy.sh
+
+deploy:
+  api_key:
+    secure: "WTq6WyDlGqp2zcrqmAYucAq8vUT5vx/Xr/leuqOTj4v42Yus7CQ+M2YzZTNOoDZhtZrTi3r4WZJu36MaEEBEjDflo/NlYDJmqHjS2klAMOxwBC2bIVLGG9g2XW+6S00XgicaNGFHVFAjBqUHqgYWMK8C2d2BCpdTQO9pnC8yPXUZmlte5SJGh6WrSHJJUYWZOsBXxZMXEjaR3ipNTVXHki2rK67ZFvnJbwCN4Vk/dGPvyxnQUWLkm2SktXzdMMdu0Qzxa6dftDmhk6QkyztqoK5P19BmaDQYh4JUV3YPWV6T4lR1kBXntiFKeD9MR4iVdM/qNawT5DsD+nStsZa48DpoPq7S/ynGRaqFo3zCW/9iBB46ALndFTDE3GvAkKUyclYQC02Fv1VMM5+3prrbIVtG1ZpbtKmExWHY7bJHKCMP6scPtRV6PZ4H3iX1qhfXGQFcXY1kqgQ7bl0zWGjmnT95y9AUPVhY/YSNZf0ixv5BLliWpvzBt4cICCxzIEA2fWc0K7hui5sFKeK8eGli89A5IJTozdlDFlOqJifwnR1FBAZruA/QcnMY9McdotJsv8x6S6+0JtnokkNbQHdWdE45zJPlmvk+SpW2sknO0SKbhmbvKp36qbzGesjIbCM352+4OF3dudbGQsWvYJC8lK74u6SHbRMxwIc+16Sdydc="
+  file_glob: true
+  file: $CRATE_NAME-$TRAVIS_TAG-$TARGET.*
+  on:
+    # TODO Here you can pick which targets will generate binary releases
+    # In this example, there are some targets that are tested using the stable
+    # and nightly channels. This condition makes sure there is only one release
+    # for such targets and that's generated using the stable channel
+    condition: $TRAVIS_RUST_VERSION = stable
+    tags: true
+  provider: releases
+  skip_cleanup: true
+
+cache: cargo
+before_cache:
+  # Travis can't cache files that are not readable by "others"
+  - chmod -R a+r $HOME/.cargo
+
+branches:
+  only:
+    # release tags
+    - /^v\d+\.\d+\.\d+.*$/
+    - master
+
+notifications:
+  email:
+    on_success: never
