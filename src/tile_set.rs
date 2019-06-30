@@ -152,8 +152,8 @@ mod tests {
     fn url_template_evaluation() -> Result<(), UrlTemplateError> {
         let tpl = UrlTemplate::from_str("a {{x}} b {{y}} c")?;
         let mut ctx = evalexpr::HashMapContext::new();
-        ctx.set_value("x".into(), 0.into());
-        ctx.set_value("y".into(), 10.into());
+        ctx.set_value("x".into(), 0.into())?;
+        ctx.set_value("y".into(), 10.into())?;
         assert_eq!(tpl.eval(&ctx)?, "a 0 b 10 c");
         Ok(())
     }
