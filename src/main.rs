@@ -26,15 +26,6 @@ fn main() {
     }
 }
 
-fn print_err<T, E: std::fmt::Display>(r: Result<T, E>) -> Result<T, E> {
-    if let Err(e) = r {
-        eprintln!("{}", e);
-        Err(e)
-    } else {
-        r
-    }
-}
-
 #[derive(Debug, PartialEq)]
 struct Vec2d {
     x: u32,
