@@ -27,6 +27,7 @@ matrix:
 
     # Windows
     - env: TARGET=x86_64-pc-windows-gnu
+      os: windows
 
 before_install:
   - set -e
