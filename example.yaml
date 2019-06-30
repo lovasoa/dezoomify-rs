@@ -15,3 +15,6 @@ variables:
 
   - name: tile_size
     value: 256
+
+headers:
+  Referer: http://www.asmilano.it/

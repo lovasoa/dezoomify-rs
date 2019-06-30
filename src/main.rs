@@ -1,25 +1,37 @@
-use custom_error::custom_error;
-use image::{GenericImage, GenericImageView, ImageBuffer};
 use std::str::FromStr;
-
-use structopt::StructOpt;
-use std::convert::TryFrom;
-use std::convert::TryInto;
 use std::fs::File;
-use rayon::prelude::*;
 use std::ops::Add;
+use std::collections::HashMap;
+
+use rayon::prelude::*;
+use structopt::StructOpt;
+use image::{GenericImage, GenericImageView, ImageBuffer};
+use custom_error::custom_error;
+use serde::Deserialize;
+use reqwest::header;
 
 mod tile_set;
 mod variable;
 
 #[derive(StructOpt, Debug)]
-struct Conf {
+struct Arguments {
     infile: std::path::PathBuf,
     outfile: std::path::PathBuf,
 }
 
+#[derive(Deserialize, Debug)]
+struct Configuration {
+    #[serde(flatten)]
+    tile_set: tile_set::TileSet,
+    headers: HashMap<String, String>,
+}
+
+fn default_headers() -> HashMap<String, String> {
+    serde_yaml::from_str(include_str!("default_headers.yaml")).unwrap()
+}
+
 fn main() {
-    let conf: Conf = Conf::from_args();
+    let conf: Arguments = Arguments::from_args();
     if let Err(err) = dezoomify(conf) {
         eprintln!("{}", err);
         std::process::exit(1);
@@ -90,14 +102,10 @@ struct Tile {
 impl Tile {
     fn size(&self) -> Vec2d { image_size(&self.image) }
     fn bottom_right(&self) -> Vec2d { self.size() + self.position }
-}
-
-impl TryFrom<TileReference> for Tile {
-    type Error = ZoomError;
-
-    fn try_from(tile_reference: TileReference) -> Result<Self, Self::Error> {
+    fn download(tile_reference: TileReference, client: &reqwest::Client)
+                -> Result<Tile, ZoomError> {
         let mut buf: Vec<u8> = vec![];
-        reqwest::get(&tile_reference.url)?.copy_to(&mut buf)?;
+        client.get(&tile_reference.url).send()?.copy_to(&mut buf)?;
         Ok(Tile {
             image: image::load_from_memory(&buf)?,
             position: tile_reference.position,
@@ -105,24 +113,22 @@ impl TryFrom<TileReference> for Tile {
     }
 }
 
-impl FromStr for Tile {
-    type Err = ZoomError;
 
-    fn from_str(tile_str: &str) -> Result<Self, Self::Err> {
-        TileReference::from_str(tile_str)?.try_into()
-    }
-}
-
-
-fn dezoomify(conf: Conf) -> Result<(), ZoomError> {
-    let file = File::open(&conf.infile)?;
-    let ts: tile_set::TileSet = serde_yaml::from_reader(file)?;
+fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
+    let file = File::open(&args.infile)?;
+    let Configuration {
+        tile_set,
+        headers
+    } = serde_yaml::from_reader(file)?;
 
     println!("Listing all tiles...");
-    let tile_refs: Vec<TileReference> = ts.into_iter().collect::<Result<_, _>>()?;
+    let tile_refs: Vec<TileReference> = tile_set.into_iter().collect::<Result<_, _>>()?;
+
     println!("Downloading tiles...");
+    let http_client = client(headers)?;
+
     let tile_results: Vec<Result<Tile, _>> = tile_refs.into_par_iter()
-        .map(Tile::try_from)
+        .map(|tile_ref| Tile::download(tile_ref, &http_client))
         .collect();
 
     let size = tile_results.iter().flatten()
@@ -142,9 +148,18 @@ fn dezoomify(conf: Conf) -> Result<(), ZoomError> {
             }
         }
     }
-    println!("Saving the image to {}...", conf.outfile.to_str().unwrap_or("(unrepresentable path)"));
-    canvas.image.save(conf.outfile)?;
+    println!("Saving the image to {}...", args.outfile.to_str().unwrap_or("(unrepresentable path)"));
+    canvas.image.save(args.outfile)?;
     Ok(())
+}
+
+fn client(headers: HashMap<String, String>) -> Result<reqwest::Client, ZoomError> {
+    let header_map: Result<header::HeaderMap, ZoomError> = default_headers().iter()
+        .chain(headers.iter())
+        .map(|(name, value)| Ok((name.parse()?, value.parse()?)))
+        .collect();
+    let client = reqwest::Client::builder().default_headers(header_map?).build()?;
+    Ok(client)
 }
 
 struct Canvas {
@@ -183,5 +198,7 @@ custom_error! {
                                  on a canvas of size {width}x{height}",
     MalformedTileStr{tile_str: String} = "Malformed tile string: '{tile_str}' \
                                           expected 'x y url'",
-    TemplateError{source: tile_set::UrlTemplateError} = "Templating error: {source}"
+    TemplateError{source: tile_set::UrlTemplateError} = "Templating error: {source}",
+    InvalidHeaderName{source: header::InvalidHeaderName} = "Invalid header name: {source}",
+    InvalidHeaderValue{source: header::InvalidHeaderValue} = "Invalid header value: {source}",
 }
