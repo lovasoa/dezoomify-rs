@@ -1,6 +1,6 @@
 [package]
 name = "dezoomify-rs"
-version = "0.3.2"
+version = "0.4.0"
 authors = ["Ophir LOJKINE <ophir.lojkine@auto-grid.com>"]
 edition = "2018"
 

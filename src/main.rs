@@ -7,6 +7,7 @@ use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::fs::File;
 use rayon::prelude::*;
+use std::ops::Add;
 
 mod tile_set;
 mod variable;
@@ -27,10 +28,27 @@ fn main() {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Default, Clone, Copy)]
 struct Vec2d {
     x: u32,
     y: u32,
+}
+
+impl Vec2d {
+    fn max(self, other: Vec2d) -> Vec2d {
+        Vec2d {
+            x: self.x.max(other.x),
+            y: self.y.max(other.y),
+        }
+    }
+}
+
+impl Add<Vec2d> for Vec2d {
+    type Output = Vec2d;
+
+    fn add(self, rhs: Vec2d) -> Self::Output {
+        Vec2d { x: self.x + rhs.x, y: self.y + rhs.y }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -59,9 +77,19 @@ impl FromStr for TileReference {
     }
 }
 
+fn image_size<T: GenericImageView>(image: &T) -> Vec2d {
+    let (x, y) = image.dimensions();
+    Vec2d { x, y }
+}
+
 struct Tile {
     image: image::DynamicImage,
     position: Vec2d,
+}
+
+impl Tile {
+    fn size(&self) -> Vec2d { image_size(&self.image) }
+    fn bottom_right(&self) -> Vec2d { self.size() + self.position }
 }
 
 impl TryFrom<TileReference> for Tile {
@@ -90,12 +118,19 @@ fn dezoomify(conf: Conf) -> Result<(), ZoomError> {
     let file = File::open(&conf.infile)?;
     let ts: tile_set::TileSet = serde_yaml::from_reader(file)?;
 
-    let mut canvas = Canvas::new();
-
     println!("Listing all tiles...");
     let tile_refs: Vec<TileReference> = ts.into_iter().collect::<Result<_, _>>()?;
     println!("Downloading tiles...");
-    let tile_results: Vec<Result<Tile, _>> = tile_refs.into_par_iter().map(Tile::try_from).collect();
+    let tile_results: Vec<Result<Tile, _>> = tile_refs.into_par_iter()
+        .map(Tile::try_from)
+        .collect();
+
+    let size = tile_results.iter().flatten()
+        .map(Tile::bottom_right)
+        .fold(Vec2d::default(), Vec2d::max);
+
+    let mut canvas = Canvas::new(size);
+
     for tile in tile_results {
         match tile {
             Ok(tile) => {
@@ -120,31 +155,20 @@ struct Canvas {
 }
 
 impl Canvas {
-    fn new() -> Self {
-        Canvas { image: image::ImageBuffer::new(0, 0) }
+    fn new(size: Vec2d) -> Self {
+        Canvas { image: image::ImageBuffer::new(size.x, size.y) }
     }
     fn add_tile(self: &mut Self, tile: &Tile) -> Result<(), ZoomError> {
-        let x = tile.position.x;
-        let y = tile.position.y;
-        let twidth = tile.image.width();
-        let theight = tile.image.height();
-        let width = self.image.width();
-        let height = self.image.height();
+        let Vec2d { x, y } = tile.position;
 
-        let new_width = width.max(x + twidth);
-        let new_height = height.max(y + theight);
-
-        if (new_width, new_height) != (width, height) {
-            let mut new_image = image::ImageBuffer::new(new_width, new_height);
-            new_image.copy_from(&self.image, 0, 0);
-            self.image = new_image;
-        }
-
-        let success = self.image.copy_from(&tile.image, tile.position.x, tile.position.y);
+        let success = self.image.copy_from(&tile.image, x, y);
         if success { Ok(()) } else {
+            let Vec2d { x: twidth, y: theight } = tile.size();
+            let Vec2d { x: width, y: height } = self.size();
             Err(ZoomError::TileCopyError { x, y, twidth, theight, width, height })
         }
     }
+    fn size(&self) -> Vec2d { image_size(&self.image) }
 }
 
 custom_error! {
