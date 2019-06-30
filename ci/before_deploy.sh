@@ -18,9 +18,10 @@ main() {
 
     test -f Cargo.lock || cargo generate-lockfile
 
-    cross rustc --bin dezoomify-rs --target $TARGET --release -- -C lto
+    cross rustc --bin dezoomify-rs --target $TARGET --release --verbose -- -C lto
 
-    cp target/$TARGET/release/dezoomify-rs $stage/
+    ls -lah target
+    cp target/*/release/dezoomify-rs $stage/
 
     cd $stage
     tar czf $src/$CRATE_NAME-$TRAVIS_TAG-$TARGET.tar.gz *
