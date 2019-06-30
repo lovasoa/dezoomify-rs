@@ -6,6 +6,7 @@ use structopt::StructOpt;
 use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::fs::File;
+use rayon::prelude::*;
 
 mod tile_set;
 mod variable;
@@ -90,13 +91,23 @@ fn dezoomify(conf: Conf) -> Result<(), ZoomError> {
     let ts: tile_set::TileSet = serde_yaml::from_reader(file)?;
 
     let mut canvas = Canvas::new();
-    for tile_ref_result in ts.into_iter() {
-        let tile_ref: TileReference = tile_ref_result?;
-        println!("downloading tile at x={} y={}", tile_ref.position.x, tile_ref.position.y);
-        let tile: Tile = tile_ref.try_into()?;
-        canvas.add_tile(&tile)?;
+
+    println!("Listing all tiles...");
+    let tile_refs: Vec<TileReference> = ts.into_iter().collect::<Result<_, _>>()?;
+    println!("Downloading tiles...");
+    let tile_results: Vec<Result<Tile, _>> = tile_refs.into_par_iter().map(Tile::try_from).collect();
+    for tile in tile_results {
+        match tile {
+            Ok(tile) => {
+                println!("Adding tile at x={} y={}", tile.position.x, tile.position.y);
+                canvas.add_tile(&tile)?;
+            }
+            Err(e) => {
+                eprintln!("An issue occurred with a tile: {}", e);
+            }
+        }
     }
-    println!("Saving the image to");
+    println!("Saving the image to {}...", conf.outfile.to_str().unwrap_or("(unrepresentable path)"));
     canvas.image.save(conf.outfile)?;
     Ok(())
 }
