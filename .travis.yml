@@ -26,8 +26,8 @@ matrix:
       os: osx
 
     # Windows
-    - env: TARGET=x86_64-pc-windows-gnu
-      os: windows
+    # Disabling tests on windows until japaric/trust#110 is fixed
+    - env: TARGET=x86_64-pc-windows-gnu DISABLE_TESTS=true
 
 before_install:
   - set -e
