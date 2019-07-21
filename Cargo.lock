@@ -268,7 +268,7 @@ dependencies = [
 
 [[package]]
 name = "dezoomify-rs"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "custom_error 1.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "evalexpr 4.1.0 (registry+https://github.com/rust-lang/crates.io-index)",

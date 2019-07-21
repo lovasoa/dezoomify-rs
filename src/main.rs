@@ -1,14 +1,15 @@
-use std::str::FromStr;
+use std::collections::HashMap;
 use std::fs::File;
 use std::ops::Add;
-use std::collections::HashMap;
+use std::str::FromStr;
 
-use rayon::prelude::*;
-use structopt::StructOpt;
 use image::{GenericImage, GenericImageView, ImageBuffer};
-use custom_error::custom_error;
-use serde::Deserialize;
+use rayon::prelude::*;
 use reqwest::header;
+use serde::Deserialize;
+use structopt::StructOpt;
+
+use custom_error::custom_error;
 
 mod tile_set;
 mod variable;
@@ -23,6 +24,7 @@ struct Arguments {
 struct Configuration {
     #[serde(flatten)]
     tile_set: tile_set::TileSet,
+    #[serde(default = "default_headers")]
     headers: HashMap<String, String>,
 }
 
@@ -201,4 +203,25 @@ custom_error! {
     TemplateError{source: tile_set::UrlTemplateError} = "Templating error: {source}",
     InvalidHeaderName{source: header::InvalidHeaderName} = "Invalid header name: {source}",
     InvalidHeaderValue{source: header::InvalidHeaderValue} = "Invalid header value: {source}",
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs::File;
+
+    use crate::Configuration;
+
+    #[test]
+    fn test_can_parse_example() {
+        let yaml_path = format!("{}/example.yaml", env!("CARGO_MANIFEST_DIR"));
+        let file = File::open(yaml_path).unwrap();
+        let conf: Configuration = serde_yaml::from_reader(file).unwrap();
+        assert!(conf.headers.contains_key("Referer"), "There should be a referer in the example");
+    }
+
+    #[test]
+    fn test_has_default_user_agent() {
+        let conf: Configuration = serde_yaml::from_str("url_template: test.com\nvariables: []").unwrap();
+        assert!(conf.headers.contains_key("User-Agent"), "There should be a user agent");
+    }
 }
