@@ -26,6 +26,9 @@ file that describes your image.
 
  1. In a text editor, create an empty plaintext file, and save it under `tiles.yaml`.
  1. Paste the following template to the file, changing it to match your own image.
+ 
+If you need help creating the file, you can follow the [step-by-step tutorial](https://github.com/lovasoa/dezoomify-rs/wiki/Usage-example), that follows a concrete example.
+
 ```yaml
 # The url of individual tiles, where {{ expressions }} will be evaluated using the variables below
 url_template: "http://www.asmilano.it/fast/iipsrv.fcgi?deepzoom=/opt/divenire/files/./tifs/05/63/563559.tif_files/13/{{x/tile_size}}_{{y/tile_size}}.jpg"
