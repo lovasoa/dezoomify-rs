@@ -3,6 +3,7 @@ name = "dezoomify-rs"
 version = "0.6.1"
 authors = ["Ophir LOJKINE <ophir.lojkine@auto-grid.com>"]
 edition = "2018"
+license-file = "LICENSE"
 
 [dependencies]
 image = "0.21"
