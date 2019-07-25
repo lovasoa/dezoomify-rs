@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::ops::Add;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use image::{GenericImage, GenericImageView, ImageBuffer};
 use rayon::prelude::*;
@@ -126,12 +127,19 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     println!("Listing all tiles...");
     let tile_refs: Vec<TileReference> = tile_set.into_iter().collect::<Result<_, _>>()?;
 
-    println!("Downloading tiles...");
     let http_client = client(headers)?;
 
+    let total_tiles = tile_refs.len();
+    let done_tiles = AtomicUsize::new(0);
+
     let tile_results: Vec<Result<Tile, _>> = tile_refs.into_par_iter()
-        .map(|tile_ref| Tile::download(tile_ref, &http_client))
-        .collect();
+        .map(|tile_ref| {
+            let done = 1 + done_tiles.fetch_add(1, Ordering::SeqCst);
+            print!("\rDownloading tiles: {}/{}", done, total_tiles);
+            Tile::download(tile_ref, &http_client)
+        }).collect();
+
+    println!("\nDownloaded all tiles");
 
     let size = tile_results.iter().flatten()
         .map(Tile::bottom_right)
@@ -142,7 +150,7 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     for tile in tile_results {
         match tile {
             Ok(tile) => {
-                println!("Adding tile at x={} y={}", tile.position.x, tile.position.y);
+                print!("Adding tile at x={:04} y={:04}\r", tile.position.x, tile.position.y);
                 canvas.add_tile(&tile)?;
             }
             Err(e) => {
@@ -150,7 +158,7 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
             }
         }
     }
-    println!("Saving the image to {}...", args.outfile.to_str().unwrap_or("(unrepresentable path)"));
+    println!("\nSaving the image to {}...", args.outfile.to_str().unwrap_or("(unrepresentable path)"));
     canvas.image.save(args.outfile)?;
     Ok(())
 }
