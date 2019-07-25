@@ -1,9 +1,11 @@
-use custom_error::custom_error;
-use regex::Regex;
-use lazy_static::lazy_static;
 use evalexpr::HashMapContext;
 use itertools::Itertools;
+use regex::Regex;
 use serde::Deserialize;
+
+use custom_error::custom_error;
+use lazy_static::lazy_static;
+
 use crate::variable::VarOrConst::Var;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -126,6 +128,7 @@ impl<'a> IntoIterator for &'a VarOrConst {
 pub struct Variables(Vec<VarOrConst>);
 
 impl Variables {
+    #[cfg(test)]
     pub fn new(vars: Vec<VarOrConst>) -> Variables {
         Variables(vars)
     }
@@ -155,9 +158,11 @@ custom_error! {pub BadVariableError
 
 #[cfg(test)]
 mod tests {
-    use super::{Variable, Variables};
     use evalexpr::Context;
+
     use crate::variable::VarOrConst;
+
+    use super::{Variable, Variables};
 
     #[test]
     fn variable_iteration() {
