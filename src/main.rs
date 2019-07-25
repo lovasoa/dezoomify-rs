@@ -134,7 +134,7 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
 
     let tile_results: Vec<Result<Tile, _>> = tile_refs.into_par_iter()
         .map(|tile_ref| {
-            let done = 1 + done_tiles.fetch_add(1, Ordering::SeqCst);
+            let done = 1 + done_tiles.fetch_add(1, Ordering::Relaxed);
             print!("\rDownloading tiles: {}/{}", done, total_tiles);
             Tile::download(tile_ref, &http_client)
         }).collect();
