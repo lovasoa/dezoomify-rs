@@ -1,8 +1,14 @@
+use custom_error::custom_error;
+
 use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 
 pub const ALL_DEZOOMERS: &'static [Dezoomer] = &[
     crate::custom_yaml::DEZOOMER
 ];
+
+custom_error! {
+pub GenericDezoomerError {uri:String} = "Tried all dezoomers, but none can open '{uri}'"
+}
 
 fn dezoom_fn(data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
     let mut errs = Vec::new();
@@ -25,7 +31,12 @@ fn dezoom_fn(data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
                     _ => None
                 }
             });
-        Err(need_data.unwrap_or(DezoomerError::WrongDezoomer))
+        if let Some(need_data) = need_data {
+            Err(need_data)
+        } else {
+            let uri = data.uri.clone();
+            Err(DezoomerError::wrap(GenericDezoomerError { uri }))
+        }
     } else {
         Ok(successes)
     }

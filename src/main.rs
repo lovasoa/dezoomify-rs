@@ -101,11 +101,13 @@ impl Tile {
 
 fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
     if uri.starts_with("http://") || uri.starts_with("https://") {
+        println!("Downloading {}...", uri);
         let mut contents = Vec::new();
         let mut response = http.get(uri).send()?.error_for_status()?;
         response.read_to_end(&mut contents)?;
         Ok(contents)
     } else {
+        println!("Opening {}...", uri);
         Ok(fs::read(uri)?)
     }
 }

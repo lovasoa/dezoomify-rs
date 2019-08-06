@@ -29,17 +29,12 @@ impl DezoomerInput {
 }
 
 custom_error! {pub DezoomerError
-    NeedsData{uri: String}        = "Need to download data from {uri}",
-    WrongDezoomer                 = "This dezoomer cannot handle this URI",
-    Other{source: Box<dyn Error>} = "Unable to create the dezoomer: {source}"
+    NeedsData{uri: String}           = "Need to download data from {uri}",
+    WrongDezoomer{name:&'static str} = "The '{name}' dezoomer cannot handle this URI",
+    Other{source: Box<dyn Error>}    = "Unable to create the dezoomer: {source}"
 }
 
 impl DezoomerError {
-    pub fn assert(c: bool) -> Result<(), DezoomerError> {
-        if c { Ok(()) } else {
-            Err(DezoomerError::WrongDezoomer)
-        }
-    }
     pub fn wrap<E: Error + 'static>(err: E) -> DezoomerError {
         DezoomerError::Other { source: err.into() }
     }
@@ -58,6 +53,12 @@ pub struct Dezoomer {
 impl Dezoomer {
     pub fn tile_refs(&self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
         (self.dezoom_fn)(data)
+    }
+
+    pub fn assert(&self, c: bool) -> Result<(), DezoomerError> {
+        if c { Ok(()) } else {
+            Err(DezoomerError::WrongDezoomer { name: self.name })
+        }
     }
 }
 

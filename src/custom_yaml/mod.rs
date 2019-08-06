@@ -31,7 +31,7 @@ impl TileProvider for CustomYamlTiles {
 }
 
 pub fn dezoom_fn(data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
-    DezoomerError::assert(data.uri.ends_with("tiles.yaml"))?;
+    DEZOOMER.assert(data.uri.ends_with("tiles.yaml"))?;
     let contents = data.with_contents()?.contents;
     let dezoomer: CustomYamlTiles = serde_yaml::from_slice(&contents)
         .map_err(DezoomerError::wrap)?;
