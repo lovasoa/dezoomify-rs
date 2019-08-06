@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs;
 use std::io::Read;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -93,7 +94,7 @@ fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
         response.read_to_end(&mut contents)?;
         Ok(contents)
     } else {
-        Ok(std::fs::read(uri)?)
+        Ok(fs::read(uri)?)
     }
 }
 
@@ -181,8 +182,10 @@ fn dezoomify(args: Arguments)
         canvas.add_tile(&tile)?;
     }
 
-    println!("\nSaving the image to {}...", args.outfile.to_str().unwrap_or("(unrepresentable path)"));
-    canvas.image.save(args.outfile)?;
+    println!("\nSaving the image...");
+    canvas.image.save(&args.outfile)?;
+    println!("Saved the image to {}",
+             fs::canonicalize(&args.outfile).unwrap_or(args.outfile).to_string_lossy());
     Ok(())
 }
 
