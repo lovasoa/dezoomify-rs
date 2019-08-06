@@ -6,7 +6,7 @@ use serde::Deserialize;
 use custom_error::custom_error;
 use lazy_static::lazy_static;
 
-use crate::variable::VarOrConst::Var;
+use self::VarOrConst::Var;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Variable {
@@ -160,7 +160,7 @@ custom_error! {pub BadVariableError
 mod tests {
     use evalexpr::Context;
 
-    use crate::variable::VarOrConst;
+    use super::super::variable::VarOrConst;
 
     use super::{Variable, Variables};
 

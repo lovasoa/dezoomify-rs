@@ -21,7 +21,7 @@ First of all, you have to download the application.
  1. Extract the binary from the compressed file.
 
 ### Create a `tiles.yaml` file
-You have to generate a [`tiles.yaml`](./example.yaml)
+You have to generate a [`tiles.yaml`](tiles.yaml)
 file that describes your image.
 
  1. In a text editor, create an empty plaintext file, and save it under `tiles.yaml`.

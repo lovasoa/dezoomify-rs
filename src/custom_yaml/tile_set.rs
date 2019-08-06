@@ -3,7 +3,7 @@ use std::str::FromStr;
 use regex::Regex;
 use lazy_static::lazy_static;
 use std::convert::TryInto;
-use crate::variable::{Variables, BadVariableError};
+use super::variable::{Variables, BadVariableError};
 use crate::{Vec2d, TileReference};
 use serde::{Deserialize, Deserializer, de};
 
@@ -142,10 +142,10 @@ custom_error! {pub UrlTemplateError
 
 #[cfg(test)]
 mod tests {
-    use crate::tile_set::{UrlTemplateError, UrlTemplate, TileSet, IntTemplate};
+    use super::super::tile_set::{UrlTemplateError, UrlTemplate, TileSet, IntTemplate};
     use std::str::FromStr;
     use evalexpr::Context;
-    use crate::variable::{Variables, VarOrConst};
+    use super::super::variable::{Variables, VarOrConst};
     use crate::TileReference;
 
     #[test]

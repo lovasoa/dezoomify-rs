@@ -254,7 +254,7 @@ dependencies = [
 
 [[package]]
 name = "custom_error"
-version = "1.6.0"
+version = "1.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -270,7 +270,7 @@ dependencies = [
 name = "dezoomify-rs"
 version = "0.6.1"
 dependencies = [
- "custom_error 1.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "custom_error 1.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "evalexpr 4.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "image 0.21.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "itertools 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1674,7 +1674,7 @@ dependencies = [
 "checksum crossbeam-epoch 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)" = "04c9e3102cc2d69cd681412141b390abd55a362afc1540965dad0ad4d34280b4"
 "checksum crossbeam-queue 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "7c979cd6cfe72335896575c6b5688da489e420d36a27a0b9eb0c73db574b4a4b"
 "checksum crossbeam-utils 0.6.5 (registry+https://github.com/rust-lang/crates.io-index)" = "f8306fcef4a7b563b76b7dd949ca48f52bc1141aa067d2ea09565f3e2652aa5c"
-"checksum custom_error 1.6.0 (registry+https://github.com/rust-lang/crates.io-index)" = "c189751d60563837f66c7ebf87f6a6e4c101e937d54521e88620e89c79b8a2ad"
+"checksum custom_error 1.7.1 (registry+https://github.com/rust-lang/crates.io-index)" = "93a0fc65739ae998afc8d68e64bdac2efd1bc4ffa1a0703d171ef2defae3792f"
 "checksum deflate 0.7.19 (registry+https://github.com/rust-lang/crates.io-index)" = "8a6abb26e16e8d419b5c78662aa9f82857c2386a073da266840e474d5055ec86"
 "checksum dtoa 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)" = "6d301140eb411af13d3115f9a562c85cc6b541ade9dfa314132244aaee7489dd"
 "checksum either 1.5.2 (registry+https://github.com/rust-lang/crates.io-index)" = "5527cfe0d098f36e3f8839852688e63c8fff1c90b2b405aef730615f9a7bcf7b"

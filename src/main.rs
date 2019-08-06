@@ -1,24 +1,43 @@
 use std::collections::HashMap;
-use std::fs::File;
-use std::ops::Add;
-use std::str::FromStr;
+use std::io::Read;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use image::{GenericImage, GenericImageView, ImageBuffer};
 use rayon::prelude::*;
-use reqwest::header;
+use reqwest::{Client, header};
 use serde::Deserialize;
 use structopt::StructOpt;
 
 use custom_error::custom_error;
+use custom_yaml::tile_set;
+use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
+use dezoomer::TileReference;
+use dezoomer::Vec2d;
 
-mod tile_set;
-mod variable;
+use crate::dezoomer::ZoomLevel;
+
+mod custom_yaml;
+mod dezoomer;
+mod generic;
 
 #[derive(StructOpt, Debug)]
 struct Arguments {
-    infile: std::path::PathBuf,
+    input_uri: String,
+    #[structopt(default_value = "dezoomified.jpg")]
     outfile: std::path::PathBuf,
+    dezoomer: Option<String>
+}
+
+impl Arguments {
+    fn find_dezoomer(&self) -> Result<&Dezoomer, ZoomError> {
+        if let Some(name) = &self.dezoomer {
+            generic::ALL_DEZOOMERS.into_iter()
+                .find(|&d| d.name == name)
+                .ok_or_else(|| ZoomError::NoSuchDezoomer { name: name.clone() })
+        } else {
+            Ok(&generic::DEZOOMER)
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -29,7 +48,7 @@ struct Configuration {
     headers: HashMap<String, String>,
 }
 
-fn default_headers() -> HashMap<String, String> {
+pub fn default_headers() -> HashMap<String, String> {
     serde_yaml::from_str(include_str!("default_headers.yaml")).unwrap()
 }
 
@@ -40,55 +59,6 @@ fn main() {
         std::process::exit(1);
     } else {
         println!("Done!");
-    }
-}
-
-#[derive(Debug, PartialEq, Default, Clone, Copy)]
-struct Vec2d {
-    x: u32,
-    y: u32,
-}
-
-impl Vec2d {
-    fn max(self, other: Vec2d) -> Vec2d {
-        Vec2d {
-            x: self.x.max(other.x),
-            y: self.y.max(other.y),
-        }
-    }
-}
-
-impl Add<Vec2d> for Vec2d {
-    type Output = Vec2d;
-
-    fn add(self, rhs: Vec2d) -> Self::Output {
-        Vec2d { x: self.x + rhs.x, y: self.y + rhs.y }
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub struct TileReference {
-    url: String,
-    position: Vec2d,
-}
-
-impl FromStr for TileReference {
-    type Err = ZoomError;
-
-    fn from_str(tile_str: &str) -> Result<Self, Self::Err> {
-        let mut parts = tile_str.split(" ");
-        let make_error = || ZoomError::MalformedTileStr { tile_str: String::from(tile_str) };
-
-        if let (Some(x), Some(y), Some(url)) = (parts.next(), parts.next(), parts.next()) {
-            let x: u32 = x.parse().map_err(|_| make_error())?;
-            let y: u32 = y.parse().map_err(|_| make_error())?;
-            Ok(TileReference {
-                url: String::from(url),
-                position: Vec2d { x, y },
-            })
-        } else {
-            Err(make_error())
-        }
     }
 }
 
@@ -116,27 +86,86 @@ impl Tile {
     }
 }
 
+fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
+    if uri.starts_with("http://") || uri.starts_with("https://") {
+        let mut contents = Vec::new();
+        let mut response = http.get(uri).send()?.error_for_status()?;
+        response.read_to_end(&mut contents)?;
+        Ok(contents)
+    } else {
+        Ok(std::fs::read(uri)?)
+    }
+}
 
-fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
-    let file = File::open(&args.infile)?;
-    let Configuration {
-        tile_set,
-        headers
-    } = serde_yaml::from_reader(file)?;
+fn list_tiles(dezoomer: &Dezoomer, http: &Client, uri: &str)
+              -> Result<ZoomLevels, ZoomError> {
+    let mut i = DezoomerInput {
+        uri: String::from(uri),
+        contents: None,
+    };
+    loop {
+        match dezoomer.tile_refs(&i) {
+            Ok(levels) => { return Ok(levels) }
+            Err(DezoomerError::NeedsData { uri }) => {
+                let contents = fetch_uri(&uri, http)?;
+                i.uri = uri;
+                i.contents = Some(contents);
+            }
+            Err(e) => { return Err(e.into()) }
+        }
+    }
+}
 
-    println!("Listing all tiles...");
-    let tile_refs: Vec<TileReference> = tile_set.into_iter().collect::<Result<_, _>>()?;
+fn choose_level(levels: &ZoomLevels) -> Result<&ZoomLevel, ZoomError> {
+    if levels.len() > 1 {
+        println!("Found the following zoom levels:");
+        for (i, level) in levels.iter().enumerate() {
+            println!("{}. {}", i, level.name());
+        }
+        loop {
+            print!("Which level do you want to download? ");
+            let mut l = String::new();
+            std::io::stdin().read_line(&mut l).expect("cannot read stdin");
+            if let Ok(idx) = l.parse::<usize>() {
+                if let Some(level) = levels.get(idx) {
+                    return Ok(level)
+                }
+            }
+            println!("'{}' is not a valid level number", l);
+        }
+    }
+    levels.first().ok_or(ZoomError::NoLevels)
+}
 
-    let http_client = client(headers)?;
+fn display_err<T, E: std::fmt::Display>(res: Result<T, E>) -> Option<T> {
+    match res {
+        Ok(value) => Some(value),
+        Err(e) => {
+            eprintln!("{}", e);
+            None
+        }
+    }
+}
 
+fn dezoomify(args: Arguments)
+             -> Result<(), ZoomError> {
+    let dezoomer = args.find_dezoomer()?;
+    let http_client = client(default_headers())?;
+
+    println!("Trying to locate a zoomable image...");
+    let zoom_levels: Vec<ZoomLevel> = list_tiles(dezoomer, &http_client, &args.input_uri)?;
+    let zoom_level = choose_level(&zoom_levels)?;
+
+    let tile_refs: Vec<TileReference> = zoom_level.tiles().into_iter()
+        .filter_map(display_err).collect();
     let total_tiles = tile_refs.len();
     let done_tiles = AtomicUsize::new(0);
 
-    let tile_results: Vec<Result<Tile, _>> = tile_refs.into_par_iter()
+    let tile_results: Vec<Option<Tile>> = tile_refs.into_par_iter()
         .map(|tile_ref| {
             let done = 1 + done_tiles.fetch_add(1, Ordering::Relaxed);
             print!("\rDownloading tiles: {}/{}", done, total_tiles);
-            Tile::download(tile_ref, &http_client)
+            display_err(Tile::download(tile_ref, &http_client))
         }).collect();
 
     println!("\nDownloaded all tiles");
@@ -147,17 +176,11 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
 
     let mut canvas = Canvas::new(size);
 
-    for tile in tile_results {
-        match tile {
-            Ok(tile) => {
-                print!("Adding tile at x={:04} y={:04}\r", tile.position.x, tile.position.y);
-                canvas.add_tile(&tile)?;
-            }
-            Err(e) => {
-                eprintln!("An issue occurred with a tile: {}", e);
-            }
-        }
+    for tile in tile_results.iter().flatten() {
+        print!("Adding tile at x={:04} y={:04}\r", tile.position.x, tile.position.y);
+        canvas.add_tile(&tile)?;
     }
+
     println!("\nSaving the image to {}...", args.outfile.to_str().unwrap_or("(unrepresentable path)"));
     canvas.image.save(args.outfile)?;
     Ok(())
@@ -199,6 +222,8 @@ impl Canvas {
 custom_error! {
     pub ZoomError
     Networking{source: reqwest::Error} = "network error: {source}",
+    Dezoomer{source: DezoomerError} = "Dezoomer error: {source}",
+    NoLevels = "A zoomable image was found, but it did not contain any zoom level",
     Image{source: image::ImageError} = "invalid image error: {source}",
     Io{source: std::io::Error} = "Input/Output error: {source}",
     Yaml{source: serde_yaml::Error} = "Invalid YAML configuration file: {source}",
@@ -209,27 +234,7 @@ custom_error! {
     MalformedTileStr{tile_str: String} = "Malformed tile string: '{tile_str}' \
                                           expected 'x y url'",
     TemplateError{source: tile_set::UrlTemplateError} = "Templating error: {source}",
+    NoSuchDezoomer{name: String} = "No such dezoomer: {name}",
     InvalidHeaderName{source: header::InvalidHeaderName} = "Invalid header name: {source}",
     InvalidHeaderValue{source: header::InvalidHeaderValue} = "Invalid header value: {source}",
-}
-
-#[cfg(test)]
-mod tests {
-    use std::fs::File;
-
-    use crate::Configuration;
-
-    #[test]
-    fn test_can_parse_example() {
-        let yaml_path = format!("{}/example.yaml", env!("CARGO_MANIFEST_DIR"));
-        let file = File::open(yaml_path).unwrap();
-        let conf: Configuration = serde_yaml::from_reader(file).unwrap();
-        assert!(conf.headers.contains_key("Referer"), "There should be a referer in the example");
-    }
-
-    #[test]
-    fn test_has_default_user_agent() {
-        let conf: Configuration = serde_yaml::from_str("url_template: test.com\nvariables: []").unwrap();
-        assert!(conf.headers.contains_key("User-Agent"), "There should be a user agent");
-    }
 }
