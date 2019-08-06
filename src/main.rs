@@ -6,7 +6,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use image::{GenericImage, GenericImageView, ImageBuffer};
 use rayon::prelude::*;
 use reqwest::{Client, header};
-use serde::Deserialize;
 use structopt::StructOpt;
 
 use custom_error::custom_error;
@@ -41,13 +40,6 @@ impl Arguments {
     }
 }
 
-#[derive(Deserialize, Debug)]
-struct Configuration {
-    #[serde(flatten)]
-    tile_set: tile_set::TileSet,
-    #[serde(default = "default_headers")]
-    headers: HashMap<String, String>,
-}
 
 pub fn default_headers() -> HashMap<String, String> {
     serde_yaml::from_str(include_str!("default_headers.yaml")).unwrap()
