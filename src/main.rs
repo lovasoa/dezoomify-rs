@@ -22,9 +22,15 @@ mod generic;
 
 #[derive(StructOpt, Debug)]
 struct Arguments {
+    /// Input URL or local file name
     input_uri: String,
+
+    /// File to which the resulting image should be saved
     #[structopt(default_value = "dezoomified.jpg")]
     outfile: std::path::PathBuf,
+
+    /// Name of the dezoomer to use
+    #[structopt(short = "d", long = "dezoomer")]
     dezoomer: Option<String>
 }
 
