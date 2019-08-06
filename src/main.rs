@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::io::Read;
+use std::io::{BufRead, Read};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use image::{GenericImage, GenericImageView, ImageBuffer};
@@ -23,7 +23,7 @@ mod generic;
 #[derive(StructOpt, Debug)]
 struct Arguments {
     /// Input URL or local file name
-    input_uri: String,
+    input_uri: Option<String>,
 
     /// File to which the resulting image should be saved
     #[structopt(default_value = "dezoomified.jpg")]
@@ -35,6 +35,15 @@ struct Arguments {
 }
 
 impl Arguments {
+    fn choose_input_uri(&self) -> String {
+        match &self.input_uri {
+            Some(uri) => uri.clone(),
+            None => {
+                println!("Enter an URL or a path to a tiles.yaml file: ");
+                stdin_line()
+            }
+        }
+    }
     fn find_dezoomer(&self) -> Result<&Dezoomer, ZoomError> {
         if let Some(name) = &self.dezoomer {
             generic::ALL_DEZOOMERS.into_iter()
@@ -46,6 +55,11 @@ impl Arguments {
     }
 }
 
+fn stdin_line() -> String {
+    std::io::stdin().lock().lines().next()
+        .expect("Invalid input")
+        .expect("Unable to read from stdin")
+}
 
 pub fn default_headers() -> HashMap<String, String> {
     serde_yaml::from_str(include_str!("default_headers.yaml")).unwrap()
@@ -122,15 +136,14 @@ fn choose_level(levels: &ZoomLevels) -> Result<&ZoomLevel, ZoomError> {
             println!("{}. {}", i, level.name());
         }
         loop {
-            print!("Which level do you want to download? ");
-            let mut l = String::new();
-            std::io::stdin().read_line(&mut l).expect("cannot read stdin");
-            if let Ok(idx) = l.parse::<usize>() {
+            println!("Which level do you want to download? ");
+            let line = stdin_line();
+            if let Ok(idx) = line.parse::<usize>() {
                 if let Some(level) = levels.get(idx) {
                     return Ok(level)
                 }
             }
-            println!("'{}' is not a valid level number", l);
+            println!("'{}' is not a valid level number", line);
         }
     }
     levels.first().ok_or(ZoomError::NoLevels)
@@ -148,11 +161,11 @@ fn display_err<T, E: std::fmt::Display>(res: Result<T, E>) -> Option<T> {
 
 fn dezoomify(args: Arguments)
              -> Result<(), ZoomError> {
+    let uri = args.choose_input_uri();
     let dezoomer = args.find_dezoomer()?;
     let http_client = client(HashMap::new())?;
-
     println!("Trying to locate a zoomable image...");
-    let zoom_levels: Vec<ZoomLevel> = list_tiles(dezoomer, &http_client, &args.input_uri)?;
+    let zoom_levels: Vec<ZoomLevel> = list_tiles(dezoomer, &http_client, &uri)?;
     let zoom_level = choose_level(&zoom_levels)?;
 
     let http_client = client(zoom_level.http_headers())?;
