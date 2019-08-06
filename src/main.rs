@@ -149,11 +149,13 @@ fn display_err<T, E: std::fmt::Display>(res: Result<T, E>) -> Option<T> {
 fn dezoomify(args: Arguments)
              -> Result<(), ZoomError> {
     let dezoomer = args.find_dezoomer()?;
-    let http_client = client(default_headers())?;
+    let http_client = client(HashMap::new())?;
 
     println!("Trying to locate a zoomable image...");
     let zoom_levels: Vec<ZoomLevel> = list_tiles(dezoomer, &http_client, &args.input_uri)?;
     let zoom_level = choose_level(&zoom_levels)?;
+
+    let http_client = client(zoom_level.http_headers())?;
 
     let tile_refs: Vec<TileReference> = zoom_level.tiles().into_iter()
         .filter_map(display_err).collect();

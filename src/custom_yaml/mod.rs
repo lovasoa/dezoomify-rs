@@ -24,6 +24,10 @@ impl TileProvider for CustomYamlTiles {
             .map(|r| r.map_err(|e| e.into()))
             .collect()
     }
+
+    fn http_headers(&self) -> HashMap<String, String> {
+        self.headers.clone()
+    }
 }
 
 pub fn dezoom_fn(data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
@@ -43,19 +47,19 @@ pub const DEZOOMER: Dezoomer = Dezoomer {
 mod tests {
     use std::fs::File;
 
-    use super::CustomYamlTiles;
+    use super::{CustomYamlTiles, TileProvider};
 
     #[test]
     fn test_can_parse_example() {
         let yaml_path = format!("{}/tiles.yaml", env!("CARGO_MANIFEST_DIR"));
         let file = File::open(yaml_path).unwrap();
         let conf: CustomYamlTiles = serde_yaml::from_reader(file).unwrap();
-        assert!(conf.headers.contains_key("Referer"), "There should be a referer in the example");
+        assert!(conf.http_headers().contains_key("Referer"), "There should be a referer in the example");
     }
 
     #[test]
     fn test_has_default_user_agent() {
         let conf: CustomYamlTiles = serde_yaml::from_str("url_template: test.com\nvariables: []").unwrap();
-        assert!(conf.headers.contains_key("User-Agent"), "There should be a user agent");
+        assert!(conf.http_headers().contains_key("User-Agent"), "There should be a user agent");
     }
 }

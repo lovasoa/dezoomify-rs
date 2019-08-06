@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Debug;
 use std::ops::Add;
@@ -67,6 +68,9 @@ pub trait TileProvider: Debug {
     }
     fn name(&self) -> String {
         format!("{:?}", self)
+    }
+    fn http_headers(&self) -> HashMap<String, String> {
+        HashMap::new()
     }
 }
 
