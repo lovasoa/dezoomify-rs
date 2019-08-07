@@ -91,12 +91,12 @@ impl Tile {
     fn bottom_right(&self) -> Vec2d { self.size() + self.position }
     fn download(
         zoom_level: &ZoomLevel,
-        tile_reference: TileReference,
+        tile_reference: &TileReference,
         client: &reqwest::Client,
     ) -> Result<Tile, ZoomError> {
         let mut buf: Vec<u8> = vec![];
         client.get(&tile_reference.url).send()?.copy_to(&mut buf)?;
-        buf = zoom_level.post_process_tile(&tile_reference, buf)
+        buf = zoom_level.post_process_tile(tile_reference, buf)
             .map_err(|source| ZoomError::PostProcessing { source })?;
         Ok(Tile {
             image: image::load_from_memory(&buf)?,
@@ -186,8 +186,12 @@ fn dezoomify(args: Arguments)
     let tile_results: Vec<Option<Tile>> = tile_refs.into_par_iter()
         .map(|tile_ref| {
             let done = 1 + done_tiles.fetch_add(1, Ordering::Relaxed);
-            print!("\rDownloading tiles: {}/{}", done, total_tiles);
-            display_err(Tile::download(zoom_level, tile_ref, &http_client))
+            print!("\rDownloading tiles: {}/{} ()", done, total_tiles);
+            let result = Tile::download(zoom_level, &tile_ref, &http_client)
+                .map_err(|e|
+                    ZoomError::TileDownloadError { uri:tile_ref.url.clone(), cause: e.into(),
+                });
+            display_err(result)
         }).collect();
 
     println!("\nDownloaded all tiles");
@@ -249,6 +253,7 @@ custom_error! {
     Dezoomer{source: DezoomerError} = "Dezoomer error: {source}",
     NoLevels = "A zoomable image was found, but it did not contain any zoom level",
     Image{source: image::ImageError} = "invalid image error: {source}",
+    TileDownloadError{uri: String, cause: Box<ZoomError>} = "error with tile {uri}: {cause}",
     PostProcessing{source: Box<dyn Error>} = "unable to process the downloaded tile: {source}",
     Io{source: std::io::Error} = "Input/Output error: {source}",
     Yaml{source: serde_yaml::Error} = "Invalid YAML configuration file: {source}",

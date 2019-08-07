@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Debug;
-use std::ops::Add;
+use std::ops::{Add, Div};
 use std::str::FromStr;
 
 use custom_error::custom_error;
@@ -83,10 +83,10 @@ pub trait TilesRect: Debug {
 
 impl<T: TilesRect> TileProvider for T {
     fn tiles(&self) -> Vec<Result<TileReference, Box<dyn Error>>> {
-        let Vec2d { x: w, y: h } = self.size();
-        let Vec2d { x: tile_w, y: tile_h } = self.tile_size();
-        (0..w).step_by(tile_w as usize).flat_map(move |x| {
-            (0..h).step_by(tile_h as usize).map(move |y| {
+        let Vec2d { x: w, y: h } = self.size() / self.tile_size();
+
+        (0..w).flat_map(move |x| {
+            (0..h).map(move |y| {
                 let position = Vec2d { x, y };
                 let url = self.tile_url(position);
                 Ok(TileReference { url, position })
@@ -122,6 +122,14 @@ impl Add<Vec2d> for Vec2d {
 
     fn add(self, rhs: Vec2d) -> Self::Output {
         Vec2d { x: self.x + rhs.x, y: self.y + rhs.y }
+    }
+}
+
+impl Div<Vec2d> for Vec2d {
+    type Output = Vec2d;
+
+    fn div(self, rhs: Vec2d) -> Self::Output {
+        Vec2d { x: self.x / rhs.x, y: self.y / rhs.y }
     }
 }
 
