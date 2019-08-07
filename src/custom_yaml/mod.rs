@@ -7,7 +7,7 @@ use crate::default_headers;
 use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, single_level, TileProvider, ZoomLevels};
 use crate::TileReference;
 
-pub mod tile_set;
+mod tile_set;
 mod variable;
 
 #[derive(Deserialize, Debug)]

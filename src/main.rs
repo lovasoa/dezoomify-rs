@@ -9,7 +9,6 @@ use reqwest::{Client, header};
 use structopt::StructOpt;
 
 use custom_error::custom_error;
-use custom_yaml::tile_set;
 use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 use dezoomer::TileReference;
 use dezoomer::Vec2d;
@@ -251,7 +250,6 @@ custom_error! {
                                  on a canvas of size {width}x{height}",
     MalformedTileStr{tile_str: String} = "Malformed tile string: '{tile_str}' \
                                           expected 'x y url'",
-    TemplateError{source: tile_set::UrlTemplateError} = "Templating error: {source}",
     NoSuchDezoomer{name: String} = "No such dezoomer: {name}",
     InvalidHeaderName{source: header::InvalidHeaderName} = "Invalid header name: {source}",
     InvalidHeaderValue{source: header::InvalidHeaderValue} = "Invalid header value: {source}",

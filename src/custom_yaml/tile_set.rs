@@ -159,25 +159,24 @@ mod tests {
     }
 
     #[test]
-    fn tile_iteration() -> Result<(), crate::ZoomError> {
+    fn tile_iteration() {
         let ts = TileSet {
             variables: Variables::new(vec![
                 VarOrConst::var("x", 0, 1, 1).unwrap(),
                 VarOrConst::var("y", 0, 1, 1).unwrap(),
             ]),
-            url_template: UrlTemplate::from_str("{{x}}/{{y}}")?,
-            x_template: IntTemplate::from_str("x")?,
-            y_template: IntTemplate::from_str("y")?,
+            url_template: UrlTemplate::from_str("{{x}}/{{y}}").unwrap(),
+            x_template: IntTemplate::from_str("x").unwrap(),
+            y_template: IntTemplate::from_str("y").unwrap(),
         };
-        let tile_refs: Vec<_> = ts.into_iter().collect::<Result<_, _>>()?;
+        let tile_refs: Vec<_> = ts.into_iter().collect::<Result<_, _>>().unwrap();
         let expected: Vec<_> = vec![
             "0 0 0/0",
             "0 1 0/1",
             "1 0 1/0",
             "1 1 1/1",
-        ].into_iter().map(TileReference::from_str).collect::<Result<_, _>>()?;
+        ].into_iter().map(TileReference::from_str).collect::<Result<_, _>>().unwrap();
         assert_eq!(expected, tile_refs);
-        Ok(())
     }
 
     #[test]
