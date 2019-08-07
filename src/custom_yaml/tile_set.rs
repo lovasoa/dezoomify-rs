@@ -51,7 +51,7 @@ struct IntTemplate(String);
 impl IntTemplate {
     fn eval<C: evalexpr::Context>(&self, context: &C) -> Result<u32, UrlTemplateError> {
         let template: evalexpr::Node = evalexpr::build_operator_tree(&self.0)
-            .map_err(|source| UrlTemplateError::BadExpression { expr: (&self.0).into(), source })?;
+            .map_err(|source| UrlTemplateError::BadExpression { expr: self.0.clone(), source })?;
         let evaluated_int = template.eval_int_with_context(context)?;
         Ok(evaluated_int.try_into()?)
     }
