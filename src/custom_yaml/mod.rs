@@ -3,8 +3,6 @@ use std::error::Error;
 
 use serde::Deserialize;
 
-use tile_set::UrlTemplateError;
-
 use crate::default_headers;
 use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, single_level, TileProvider, ZoomLevels};
 use crate::TileReference;

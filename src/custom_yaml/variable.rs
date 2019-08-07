@@ -30,7 +30,7 @@ impl Variable {
         let steps = (self.to - self.from) / self.step;
         if steps < 0 {
             return Err(BadVariableError::Infinite { name: self.name.clone() });
-        } else if steps > std::u32::MAX as i64 {
+        } else if steps > i64::from(std::u32::MAX) {
             return Err(BadVariableError::TooManyValues { name: self.name.clone(), steps });
         }
         Ok(())
@@ -160,9 +160,8 @@ custom_error! {pub BadVariableError
 mod tests {
     use evalexpr::Context;
 
-    use super::super::variable::VarOrConst;
-
     use super::{Variable, Variables};
+    use super::super::variable::VarOrConst;
 
     #[test]
     fn variable_iteration() {

@@ -136,7 +136,7 @@ impl FromStr for TileReference {
     type Err = ZoomError;
 
     fn from_str(tile_str: &str) -> Result<Self, Self::Err> {
-        let mut parts = tile_str.split(" ");
+        let mut parts = tile_str.split(' ');
         let make_error = || ZoomError::MalformedTileStr { tile_str: String::from(tile_str) };
 
         if let (Some(x), Some(y), Some(url)) = (parts.next(), parts.next(), parts.next()) {

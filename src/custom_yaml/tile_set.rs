@@ -1,6 +1,5 @@
 use std::convert::TryInto;
 use std::str::FromStr;
-use std::sync::Mutex;
 
 use regex::Regex;
 use serde::{de, Deserialize, Deserializer};

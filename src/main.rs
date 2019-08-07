@@ -137,7 +137,7 @@ fn list_tiles(dezoomer: &mut dyn Dezoomer, http: &Client, uri: &str)
     }
 }
 
-fn choose_level(levels: &ZoomLevels) -> Result<&ZoomLevel, ZoomError> {
+fn choose_level(levels: &[ZoomLevel]) -> Result<&ZoomLevel, ZoomError> {
     if levels.len() > 1 {
         println!("Found the following zoom levels:");
         for (i, level) in levels.iter().enumerate() {
