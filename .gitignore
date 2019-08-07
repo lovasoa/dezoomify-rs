@@ -2,3 +2,4 @@
 **/*.rs.bk
 dezoomify-rs.iml
 .idea/
+/dezoomified.jpg

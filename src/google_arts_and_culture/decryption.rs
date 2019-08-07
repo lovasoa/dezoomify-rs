@@ -1,34 +1,15 @@
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
 use aes::Aes128;
-use aes::block_cipher_trait::generic_array::{arr, arr_impl};
 use block_modes::{BlockMode, BlockModeError, Cbc};
-use block_modes::block_padding::ZeroPadding;
+use block_modes::block_padding::{Padding, PadError, UnpadError};
 
 use custom_error::custom_error;
 
 // create an alias for convenience
-type Aes128Cbc = Cbc<Aes128, ZeroPadding>;
+type Aes128Cbc = Cbc<Aes128, NoPadding>;
 
 /// Decrypt an encrypted image
-///
-/// ```rust
-/// use gapdecoder::decrypt;
-/// let encrypted : Vec<u8> = vec![
-///     10,10,10,10, // magic bytes
-///     186,186,192,192, // unencrypted header
-///     16,0,0,0, // encrypted data length
-///     1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, // encrypted data
-///     222,173,190,175, // unencrypted footer
-///     4,0,0,0 // size of unencrypted header
-/// ];
-/// let decrypted : Vec<u8> = vec![
-///     186,186,192,192, // unencrypted header
-///     202,37,17,24,3,15,249,175,241,134,189,204,188,226,106,76, // decrypted data
-///     222,173,190,175 // unencrypted footer
-/// ];
-/// assert_eq!(decrypt(encrypted).unwrap(), decrypted);
-/// ```
 pub fn decrypt(encrypted: Vec<u8>) -> Result<Vec<u8>, InvalidEncryptedImage> {
     let mut c = Cursor::new(encrypted);
 
@@ -64,8 +45,8 @@ pub fn decrypt(encrypted: Vec<u8>) -> Result<Vec<u8>, InvalidEncryptedImage> {
 }
 
 fn aes_decrypt_buffer(encrypted: &mut [u8]) -> Result<&[u8], BlockModeError> {
-    let key = arr![u8; 91,99,219,17,59,122,243,224,177,67,85,86,200,249,83,12];
-    let iv = arr![u8; 113,231,4,5,53,58,119,139,250,111,188,48,50,27,149,146];
+    let key = [91, 99, 219, 17, 59, 122, 243, 224, 177, 67, 85, 86, 200, 249, 83, 12].into();
+    let iv = [113, 231, 4, 5, 53, 58, 119, 139, 250, 111, 188, 48, 50, 27, 149, 146].into();
     let cipher = Aes128Cbc::new_fix(&key, &iv);
     cipher.decrypt(encrypted)
 }
@@ -90,4 +71,45 @@ custom_error! {pub InvalidEncryptedImage
     BadEncryptedSize{encrypted_size:u64} = "The size of the encrypted data ({}) is invalid.",
     DecryptError{source: BlockModeError} = "Unable to decrypt the encrypted data: {}",
     IO{source: std::io::Error} = "Unable to read from the buffer: {}",
+}
+
+pub enum NoPadding {}
+
+impl Padding for NoPadding {
+    fn pad_block(_block: &mut [u8], _pos: usize) -> Result<(), PadError> {
+        Ok(())
+    }
+
+    fn unpad(data: &[u8]) -> Result<&[u8], UnpadError> {
+        Ok(data)
+    }
+}
+
+#[test]
+fn test_decrypt_dummy() {
+    let encrypted: Vec<u8> = vec![
+        10, 10, 10, 10, // magic bytes
+        186, 186, 192, 192, // unencrypted header
+        16, 0, 0, 0, // encrypted data length
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // encrypted data
+        222, 173, 190, 175, // unencrypted footer
+        4, 0, 0, 0 // size of unencrypted header
+    ];
+    let decrypted: Vec<u8> = vec![
+        186, 186, 192, 192, // unencrypted header
+        202, 37, 17, 24, 3, 15, 249, 175, 241, 134, 189, 204, 188, 226, 106, 76, // decrypted data
+        222, 173, 190, 175 // unencrypted footer
+    ];
+    assert_eq!(decrypt(encrypted).unwrap(), decrypted);
+}
+
+#[test]
+fn test_decrypt_sample_tile() {
+    use std::{fs, path::Path};
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("testdata")
+        .join("google_arts_and_culture");
+    let encrypted = fs::read(root.join("tile_encrypted.bin")).unwrap();
+    let decrypted: Vec<u8> = fs::read(root.join("tile.jpg")).unwrap();
+    assert_eq!(decrypt(encrypted).unwrap(), decrypted);
 }

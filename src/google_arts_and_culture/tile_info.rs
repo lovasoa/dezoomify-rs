@@ -90,8 +90,6 @@ custom_error! {pub PageParseError
     NoToken = "Unable to find the token in the page",
 }
 
-
-
 #[test]
 fn test_parse_html() {
     use std::fs;
@@ -99,6 +97,7 @@ fn test_parse_html() {
 
     let test_source_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("testdata")
+        .join("google_arts_and_culture")
         .join("page_source.html");
     let test_html = fs::read_to_string(test_source_path).unwrap();
     let info: PageInfo = test_html.parse().unwrap();
