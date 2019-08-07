@@ -40,24 +40,15 @@ impl DezoomerError {
     }
 }
 
-pub type ZoomLevel = Box<dyn TileProvider>;
+pub type ZoomLevel = Box<dyn TileProvider + Sync>;
 pub type ZoomLevels = Vec<ZoomLevel>;
 
-pub type DezoomFn = fn(data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError>;
-
-pub struct Dezoomer {
-    pub name: &'static str,
-    pub dezoom_fn: DezoomFn,
-}
-
-impl Dezoomer {
-    pub fn tile_refs(&self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
-        (self.dezoom_fn)(data)
-    }
-
-    pub fn assert(&self, c: bool) -> Result<(), DezoomerError> {
+pub trait Dezoomer {
+    fn name(&self) -> &'static str;
+    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError>;
+    fn assert(&self, c: bool) -> Result<(), DezoomerError> {
         if c { Ok(()) } else {
-            Err(DezoomerError::WrongDezoomer { name: self.name })
+            Err(DezoomerError::WrongDezoomer { name: self.name() })
         }
     }
 }
@@ -76,8 +67,8 @@ pub trait TileProvider: Debug {
 }
 
 /// Shortcut to return a single zoom level from a dezoomer
-pub fn single_level<T: TileProvider + 'static>(level: T)
-                                               -> Result<ZoomLevels, DezoomerError> {
+pub fn single_level<T: TileProvider + Sync + 'static>(level: T)
+                                                      -> Result<ZoomLevels, DezoomerError> {
     Ok(vec![Box::new(level)])
 }
 
@@ -135,7 +126,7 @@ impl Add<Vec2d> for Vec2d {
 }
 
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct TileReference {
     pub url: String,
     pub position: Vec2d,
@@ -158,20 +149,5 @@ impl FromStr for TileReference {
         } else {
             Err(make_error())
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::dezoomer::{DezoomerError, DezoomerInput, ZoomLevels};
-
-    use super::DezoomFn;
-
-    #[test]
-    fn dezoomer_can_be_boxed() {
-        fn test_dezoomer(_: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
-            Ok(vec![])
-        }
-        let _: Vec<DezoomFn> = vec![test_dezoomer];
     }
 }

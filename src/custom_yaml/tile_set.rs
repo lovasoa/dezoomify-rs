@@ -1,12 +1,16 @@
-use custom_error::custom_error;
-use std::str::FromStr;
-use regex::Regex;
-use lazy_static::lazy_static;
 use std::convert::TryInto;
-use super::variable::{Variables, BadVariableError};
-use crate::{Vec2d, TileReference};
-use serde::{Deserialize, Deserializer, de};
+use std::str::FromStr;
+use std::sync::Mutex;
 
+use regex::Regex;
+use serde::{de, Deserialize, Deserializer};
+
+use custom_error::custom_error;
+use lazy_static::lazy_static;
+
+use crate::{TileReference, Vec2d};
+
+use super::variable::{BadVariableError, Variables};
 
 #[derive(Deserialize, Debug)]
 pub struct TileSet {
@@ -43,11 +47,13 @@ impl<'a> IntoIterator for &'a TileSet {
 }
 
 #[derive(Debug)]
-struct IntTemplate(evalexpr::Node);
+struct IntTemplate(String);
 
 impl IntTemplate {
     fn eval<C: evalexpr::Context>(&self, context: &C) -> Result<u32, UrlTemplateError> {
-        let evaluated_int = self.0.eval_int_with_context(context)?;
+        let template: evalexpr::Node = evalexpr::build_operator_tree(&self.0)
+            .map_err(|source| UrlTemplateError::BadExpression { expr: (&self.0).into(), source })?;
+        let evaluated_int = template.eval_int_with_context(context)?;
         Ok(evaluated_int.try_into()?)
     }
 }
@@ -56,9 +62,7 @@ impl FromStr for IntTemplate {
     type Err = UrlTemplateError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        evalexpr::build_operator_tree(s)
-            .map_err(|source| UrlTemplateError::BadExpression { expr: s.into(), source })
-            .map(|node| IntTemplate(node))
+        Ok(IntTemplate(s.to_string()))
     }
 }
 
@@ -142,11 +146,14 @@ custom_error! {pub UrlTemplateError
 
 #[cfg(test)]
 mod tests {
-    use super::super::tile_set::{UrlTemplateError, UrlTemplate, TileSet, IntTemplate};
     use std::str::FromStr;
+
     use evalexpr::Context;
-    use super::super::variable::{Variables, VarOrConst};
+
     use crate::TileReference;
+
+    use super::super::tile_set::{IntTemplate, TileSet, UrlTemplate, UrlTemplateError};
+    use super::super::variable::{Variables, VarOrConst};
 
     #[test]
     fn url_template_evaluation() -> Result<(), UrlTemplateError> {

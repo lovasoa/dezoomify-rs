@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::error::Error;
 use std::fs;
 use std::io::{BufRead, Read};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -15,9 +16,10 @@ use dezoomer::Vec2d;
 
 use crate::dezoomer::ZoomLevel;
 
-mod custom_yaml;
 mod dezoomer;
 mod generic;
+mod custom_yaml;
+mod google_arts_and_culture;
 
 #[derive(StructOpt, Debug)]
 struct Arguments {
@@ -43,13 +45,13 @@ impl Arguments {
             }
         }
     }
-    fn find_dezoomer(&self) -> Result<&Dezoomer, ZoomError> {
+    fn find_dezoomer(&self) -> Result<Box<dyn Dezoomer>, ZoomError> {
         if let Some(name) = &self.dezoomer {
-            generic::ALL_DEZOOMERS.into_iter()
-                .find(|&d| d.name == name)
+            generic::all_dezoomers().into_iter()
+                .find(|d| d.name() == name)
                 .ok_or_else(|| ZoomError::NoSuchDezoomer { name: name.clone() })
         } else {
-            Ok(&generic::DEZOOMER)
+            Ok(Box::new(generic::GenericDezoomer::default()))
         }
     }
 }
@@ -87,10 +89,15 @@ struct Tile {
 impl Tile {
     fn size(&self) -> Vec2d { image_size(&self.image) }
     fn bottom_right(&self) -> Vec2d { self.size() + self.position }
-    fn download(tile_reference: TileReference, client: &reqwest::Client)
-                -> Result<Tile, ZoomError> {
+    fn download(
+        zoom_level: &ZoomLevel,
+        tile_reference: TileReference,
+        client: &reqwest::Client,
+    ) -> Result<Tile, ZoomError> {
         let mut buf: Vec<u8> = vec![];
         client.get(&tile_reference.url).send()?.copy_to(&mut buf)?;
+        buf = zoom_level.post_process_tile(&tile_reference, buf)
+            .map_err(|source| ZoomError::PostProcessing { source })?;
         Ok(Tile {
             image: image::load_from_memory(&buf)?,
             position: tile_reference.position,
@@ -111,14 +118,14 @@ fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
     }
 }
 
-fn list_tiles(dezoomer: &Dezoomer, http: &Client, uri: &str)
+fn list_tiles(dezoomer: &mut dyn Dezoomer, http: &Client, uri: &str)
               -> Result<ZoomLevels, ZoomError> {
     let mut i = DezoomerInput {
         uri: String::from(uri),
         contents: None,
     };
     loop {
-        match dezoomer.tile_refs(&i) {
+        match dezoomer.zoom_levels(&i) {
             Ok(levels) => { return Ok(levels) }
             Err(DezoomerError::NeedsData { uri }) => {
                 let contents = fetch_uri(&uri, http)?;
@@ -163,10 +170,10 @@ fn display_err<T, E: std::fmt::Display>(res: Result<T, E>) -> Option<T> {
 fn dezoomify(args: Arguments)
              -> Result<(), ZoomError> {
     let uri = args.choose_input_uri();
-    let dezoomer = args.find_dezoomer()?;
+    let mut dezoomer = args.find_dezoomer()?;
     let http_client = client(HashMap::new())?;
     println!("Trying to locate a zoomable image...");
-    let zoom_levels: Vec<ZoomLevel> = list_tiles(dezoomer, &http_client, &uri)?;
+    let zoom_levels: Vec<ZoomLevel> = list_tiles(dezoomer.as_mut(), &http_client, &uri)?;
     let zoom_level = choose_level(&zoom_levels)?;
 
     let http_client = client(zoom_level.http_headers())?;
@@ -180,7 +187,7 @@ fn dezoomify(args: Arguments)
         .map(|tile_ref| {
             let done = 1 + done_tiles.fetch_add(1, Ordering::Relaxed);
             print!("\rDownloading tiles: {}/{}", done, total_tiles);
-            display_err(Tile::download(tile_ref, &http_client))
+            display_err(Tile::download(zoom_level, tile_ref, &http_client))
         }).collect();
 
     println!("\nDownloaded all tiles");
@@ -242,6 +249,7 @@ custom_error! {
     Dezoomer{source: DezoomerError} = "Dezoomer error: {source}",
     NoLevels = "A zoomable image was found, but it did not contain any zoom level",
     Image{source: image::ImageError} = "invalid image error: {source}",
+    PostProcessing{source: Box<dyn Error>} = "unable to process the downloaded tile: {source}",
     Io{source: std::io::Error} = "Input/Output error: {source}",
     Yaml{source: serde_yaml::Error} = "Invalid YAML configuration file: {source}",
     TileCopyError{x:u32, y:u32, twidth:u32, theight:u32, width:u32, height:u32} =

@@ -1,48 +1,72 @@
-use custom_error::custom_error;
-
 use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 
-pub const ALL_DEZOOMERS: &'static [Dezoomer] = &[
-    crate::custom_yaml::DEZOOMER
-];
-
-custom_error! {
-pub GenericDezoomerError {uri:String} = "Tried all dezoomers, but none can open '{uri}'"
+pub fn all_dezoomers() -> Vec<Box<dyn Dezoomer>> {
+    vec![
+        Box::new(crate::custom_yaml::CustomDezoomer::default()),
+        Box::new(crate::google_arts_and_culture::GAPDezoomer::default()),
+    ]
 }
 
-fn dezoom_fn(data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
-    let mut errs = Vec::new();
-    let mut successes = Vec::new();
-    for dezoomer in ALL_DEZOOMERS {
-        match dezoomer.tile_refs(data) {
-            Ok(mut levels) => {
-                successes.append(&mut levels);
-            }
-            Err(e) => {
-                errs.push(e)
-            }
-        }
+pub struct GenericDezoomer {
+    dezoomers: Vec<Box<dyn Dezoomer>>
+}
+
+impl Default for GenericDezoomer {
+    fn default() -> Self {
+        GenericDezoomer { dezoomers: all_dezoomers() }
     }
-    if successes.is_empty() {
-        let need_data = errs.into_iter()
-            .find_map(|e| {
-                match e {
-                    DezoomerError::NeedsData { .. } => Some(e),
-                    _ => None
+}
+
+impl Dezoomer for GenericDezoomer {
+    fn name(&self) -> &'static str { "generic" }
+
+    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
+        let mut errs = vec![];
+        let mut successes = Vec::new();
+        let mut needs_uri = None;
+        // TO DO: Use drain_filter when it is stabilized
+        let mut i = 0;
+        while i != self.dezoomers.len() {
+            let keep = match self.dezoomers[i].zoom_levels(data) {
+                Ok(mut levels) => {
+                    successes.append(&mut levels);
+                    true
                 }
-            });
-        if let Some(need_data) = need_data {
-            Err(need_data)
-        } else {
-            let uri = data.uri.clone();
-            Err(DezoomerError::wrap(GenericDezoomerError { uri }))
+                Err(e @ DezoomerError::NeedsData { .. }) => {
+                    needs_uri = Some(e);
+                    true
+                }
+                Err(e) => {
+                    errs.push(e);
+                    false
+                }
+            };
+            if keep { i += 1 } else { self.dezoomers.remove(i); }
         }
-    } else {
-        Ok(successes)
+        if successes.is_empty() {
+            Err(needs_uri.unwrap_or_else(||
+                DezoomerError::wrap(GenericError(errs))))
+        } else {
+            Ok(successes)
+        }
     }
 }
 
-pub const DEZOOMER: Dezoomer = Dezoomer {
-    name: "generic",
-    dezoom_fn,
-};
+
+#[derive(Debug)]
+pub struct GenericError(Vec<DezoomerError>);
+
+impl std::error::Error for GenericError {}
+
+impl std::fmt::Display for GenericError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        if self.0.is_empty() {
+            return writeln!(f, "No dezoomer!")
+        }
+        writeln!(f, "Tried all of the dezoomers, none succeeded. They returned the following errors:\n")?;
+        for e in self.0.iter() {
+            writeln!(f, " - {}", e)?;
+        }
+        Ok(())
+    }
+}
