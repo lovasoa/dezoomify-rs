@@ -75,3 +75,24 @@ impl std::fmt::Debug for ZoomifyLevel {
         write!(f, "Zoomify Image")
     }
 }
+
+#[test]
+fn test_panorama() {
+    let url = "http://x.fr/y/ImageProperties.xml?t";
+    let contents = br#"
+        <IMAGE_PROPERTIES
+            WIDTH="174550" HEIGHT="16991" NUMTILES="61284"
+            NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>"#;
+    let props = load_from_properties(url, contents).unwrap();
+    assert_eq!(props.len(), 11);
+    let level = &props[3];
+    let tiles: Vec<String> = level.tiles().into_iter().map(|t| t.unwrap().url).collect();
+    assert_eq!(tiles, vec![
+        "http://x.fr/y/TileGroup0/3-0-0.jpg",
+        "http://x.fr/y/TileGroup0/3-1-0.jpg",
+        "http://x.fr/y/TileGroup0/3-2-0.jpg",
+        "http://x.fr/y/TileGroup0/3-3-0.jpg",
+        "http://x.fr/y/TileGroup0/3-4-0.jpg",
+        "http://x.fr/y/TileGroup0/3-5-0.jpg"
+    ]);
+}
