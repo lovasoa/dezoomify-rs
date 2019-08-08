@@ -25,6 +25,11 @@ First of all, you have to download the application.
  1. Go to the the [latest release page](https://github.com/lovasoa/dezoomify-rs/releases/latest),
  1. download the version that matches your operating system (Windows, MacOS, or Linux),
  1. Extract the binary from the compressed file.
+ 
+On some operating systems, you may have to authorize the application execution
+before being able to launch it. See how to do
+[in MacOS](https://support.apple.com/kb/ph25088?locale=en_US).
+
 
 ## Dezoomers
 
