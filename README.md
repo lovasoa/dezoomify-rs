@@ -7,7 +7,7 @@ This is a prototype for a new version of
 written in [rust](https://www.rust-lang.org/).
 
 The goal of this project is not to replace the traditional dezoomify.
-However, it would have the potential of being able to dezoom even 
+However, it can dezoom even 
 very large images, that currently cannot be dezoomed inside a browser
 because of memory constraints.
 
