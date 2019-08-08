@@ -11,6 +11,12 @@ However, it would have the potential of being able to dezoom even
 very large images, that currently cannot be dezoomed inside a browser
 because of memory constraints.
 
+The following dezoomers are currently available:
+ - [**custom**](#Custom) for advanced users.
+    It allows you to specify a custom tile URL format.
+ - [**Google Arts & Culture**](#Google Arts Culture) supports downloading images from
+    [artsandculture.google.com](https://artsandculture.google.com/).
+
 ## Usage instructions
 
 ### Download *dezoomify-rs*
@@ -20,9 +26,15 @@ First of all, you have to download the application.
  1. download the version that matches your operating system (Windows, MacOS, or Linux),
  1. Extract the binary from the compressed file.
 
-### Create a `tiles.yaml` file
-You have to generate a [`tiles.yaml`](tiles.yaml)
-file that describes your image.
+## Dezoomers
+
+### Custom
+
+The custom dezoomer can be used when you know the form of the individual tile URLs.
+
+#### Create a `tiles.yaml` file
+
+You have to generate a [`tiles.yaml`](tiles.yaml) file that describes your image.
 
  1. In a text editor, create an empty plaintext file, and save it under `tiles.yaml`.
  1. Paste the following template to the file, changing it to match your own image.
@@ -49,20 +61,10 @@ variables:
     value: 256
 ```
 
-### Launch dezoomify-rs
+Then place this file in the same directory as the executable file you downloaded,
+launch `dezoomify-rs` in a terminal and when asked, enter `tiles.yaml` as the tile source. 
 
-You can now launch the application. In a terminal, type :
-
-```bash
-dezoomify-rs tiles.yaml result.jpg
-```
-
-where `dezoomify-rs` is the path to the binary you extracted,
-`tiles.yaml` is the path to the configuration file you wrote, and
-`result.jpg` is the path to the image file that will be generated.
-You can change `.jpg` to `.png` to generate a losslessly compressed
-(but much larger) file.
-
-The url template string will be evaluated for each pair of coordinates,
-following the x and y limits you specified.
-This should create a `result.jpg` file containing the dezoomed image.
+### Google Arts Culture
+In order to download images from google arts and culture, just open 
+`dezoomify-rs`, and when asked, enter the URL of a viewing page, such as 
+https://artsandculture.google.com/asset/light-in-the-dark/ZQFouDGMVmsI2w 
