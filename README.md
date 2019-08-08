@@ -14,7 +14,7 @@ because of memory constraints.
 The following dezoomers are currently available:
  - [**custom**](#Custom) for advanced users.
     It allows you to specify a custom tile URL format.
- - [**Google Arts & Culture**](#Google Arts Culture) supports downloading images from
+ - [**Google Arts & Culture**](#google-arts-culture) supports downloading images from
     [artsandculture.google.com](https://artsandculture.google.com/).
 
 ## Usage instructions
