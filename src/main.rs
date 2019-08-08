@@ -220,8 +220,10 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     progress.finish_with_message(&final_msg);
     if tiles.is_empty() { return Err(ZoomError::NoTile) }
 
-    let size = tiles.iter().map(Tile::bottom_right)
-        .fold(Vec2d::default(), Vec2d::max);
+    let size = zoom_level.size_hint().unwrap_or_else(|| {
+        tiles.iter().map(Tile::bottom_right)
+            .fold(Vec2d::default(), Vec2d::max)
+    });
 
     let mut canvas = Canvas::new(size);
 
@@ -229,7 +231,7 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     for tile in tiles.iter() {
         progress.inc(1);
         progress.set_message(&format!("Adding tile at {} to the canvas", tile.position));
-        canvas.add_tile(&tile)?;
+        canvas.add_tile(tile)?;
     }
     progress.finish_with_message("Finished stitching all tiles together");
 
@@ -263,9 +265,11 @@ impl Canvas {
         Canvas { image: image::ImageBuffer::new(size.x, size.y) }
     }
     fn add_tile(self: &mut Self, tile: &Tile) -> Result<(), ZoomError> {
+        let Vec2d { x: xmax, y: ymax } =
+            (tile.position + tile.size()).min(self.size()) - tile.position;
+        let sub_tile = tile.image.view(0, 0, xmax, ymax);
         let Vec2d { x, y } = tile.position;
-
-        let success = self.image.copy_from(&tile.image, x, y);
+        let success = self.image.copy_from(&sub_tile, x, y);
         if success { Ok(()) } else {
             let Vec2d { x: twidth, y: theight } = tile.size();
             let Vec2d { x: width, y: height } = self.size();

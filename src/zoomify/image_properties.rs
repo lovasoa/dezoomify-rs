@@ -27,12 +27,11 @@ impl ImageProperties {
         let tile_size = self.tile_size();
         std::iter::from_fn(move || {
             if remaining_tiles <= 0 { None } else {
-                let tiles_x = (size.x as f32 / tile_size.x as f32).ceil() as u32;
-                let tiles_y = (size.y as f32 / tile_size.y as f32).ceil() as u32;
+                let Vec2d { x: tiles_x, y: tiles_y } = size.ceil_div(tile_size);
                 remaining_tiles -= i64::from(tiles_x) * i64::from(tiles_y);
                 let tiles_before = remaining_tiles as u32;
                 let lvl = ZoomLevelInfo { tiles_before, tile_size, size };
-                size = size / Vec2d { x: 2, y: 2 };
+                size = size.ceil_div(Vec2d { x: 2, y: 2 });
                 Some(lvl)
             }
         })

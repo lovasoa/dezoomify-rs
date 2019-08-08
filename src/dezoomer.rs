@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Debug;
-use std::ops::{Add, Div, Mul};
+use std::ops::{Add, Div, Mul, Sub};
 use std::str::FromStr;
 
 use custom_error::custom_error;
@@ -58,9 +58,8 @@ pub trait TileProvider: Debug {
     fn post_process_tile(&self, _tile: &TileReference, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
         Ok(data)
     }
-    fn name(&self) -> String {
-        format!("{:?}", self)
-    }
+    fn name(&self) -> String { format!("{:?}", self) }
+    fn size_hint(&self) -> Option<Vec2d> { None }
     fn http_headers(&self) -> HashMap<String, String> {
         HashMap::new()
     }
@@ -88,16 +87,19 @@ pub trait TilesRect: Debug {
 impl<T: TilesRect> TileProvider for T {
     fn tiles(&self) -> Vec<Result<TileReference, Box<dyn Error>>> {
         let tile_size = self.tile_size();
-        let Vec2d { x: w, y: h } = self.size() / tile_size;
+        let Vec2d { x: w, y: h } = self.size().ceil_div(tile_size);
 
-        (0..=w).flat_map(move |x| {
-            (0..=h).map(move |y| {
+        (0..w).flat_map(move |x| {
+            (0..h).map(move |y| {
                 let position = Vec2d { x, y };
                 let url = self.tile_url(position);
                 Ok(TileReference { url, position: position * tile_size })
             })
         }).collect()
     }
+
+    fn size_hint(&self) -> Option<Vec2d> { Some(self.size()) }
+
     fn post_process_tile(&self, tile: &TileReference, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
         TilesRect::post_process_tile(self, tile, data)
     }
@@ -120,6 +122,12 @@ impl Vec2d {
             y: self.y.max(other.y),
         }
     }
+    pub fn min(self, other: Vec2d) -> Vec2d {
+        Vec2d {
+            x: self.x.min(other.x),
+            y: self.y.min(other.y),
+        }
+    }
     pub fn ceil_div(self, other: Vec2d) -> Vec2d {
         let x = self.x / other.x + if self.x % other.x == 0 { 0 } else { 1 };
         let y = self.y / other.y + if self.y % other.y == 0 { 0 } else { 1 };
@@ -138,6 +146,14 @@ impl Add<Vec2d> for Vec2d {
 
     fn add(self, rhs: Vec2d) -> Self::Output {
         Vec2d { x: self.x + rhs.x, y: self.y + rhs.y }
+    }
+}
+
+impl Sub<Vec2d> for Vec2d {
+    type Output = Vec2d;
+
+    fn sub(self, rhs: Vec2d) -> Self::Output {
+        Vec2d { x: self.x - rhs.x, y: self.y - rhs.y }
     }
 }
 
