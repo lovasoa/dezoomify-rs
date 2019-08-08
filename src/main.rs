@@ -207,7 +207,7 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
             let result =
                 Tile::download(&zoom_level, &tile_ref, &http_client)
                     .map_err(|e| ZoomError::TileDownloadError { uri: tile_ref.url.clone(), cause: e.into() });
-            if let Err(e) = &result { progress.println(&e.to_string()) }
+            if let Err(e) = &result { progress.println(e.to_string()) }
             result.ok()
         }).collect();
     let final_msg = if tiles.len() == total_tiles {
