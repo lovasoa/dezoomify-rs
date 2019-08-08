@@ -80,7 +80,7 @@ pub trait TilesRect: Debug {
         Ok(data)
     }
     fn tile_count(&self) -> u32 {
-        let Vec2d { x, y } = self.size() / self.tile_size();
+        let Vec2d { x, y } = self.size().ceil_div(self.tile_size());
         x * y
     }
 }
@@ -90,8 +90,8 @@ impl<T: TilesRect> TileProvider for T {
         let tile_size = self.tile_size();
         let Vec2d { x: w, y: h } = self.size() / tile_size;
 
-        (0..w).flat_map(move |x| {
-            (0..h).map(move |y| {
+        (0..=w).flat_map(move |x| {
+            (0..=h).map(move |y| {
                 let position = Vec2d { x, y };
                 let url = self.tile_url(position);
                 Ok(TileReference { url, position: position * tile_size })
@@ -119,6 +119,11 @@ impl Vec2d {
             x: self.x.max(other.x),
             y: self.y.max(other.y),
         }
+    }
+    pub fn ceil_div(self, other: Vec2d) -> Vec2d {
+        let x = self.x / other.x + if self.x % other.x == 0 { 0 } else { 1 };
+        let y = self.y / other.y + if self.y % other.y == 0 { 0 } else { 1 };
+        Vec2d { x, y }
     }
 }
 
