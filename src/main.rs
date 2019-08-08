@@ -96,7 +96,8 @@ impl Tile {
         client: &reqwest::Client,
     ) -> Result<Tile, ZoomError> {
         let mut buf: Vec<u8> = vec![];
-        client.get(&tile_reference.url).send()?.copy_to(&mut buf)?;
+        let mut data = client.get(&tile_reference.url).send()?.error_for_status()?;
+        data.copy_to(&mut buf)?;
         buf = zoom_level.post_process_tile(tile_reference, buf)
             .map_err(|source| ZoomError::PostProcessing { source })?;
         Ok(Tile {
@@ -244,7 +245,9 @@ fn client(headers: HashMap<String, String>) -> Result<reqwest::Client, ZoomError
         .chain(headers.iter())
         .map(|(name, value)| Ok((name.parse()?, value.parse()?)))
         .collect();
-    let client = reqwest::Client::builder().default_headers(header_map?).build()?;
+    let client = reqwest::Client::builder()
+        .default_headers(header_map?)
+        .build()?;
     Ok(client)
 }
 
