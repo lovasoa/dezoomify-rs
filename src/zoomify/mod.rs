@@ -96,3 +96,15 @@ fn test_panorama() {
         "http://x.fr/y/TileGroup0/3-5-0.jpg"
     ]);
 }
+
+#[test]
+fn test_tilegroups() {
+    let url = "http://x.fr/y/ImageProperties.xml?t";
+    let contents = br#"<IMAGE_PROPERTIES WIDTH="12000" HEIGHT="9788"
+                                NUMTILES="2477" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>"#;
+    let props = load_from_properties(url, contents).unwrap();
+    let level = &props[5];
+    let tiles: Vec<String> = level.tiles().into_iter().map(|t| t.unwrap().url).collect();
+    assert_eq!(tiles[14], "http://x.fr/y/TileGroup1/5-0-14.jpg");
+    assert_eq!(tiles[15], "http://x.fr/y/TileGroup2/5-0-15.jpg");
+}
