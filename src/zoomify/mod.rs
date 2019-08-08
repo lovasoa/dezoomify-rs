@@ -3,7 +3,7 @@ use std::sync::Arc;
 use custom_error::custom_error;
 use image_properties::{ImageProperties, ZoomLevelInfo};
 
-use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, DezoomerInputWithContents, TileProvider, TileReference, TilesRect, Vec2d, ZoomLevels};
+use crate::dezoomer::*;
 
 mod image_properties;
 
@@ -32,8 +32,7 @@ impl From<ZoomifyError> for DezoomerError {
 }
 
 fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, ZoomifyError> {
-    let image_properties_raw: ImageProperties = serde_xml_rs::from_reader(contents)?;
-    let image_properties = &Arc::new(image_properties_raw);
+    let image_properties: ImageProperties = serde_xml_rs::from_reader(contents)?;
     let base_url = &Arc::new(url.split("/ImageProperties.xml").next().unwrap().into());
     let reversed_levels: Vec<ZoomLevelInfo> = image_properties.levels().collect();
     let levels: ZoomLevels = reversed_levels.into_iter()
@@ -43,7 +42,6 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, Zoomif
             Box::new(ZoomifyLevel {
                 base_url: Arc::clone(base_url),
                 level_info,
-                image_properties: Arc::clone(image_properties),
                 level,
             }) as Box<dyn TileProvider + Sync>
         }).collect();
@@ -53,7 +51,6 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, Zoomif
 struct ZoomifyLevel {
     base_url: Arc<String>,
     level_info: ZoomLevelInfo,
-    image_properties: Arc<ImageProperties>,
     level: usize,
 }
 

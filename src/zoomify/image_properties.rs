@@ -22,14 +22,14 @@ impl ImageProperties {
         Vec2d { x: self.tile_size, y: self.tile_size }
     }
     pub fn levels(&self) -> impl Iterator<Item=ZoomLevelInfo> {
-        let mut remaining_tiles = self.num_tiles as i64;
+        let mut remaining_tiles = i64::from(self.num_tiles);
         let mut size = self.size();
         let tile_size = self.tile_size();
         std::iter::from_fn(move || {
             if remaining_tiles <= 0 { None } else {
                 let tiles_x = (size.x as f32 / tile_size.x as f32).ceil() as u32;
                 let tiles_y = (size.y as f32 / tile_size.y as f32).ceil() as u32;
-                remaining_tiles -= (tiles_x * tiles_y) as i64;
+                remaining_tiles -= i64::from(tiles_x) * i64::from(tiles_y);
                 let tiles_before = remaining_tiles as u32;
                 let lvl = ZoomLevelInfo { tiles_before, tile_size, size };
                 size = size / Vec2d { x: 2, y: 2 };
