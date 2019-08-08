@@ -118,6 +118,12 @@ impl Vec2d {
     }
 }
 
+impl std::fmt::Display for Vec2d {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "x={} y={}", self.x, self.y)
+    }
+}
+
 impl Add<Vec2d> for Vec2d {
     type Output = Vec2d;
 

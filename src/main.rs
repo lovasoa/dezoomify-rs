@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::io::{BufRead, Read};
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use image::{GenericImage, GenericImageView, ImageBuffer};
+use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use reqwest::{Client, header};
 use structopt::StructOpt;
@@ -167,6 +167,14 @@ fn display_err<T, E: std::fmt::Display>(res: Result<T, E>) -> Option<T> {
     }
 }
 
+fn progress_bar(n: usize) -> ProgressBar {
+    let bar = ProgressBar::new(n as u64);
+    bar.set_style(ProgressStyle::default_bar()
+        .template("[ETA:{eta}] {bar:40.cyan/blue} {pos:>4}/{len:4} {msg}")
+        .progress_chars("##-"));
+    bar
+}
+
 fn dezoomify(args: Arguments)
              -> Result<(), ZoomError> {
     let uri = args.choose_input_uri();
@@ -180,34 +188,41 @@ fn dezoomify(args: Arguments)
 
     let tile_refs: Vec<TileReference> = zoom_level.tiles().into_iter()
         .filter_map(display_err).collect();
+
+    let bar = progress_bar(tile_refs.len());
     let total_tiles = tile_refs.len();
-    let done_tiles = AtomicUsize::new(0);
-
-    let tile_results: Vec<Option<Tile>> = tile_refs.into_par_iter()
-        .map(|tile_ref| {
-            let done = 1 + done_tiles.fetch_add(1, Ordering::Relaxed);
-            print!("\rDownloading tiles: {}/{} ()", done, total_tiles);
-            let result = Tile::download(zoom_level, &tile_ref, &http_client)
-                .map_err(|e|
-                    ZoomError::TileDownloadError { uri:tile_ref.url.clone(), cause: e.into(),
-                });
-            display_err(result)
+    let tiles: Vec<Tile> = tile_refs.into_par_iter()
+        .flat_map(|tile_ref: TileReference| {
+            bar.inc(1);
+            bar.set_message(&format!("Downloading tile at {}", tile_ref.position));
+            let result =
+                Tile::download(zoom_level, &tile_ref, &http_client)
+                    .map_err(|e| ZoomError::TileDownloadError { uri: tile_ref.url.clone(), cause: e.into() });
+            if let Err(e) = &result { bar.println(&e.to_string()) }
+            result.ok()
         }).collect();
+    let final_msg = if tiles.len() == total_tiles {
+        "Downloaded all tiles.".into()
+    } else {
+        format!("Successfully downloaded {} tiles out of {}", tiles.len(), total_tiles)
+    };
+    bar.finish_with_message(&final_msg);
+    if tiles.is_empty() { return Err(ZoomError::NoTile) }
 
-    println!("\nDownloaded all tiles");
-
-    let size = tile_results.iter().flatten()
-        .map(Tile::bottom_right)
+    let size = tiles.iter().map(Tile::bottom_right)
         .fold(Vec2d::default(), Vec2d::max);
 
     let mut canvas = Canvas::new(size);
 
-    for tile in tile_results.iter().flatten() {
-        print!("Adding tile at x={:04} y={:04}\r", tile.position.x, tile.position.y);
+    let bar = progress_bar(tiles.len());
+    for tile in tiles.iter() {
+        bar.inc(1);
+        bar.set_message(&format!("Adding tile at {} to the canvas", tile.position));
         canvas.add_tile(&tile)?;
     }
+    bar.finish_with_message("Finished stitching all tiles together");
 
-    println!("\nSaving the image...");
+    println!("Saving the image to {}...", &args.outfile.to_string_lossy());
     canvas.image.save(&args.outfile)?;
     println!("Saved the image to {}",
              fs::canonicalize(&args.outfile).unwrap_or(args.outfile).to_string_lossy());
@@ -252,6 +267,7 @@ custom_error! {
     Networking{source: reqwest::Error} = "network error: {source}",
     Dezoomer{source: DezoomerError} = "Dezoomer error: {source}",
     NoLevels = "A zoomable image was found, but it did not contain any zoom level",
+    NoTile = "Could not get any tile for the image",
     Image{source: image::ImageError} = "invalid image error: {source}",
     TileDownloadError{uri: String, cause: Box<ZoomError>} = "error with tile {uri}: {cause}",
     PostProcessing{source: Box<dyn Error>} = "unable to process the downloaded tile: {source}",
