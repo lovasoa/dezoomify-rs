@@ -79,6 +79,10 @@ pub trait TilesRect: Debug {
     fn post_process_tile(&self, _tile: &TileReference, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
         Ok(data)
     }
+    fn tile_count(&self) -> u32 {
+        let Vec2d { x, y } = self.size() / self.tile_size();
+        x * y
+    }
 }
 
 impl<T: TilesRect> TileProvider for T {
@@ -99,7 +103,7 @@ impl<T: TilesRect> TileProvider for T {
     }
     fn name(&self) -> String {
         let Vec2d { x, y } = self.size();
-        format!("{:?} ({}x{})", self, x, y)
+        format!("{:?} ({:^5} x {:^5} pixels, {:>5} tiles)", self, x, y, self.tile_count())
     }
 }
 
