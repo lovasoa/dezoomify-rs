@@ -137,24 +137,30 @@ fn list_tiles(dezoomer: &mut dyn Dezoomer, http: &Client, uri: &str)
     }
 }
 
-fn choose_level(levels: &[ZoomLevel]) -> Result<&ZoomLevel, ZoomError> {
-    if levels.len() > 1 {
-        println!("Found the following zoom levels:");
-        for (i, level) in levels.iter().enumerate() {
-            println!("{}. {}", i, level.name());
-        }
-        loop {
-            println!("Which level do you want to download? ");
-            let line = stdin_line();
-            if let Ok(idx) = line.parse::<usize>() {
-                if let Some(level) = levels.get(idx) {
-                    return Ok(level)
-                }
-            }
-            println!("'{}' is not a valid level number", line);
-        }
+/// An interactive level picker
+fn level_picker(mut levels: Vec<ZoomLevel>) -> Result<ZoomLevel, ZoomError> {
+    println!("Found the following zoom levels:");
+    for (i, level) in levels.iter().enumerate() {
+        println!("{}. {}", i, level.name());
     }
-    levels.first().ok_or(ZoomError::NoLevels)
+    loop {
+        println!("Which level do you want to download? ");
+        let line = stdin_line();
+        if let Ok(idx) = line.parse::<usize>() {
+            if levels.get(idx).is_some() {
+                return Ok(levels.swap_remove(idx))
+            }
+        }
+        println!("'{}' is not a valid level number", line);
+    }
+}
+
+fn choose_level(mut levels: Vec<ZoomLevel>) -> Result<ZoomLevel, ZoomError> {
+    match levels.len() {
+        0 => Err(ZoomError::NoLevels),
+        1 => Ok(levels.swap_remove(0)),
+        _ => level_picker(levels)
+    }
 }
 
 fn display_err<T, E: std::fmt::Display>(res: Result<T, E>) -> Option<T> {
@@ -168,37 +174,40 @@ fn display_err<T, E: std::fmt::Display>(res: Result<T, E>) -> Option<T> {
 }
 
 fn progress_bar(n: usize) -> ProgressBar {
-    let bar = ProgressBar::new(n as u64);
-    bar.set_style(ProgressStyle::default_bar()
+    let progress = ProgressBar::new(n as u64);
+    progress.set_style(ProgressStyle::default_bar()
         .template("[ETA:{eta}] {bar:40.cyan/blue} {pos:>4}/{len:4} {msg}")
         .progress_chars("##-"));
-    bar
+    progress
 }
 
-fn dezoomify(args: Arguments)
-             -> Result<(), ZoomError> {
+fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
     let uri = args.choose_input_uri();
     let mut dezoomer = args.find_dezoomer()?;
     let http_client = client(HashMap::new())?;
     println!("Trying to locate a zoomable image...");
     let zoom_levels: Vec<ZoomLevel> = list_tiles(dezoomer.as_mut(), &http_client, &uri)?;
-    let zoom_level = choose_level(&zoom_levels)?;
+    choose_level(zoom_levels)
+}
+
+fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
+    let zoom_level = find_zoomlevel(&args)?;
 
     let http_client = client(zoom_level.http_headers())?;
 
     let tile_refs: Vec<TileReference> = zoom_level.tiles().into_iter()
         .filter_map(display_err).collect();
 
-    let bar = progress_bar(tile_refs.len());
+    let progress = progress_bar(tile_refs.len());
     let total_tiles = tile_refs.len();
     let tiles: Vec<Tile> = tile_refs.into_par_iter()
         .flat_map(|tile_ref: TileReference| {
-            bar.inc(1);
-            bar.set_message(&format!("Downloading tile at {}", tile_ref.position));
+            progress.inc(1);
+            progress.set_message(&format!("Downloading tile at {}", tile_ref.position));
             let result =
-                Tile::download(zoom_level, &tile_ref, &http_client)
+                Tile::download(&zoom_level, &tile_ref, &http_client)
                     .map_err(|e| ZoomError::TileDownloadError { uri: tile_ref.url.clone(), cause: e.into() });
-            if let Err(e) = &result { bar.println(&e.to_string()) }
+            if let Err(e) = &result { progress.println(&e.to_string()) }
             result.ok()
         }).collect();
     let final_msg = if tiles.len() == total_tiles {
@@ -206,7 +215,7 @@ fn dezoomify(args: Arguments)
     } else {
         format!("Successfully downloaded {} tiles out of {}", tiles.len(), total_tiles)
     };
-    bar.finish_with_message(&final_msg);
+    progress.finish_with_message(&final_msg);
     if tiles.is_empty() { return Err(ZoomError::NoTile) }
 
     let size = tiles.iter().map(Tile::bottom_right)
@@ -214,13 +223,13 @@ fn dezoomify(args: Arguments)
 
     let mut canvas = Canvas::new(size);
 
-    let bar = progress_bar(tiles.len());
+    let progress = progress_bar(tiles.len());
     for tile in tiles.iter() {
-        bar.inc(1);
-        bar.set_message(&format!("Adding tile at {} to the canvas", tile.position));
+        progress.inc(1);
+        progress.set_message(&format!("Adding tile at {} to the canvas", tile.position));
         canvas.add_tile(&tile)?;
     }
-    bar.finish_with_message("Finished stitching all tiles together");
+    progress.finish_with_message("Finished stitching all tiles together");
 
     println!("Saving the image to {}...", &args.outfile.to_string_lossy());
     canvas.image.save(&args.outfile)?;
