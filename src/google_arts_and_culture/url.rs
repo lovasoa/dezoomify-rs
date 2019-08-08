@@ -37,7 +37,7 @@ fn test_compute_url() {
     let path = "https://lh3.googleusercontent.com/wGcDNN8L-2COcm9toX5BTp6HPxpMPPPuxrMU-ZL-W-nDHW8I_L4R5vlBJ6ITtlmONQ".into();
     let token = "KwCgJ1QIfgprHn0a93x7Q-HhJ04".into();
     assert_eq!(
-        compute_url(&PageInfo { base_url: path, token }, 0, 0, 7),
+        compute_url(&PageInfo { base_url: path, token, name: "".into() }, 0, 0, 7),
         "https://lh3.googleusercontent.com/wGcDNN8L-2COcm9toX5BTp6HPxpMPPPuxrMU-ZL-W-nDHW8I_L4R5vlBJ6ITtlmONQ=x0-y0-z7-tHeJ3xylnSyyHPGwMZimI4EV3JP8"
     );
 }

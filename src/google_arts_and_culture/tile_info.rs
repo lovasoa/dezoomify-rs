@@ -41,6 +41,7 @@ fn test_xml_parse() {
 pub struct PageInfo {
     pub base_url: String,
     pub token: String,
+    pub name: String,
 }
 
 impl PageInfo {
@@ -57,18 +58,20 @@ impl FromStr for PageInfo {
 
     /// Parses a google arts project HTML page
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let path = extract_between(
+        let base_url = extract_between(
             s,
             "<meta property=\"og:image\" content=\"",
             "\"",
         ).ok_or(PageParseError::NoPath)?.to_string();
 
-        let path_no_protocol = path.split(':')
+        let path_no_protocol = base_url.split(':')
             .nth(1).ok_or(PageParseError::BadPath)?;
         let before_token = format!(",\"{}\",\"", path_no_protocol);
         let token = extract_between(s, &before_token, "\"")
             .ok_or(PageParseError::NoToken)?.to_string();
-        Ok(PageInfo { base_url: path, token })
+        let name = extract_between(s, "\"name\":\"", "\"")
+            .unwrap_or("Google Arts and culture image").into();
+        Ok(PageInfo { base_url, token, name })
     }
 }
 

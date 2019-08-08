@@ -79,6 +79,6 @@ impl TilesRect for GAPZoomLevel {
 
 impl std::fmt::Debug for GAPZoomLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Google Arts and Culture")
+        write!(f, "{}", &self.page_info.name)
     }
 }
