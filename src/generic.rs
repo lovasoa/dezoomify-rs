@@ -4,6 +4,7 @@ pub fn all_dezoomers() -> Vec<Box<dyn Dezoomer>> {
     vec![
         Box::new(crate::custom_yaml::CustomDezoomer::default()),
         Box::new(crate::google_arts_and_culture::GAPDezoomer::default()),
+        Box::new(crate::zoomify::ZoomifyDezoomer::default()),
     ]
 }
 

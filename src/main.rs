@@ -20,6 +20,7 @@ mod dezoomer;
 mod generic;
 mod custom_yaml;
 mod google_arts_and_culture;
+mod zoomify;
 
 #[derive(StructOpt, Debug)]
 struct Arguments {

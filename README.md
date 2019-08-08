@@ -12,10 +12,11 @@ very large images, that currently cannot be dezoomed inside a browser
 because of memory constraints.
 
 The following dezoomers are currently available:
+ - [**zoomify**](#zoomify) supports the popular zoomable image format *Zoomify*.
+ - [**Google Arts & Culture**](#google-arts-culture) supports downloading images from
+    [artsandculture.google.com](https://artsandculture.google.com/);
  - [**custom**](#Custom) for advanced users.
     It allows you to specify a custom tile URL format.
- - [**Google Arts & Culture**](#google-arts-culture) supports downloading images from
-    [artsandculture.google.com](https://artsandculture.google.com/).
 
 ## Usage instructions
 
@@ -73,3 +74,11 @@ launch `dezoomify-rs` in a terminal and when asked, enter `tiles.yaml` as the ti
 In order to download images from google arts and culture, just open 
 `dezoomify-rs`, and when asked, enter the URL of a viewing page, such as 
 https://artsandculture.google.com/asset/light-in-the-dark/ZQFouDGMVmsI2w 
+
+### Zoomify
+
+You have to give dezoomify-rs an url to the `ImageProperties.xml` file.
+If the image tile URLs have the form
+`http://example.com/path/to/TileGroup1/1-2-3.jpg`,
+then the URL to enter is
+`http://example.com/path/to/ImageProperties.xml`.
