@@ -1,11 +1,15 @@
 use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 
-pub fn all_dezoomers() -> Vec<Box<dyn Dezoomer>> {
-    vec![
+pub fn all_dezoomers(include_generic: bool) -> Vec<Box<dyn Dezoomer>> {
+    let mut dezoomers: Vec<Box<dyn Dezoomer>> = vec![
         Box::new(crate::custom_yaml::CustomDezoomer::default()),
         Box::new(crate::google_arts_and_culture::GAPDezoomer::default()),
         Box::new(crate::zoomify::ZoomifyDezoomer::default()),
-    ]
+    ];
+    if include_generic {
+        dezoomers.push(Box::new(GenericDezoomer::default()))
+    }
+    dezoomers
 }
 
 pub struct GenericDezoomer {
@@ -14,7 +18,7 @@ pub struct GenericDezoomer {
 
 impl Default for GenericDezoomer {
     fn default() -> Self {
-        GenericDezoomer { dezoomers: all_dezoomers() }
+        GenericDezoomer { dezoomers: all_dezoomers(false) }
     }
 }
 

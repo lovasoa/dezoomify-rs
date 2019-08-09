@@ -32,8 +32,8 @@ struct Arguments {
     outfile: std::path::PathBuf,
 
     /// Name of the dezoomer to use
-    #[structopt(short = "d", long = "dezoomer")]
-    dezoomer: Option<String>
+    #[structopt(short = "d", long = "dezoomer", default_value = "generic")]
+    dezoomer: String
 }
 
 impl Arguments {
@@ -47,13 +47,9 @@ impl Arguments {
         }
     }
     fn find_dezoomer(&self) -> Result<Box<dyn Dezoomer>, ZoomError> {
-        if let Some(name) = &self.dezoomer {
-            generic::all_dezoomers().into_iter()
-                .find(|d| d.name() == name)
-                .ok_or_else(|| ZoomError::NoSuchDezoomer { name: name.clone() })
-        } else {
-            Ok(Box::new(generic::GenericDezoomer::default()))
-        }
+        generic::all_dezoomers(true).into_iter()
+            .find(|d| d.name() == self.dezoomer)
+            .ok_or_else(|| ZoomError::NoSuchDezoomer { name: self.dezoomer.clone() })
     }
 }
 
@@ -184,8 +180,8 @@ fn progress_bar(n: usize) -> ProgressBar {
 }
 
 fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
-    let uri = args.choose_input_uri();
     let mut dezoomer = args.find_dezoomer()?;
+    let uri = args.choose_input_uri();
     let http_client = client(HashMap::new())?;
     println!("Trying to locate a zoomable image...");
     let zoom_levels: Vec<ZoomLevel> = list_tiles(dezoomer.as_mut(), &http_client, &uri)?;
