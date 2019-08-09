@@ -43,6 +43,18 @@ impl DezoomerError {
 pub type ZoomLevel = Box<dyn TileProvider + Sync>;
 pub type ZoomLevels = Vec<ZoomLevel>;
 
+pub trait IntoZoomLevels {
+    fn into_zoom_levels(self) -> ZoomLevels;
+}
+
+impl<I, Z> IntoZoomLevels for I
+    where I: Iterator<Item=Z>,
+          Z: TileProvider + Sync + 'static {
+    fn into_zoom_levels(self) -> ZoomLevels {
+        self.map(|x| Box::new(x) as ZoomLevel).collect()
+    }
+}
+
 pub trait Dezoomer {
     fn name(&self) -> &'static str;
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError>;
@@ -98,15 +110,15 @@ impl<T: TilesRect> TileProvider for T {
         }).collect()
     }
 
-    fn size_hint(&self) -> Option<Vec2d> { Some(self.size()) }
-
     fn post_process_tile(&self, tile: &TileReference, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
         TilesRect::post_process_tile(self, tile, data)
     }
+
     fn name(&self) -> String {
         let Vec2d { x, y } = self.size();
         format!("{:?} ({:>5} x {:>5} pixels, {:>5} tiles)", self, x, y, self.tile_count())
     }
+    fn size_hint(&self) -> Option<Vec2d> { Some(self.size()) }
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Copy)]

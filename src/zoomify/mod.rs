@@ -39,12 +39,12 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, Zoomif
         .rev()
         .enumerate()
         .map(move |(level, level_info)| {
-            Box::new(ZoomifyLevel {
+            ZoomifyLevel {
                 base_url: Arc::clone(base_url),
                 level_info,
                 level,
-            }) as Box<dyn TileProvider + Sync>
-        }).collect();
+            }
+        }).into_zoom_levels();
     Ok(levels)
 }
 

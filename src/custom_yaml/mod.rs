@@ -4,7 +4,7 @@ use std::error::Error;
 use serde::Deserialize;
 
 use crate::default_headers;
-use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, single_level, TileProvider, ZoomLevels};
+use crate::dezoomer::*;
 use crate::TileReference;
 
 mod tile_set;

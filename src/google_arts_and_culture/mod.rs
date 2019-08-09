@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::sync::Arc;
 
-use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, TileProvider, TileReference, TilesRect, Vec2d, ZoomLevels};
+use crate::dezoomer::*;
 use crate::google_arts_and_culture::tile_info::{PageInfo, TileInfo};
 
 mod decryption;
@@ -40,14 +40,13 @@ impl Dezoomer for GAPDezoomer {
                     .map(|(z, level)| {
                         let width = tile_width * level.num_tiles_x - level.empty_pels_x;
                         let height = tile_height * level.num_tiles_y - level.empty_pels_y;
-                        let gap_level = GAPZoomLevel {
+                        GAPZoomLevel {
                             size: Vec2d { x: width, y: height },
                             tile_size: Vec2d { x: tile_width, y: tile_height },
                             z,
                             page_info: Arc::clone(page_info),
-                        };
-                        Box::new(gap_level) as Box<dyn TileProvider + Sync>
-                    }).collect();
+                        }
+                    }).into_zoom_levels();
                 Ok(levels)
             }
         }
