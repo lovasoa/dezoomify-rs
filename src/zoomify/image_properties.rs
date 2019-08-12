@@ -16,21 +16,36 @@ pub struct ImageProperties {
 
 impl ImageProperties {
     fn size(&self) -> Vec2d {
-        Vec2d { x: self.width, y: self.height }
+        Vec2d {
+            x: self.width,
+            y: self.height,
+        }
     }
     fn tile_size(&self) -> Vec2d {
-        Vec2d { x: self.tile_size, y: self.tile_size }
+        Vec2d {
+            x: self.tile_size,
+            y: self.tile_size,
+        }
     }
-    pub fn levels(&self) -> impl Iterator<Item=ZoomLevelInfo> {
+    pub fn levels(&self) -> impl Iterator<Item = ZoomLevelInfo> {
         let mut remaining_tiles = i64::from(self.num_tiles);
         let mut size = self.size();
         let tile_size = self.tile_size();
         std::iter::from_fn(move || {
-            if remaining_tiles <= 0 { None } else {
-                let Vec2d { x: tiles_x, y: tiles_y } = size.ceil_div(tile_size);
+            if remaining_tiles <= 0 {
+                None
+            } else {
+                let Vec2d {
+                    x: tiles_x,
+                    y: tiles_y,
+                } = size.ceil_div(tile_size);
                 remaining_tiles -= i64::from(tiles_x) * i64::from(tiles_y);
                 let tiles_before = remaining_tiles as u32;
-                let lvl = ZoomLevelInfo { tiles_before, tile_size, size };
+                let lvl = ZoomLevelInfo {
+                    tiles_before,
+                    tile_size,
+                    size,
+                };
                 size = size.ceil_div(Vec2d { x: 2, y: 2 });
                 Some(lvl)
             }

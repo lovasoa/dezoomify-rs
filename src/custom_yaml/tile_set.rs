@@ -22,14 +22,17 @@ pub struct TileSet {
     y_template: IntTemplate,
 }
 
+fn default_x_template() -> IntTemplate {
+    "x".parse().unwrap()
+}
 
-fn default_x_template() -> IntTemplate { "x".parse().unwrap() }
-
-fn default_y_template() -> IntTemplate { "y".parse().unwrap() }
+fn default_y_template() -> IntTemplate {
+    "y".parse().unwrap()
+}
 
 impl<'a> IntoIterator for &'a TileSet {
     type Item = Result<TileReference, UrlTemplateError>;
-    type IntoIter = Box<dyn Iterator<Item=Self::Item> + 'a>;
+    type IntoIter = Box<dyn Iterator<Item = Self::Item> + 'a>;
 
     fn into_iter(self) -> Self::IntoIter {
         Box::new(self.variables.iter_contexts().map(move |ctx| {
@@ -50,8 +53,13 @@ struct IntTemplate(String);
 
 impl IntTemplate {
     fn eval<C: evalexpr::Context>(&self, context: &C) -> Result<u32, UrlTemplateError> {
-        let template: evalexpr::Node = evalexpr::build_operator_tree(&self.0)
-            .map_err(|source| UrlTemplateError::BadExpression { expr: self.0.clone(), source })?;
+        let template: evalexpr::Node =
+            evalexpr::build_operator_tree(&self.0).map_err(|source| {
+                UrlTemplateError::BadExpression {
+                    expr: self.0.clone(),
+                    source,
+                }
+            })?;
         let evaluated_int = template.eval_int_with_context(context)?;
         Ok(evaluated_int.try_into()?)
     }
@@ -67,7 +75,8 @@ impl FromStr for IntTemplate {
 
 impl<'de> Deserialize<'de> for IntTemplate {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where D: Deserializer<'de>
+    where
+        D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
         FromStr::from_str(&s).map_err(de::Error::custom)
@@ -76,7 +85,7 @@ impl<'de> Deserialize<'de> for IntTemplate {
 
 #[derive(Debug)]
 struct UrlTemplate {
-    parts: Vec<UrlPart>
+    parts: Vec<UrlPart>,
 }
 
 impl UrlTemplate {
@@ -108,7 +117,8 @@ impl FromStr for UrlTemplate {
 
 impl<'de> Deserialize<'de> for UrlTemplate {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where D: Deserializer<'de>
+    where
+        D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
         FromStr::from_str(&s).map_err(de::Error::custom)
@@ -131,7 +141,7 @@ impl UrlPart {
     fn eval<C: evalexpr::Context>(&self, context: &C) -> Result<String, UrlTemplateError> {
         match self {
             UrlPart::Constant(s) => Ok(s.clone()),
-            UrlPart::Expression(expr) => Ok(format!("{}", expr.eval(context)?))
+            UrlPart::Expression(expr) => Ok(format!("{}", expr.eval(context)?)),
         }
     }
 }
@@ -152,7 +162,7 @@ mod tests {
     use crate::TileReference;
 
     use super::super::tile_set::{IntTemplate, TileSet, UrlTemplate, UrlTemplateError};
-    use super::super::variable::{Variables, VarOrConst};
+    use super::super::variable::{VarOrConst, Variables};
 
     #[test]
     fn url_template_evaluation() -> Result<(), UrlTemplateError> {
@@ -176,12 +186,11 @@ mod tests {
             y_template: IntTemplate::from_str("y").unwrap(),
         };
         let tile_refs: Vec<_> = ts.into_iter().collect::<Result<_, _>>().unwrap();
-        let expected: Vec<_> = vec![
-            "0 0 0/0",
-            "0 1 0/1",
-            "1 0 1/0",
-            "1 1 1/1",
-        ].into_iter().map(TileReference::from_str).collect::<Result<_, _>>().unwrap();
+        let expected: Vec<_> = vec!["0 0 0/0", "0 1 0/1", "1 0 1/0", "1 1 1/1"]
+            .into_iter()
+            .map(TileReference::from_str)
+            .collect::<Result<_, _>>()
+            .unwrap();
         assert_eq!(expected, tile_refs);
     }
 
@@ -201,12 +210,11 @@ url_template: "{{x*tile_size}}/{{y*tile_size}}"
         "#;
         let ts: TileSet = serde_yaml::from_str(serialized).unwrap();
         let tile_refs: Vec<_> = ts.into_iter().collect::<Result<_, _>>().unwrap();
-        let expected: Vec<_> = vec![
-            "0 0 0/0",
-            "0 1 0/100",
-            "1 0 100/0",
-            "1 1 100/100",
-        ].into_iter().map(TileReference::from_str).collect::<Result<_, _>>().unwrap();
+        let expected: Vec<_> = vec!["0 0 0/0", "0 1 0/100", "1 0 100/0", "1 1 100/100"]
+            .into_iter()
+            .map(TileReference::from_str)
+            .collect::<Result<_, _>>()
+            .unwrap();
         assert_eq!(expected, tile_refs);
     }
 }

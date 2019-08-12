@@ -17,7 +17,9 @@ pub struct Variable {
     step: i64,
 }
 
-fn default_step() -> i64 { 1 }
+fn default_step() -> i64 {
+    1
+}
 
 impl Variable {
     fn check(&self) -> Result<(), BadVariableError> {
@@ -25,13 +27,20 @@ impl Variable {
             static ref RE: Regex = Regex::new(r"^\w+$").unwrap();
         }
         if !RE.is_match(&self.name) {
-            return Err(BadVariableError::BadName { name: self.name.clone() });
+            return Err(BadVariableError::BadName {
+                name: self.name.clone(),
+            });
         }
         let steps = (self.to - self.from) / self.step;
         if steps < 0 {
-            return Err(BadVariableError::Infinite { name: self.name.clone() });
+            return Err(BadVariableError::Infinite {
+                name: self.name.clone(),
+            });
         } else if steps > i64::from(std::u32::MAX) {
-            return Err(BadVariableError::TooManyValues { name: self.name.clone(), steps });
+            return Err(BadVariableError::TooManyValues {
+                name: self.name.clone(),
+                steps,
+            });
         }
         Ok(())
     }
@@ -75,7 +84,12 @@ impl<'a> IntoIterator for &'a Variable {
     type IntoIter = VariableIterator;
 
     fn into_iter(self) -> Self::IntoIter {
-        VariableIterator { from: self.from, to: self.to, step: self.step, current: self.from }
+        VariableIterator {
+            from: self.from,
+            to: self.to,
+            step: self.step,
+            current: self.from,
+        }
     }
 }
 
@@ -88,17 +102,25 @@ pub struct Constant {
 
 #[derive(Deserialize, Clone, Debug)]
 #[serde(untagged)]
-pub enum VarOrConst { Var(Variable), Const(Constant) }
+pub enum VarOrConst {
+    Var(Variable),
+    Const(Constant),
+}
 
 impl VarOrConst {
     pub fn var(name: &str, from: i64, to: i64, step: i64) -> Result<VarOrConst, BadVariableError> {
-        let var = Variable { name: name.to_string(), from, to, step };
+        let var = Variable {
+            name: name.to_string(),
+            from,
+            to,
+            step,
+        };
         var.check().and(Ok(Var(var)))
     }
     pub fn name(&self) -> &str {
         match self {
-            VarOrConst::Var(v) => { v.name() }
-            VarOrConst::Const(c) => { &c.name }
+            VarOrConst::Var(v) => v.name(),
+            VarOrConst::Const(c) => &c.name,
         }
     }
 }
@@ -109,17 +131,13 @@ impl<'a> IntoIterator for &'a VarOrConst {
 
     fn into_iter(self) -> Self::IntoIter {
         match self {
-            VarOrConst::Var(v) => {
-                v.into_iter()
-            }
-            VarOrConst::Const(c) => {
-                VariableIterator {
-                    from: c.value,
-                    to: c.value,
-                    current: c.value,
-                    step: 1,
-                }
-            }
+            VarOrConst::Var(v) => v.into_iter(),
+            VarOrConst::Const(c) => VariableIterator {
+                from: c.value,
+                to: c.value,
+                current: c.value,
+                step: 1,
+            },
         }
     }
 }
@@ -132,20 +150,22 @@ impl Variables {
     pub fn new(vars: Vec<VarOrConst>) -> Variables {
         Variables(vars)
     }
-    pub fn iter_contexts<'a>(&'a self)
-                             -> impl Iterator<Item=Result<HashMapContext, BadVariableError>> + 'a {
-        self.0.iter()
-            .map(|variable| {
-                variable.into_iter().map(move |val| (variable.name(), val))
-            }).multi_cartesian_product().map(|var_values| {
-            // Iterator on all the combination of values for the variables
-            use evalexpr::Context;
-            let mut ctx = HashMapContext::new();
-            for (var_name, var_value) in var_values {
-                ctx.set_value(var_name.into(), var_value.into())?;
-            }
-            Ok(ctx)
-        })
+    pub fn iter_contexts<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = Result<HashMapContext, BadVariableError>> + 'a {
+        self.0
+            .iter()
+            .map(|variable| variable.into_iter().map(move |val| (variable.name(), val)))
+            .multi_cartesian_product()
+            .map(|var_values| {
+                // Iterator on all the combination of values for the variables
+                use evalexpr::Context;
+                let mut ctx = HashMapContext::new();
+                for (var_name, var_value) in var_values {
+                    ctx.set_value(var_name.into(), var_value.into())?;
+                }
+                Ok(ctx)
+            })
     }
 }
 
@@ -160,8 +180,8 @@ custom_error! {pub BadVariableError
 mod tests {
     use evalexpr::Context;
 
-    use super::{Variable, Variables};
     use super::super::variable::VarOrConst;
+    use super::{Variable, Variables};
 
     #[test]
     fn variable_iteration() {
@@ -176,8 +196,17 @@ mod tests {
 
     #[test]
     fn variable_validity_check_name() {
-        let check = Variable { name: "hello world".to_string(), from: 0, to: 1, step: 1 }.check();
-        assert!(check.unwrap_err().to_string().contains("invalid variable name"))
+        let check = Variable {
+            name: "hello world".to_string(),
+            from: 0,
+            to: 1,
+            step: 1,
+        }
+        .check();
+        assert!(check
+            .unwrap_err()
+            .to_string()
+            .contains("invalid variable name"))
     }
 
     #[test]

@@ -11,7 +11,6 @@ pub struct TileInfo {
     pub pyramid_level: Vec<PyramidLevel>,
 }
 
-
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct PyramidLevel {
     pub num_tiles_x: u32,
@@ -19,7 +18,6 @@ pub struct PyramidLevel {
     pub empty_pels_x: u32,
     pub empty_pels_y: u32,
 }
-
 
 #[test]
 fn test_xml_parse() {
@@ -58,25 +56,27 @@ impl FromStr for PageInfo {
 
     /// Parses a google arts project HTML page
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let base_url = extract_between(
-            s,
-            "<meta property=\"og:image\" content=\"",
-            "\"",
-        ).ok_or(PageParseError::NoPath)?.to_string();
+        let base_url = extract_between(s, "<meta property=\"og:image\" content=\"", "\"")
+            .ok_or(PageParseError::NoPath)?
+            .to_string();
 
-        let path_no_protocol = base_url.split(':')
-            .nth(1).ok_or(PageParseError::BadPath)?;
+        let path_no_protocol = base_url.split(':').nth(1).ok_or(PageParseError::BadPath)?;
         let before_token = format!(",\"{}\",\"", path_no_protocol);
         let token = extract_between(s, &before_token, "\"")
-            .ok_or(PageParseError::NoToken)?.to_string();
+            .ok_or(PageParseError::NoToken)?
+            .to_string();
         let name = extract_between(s, "\"name\":\"", "\"")
-            .unwrap_or("Google Arts and culture image").into();
-        Ok(PageInfo { base_url, token, name })
+            .unwrap_or("Google Arts and culture image")
+            .into();
+        Ok(PageInfo {
+            base_url,
+            token,
+            name,
+        })
     }
 }
 
-fn extract_between<'a, 'b, 'c>(s: &'a str, start: &'b str, end: &'c str)
-                               -> Option<&'a str> {
+fn extract_between<'a, 'b, 'c>(s: &'a str, start: &'b str, end: &'c str) -> Option<&'a str> {
     let start_pos = start.len() + s.find(start)?;
     let end_pos = start_pos + (&s[start_pos..]).find(end)?;
     Some(&s[start_pos..end_pos])
@@ -104,7 +104,13 @@ fn test_parse_html() {
         .join("page_source.html");
     let test_html = fs::read_to_string(test_source_path).unwrap();
     let info: PageInfo = test_html.parse().unwrap();
-    assert_eq!(info.base_url, "https://lh5.ggpht.com/4AX4ua174encReZyEE7dTu0_RgBrBi79iqHamKQJtZnIBA5xqKBQib8DNvnq");
+    assert_eq!(
+        info.base_url,
+        "https://lh5.ggpht.com/4AX4ua174encReZyEE7dTu0_RgBrBi79iqHamKQJtZnIBA5xqKBQib8DNvnq"
+    );
     assert_eq!(info.token, "RQhR1krE-uvCYNXm5CmP6k2MuPY");
-    assert_eq!(info.tile_info_url(), "https://lh5.ggpht.com/4AX4ua174encReZyEE7dTu0_RgBrBi79iqHamKQJtZnIBA5xqKBQib8DNvnq=g");
+    assert_eq!(
+        info.tile_info_url(),
+        "https://lh5.ggpht.com/4AX4ua174encReZyEE7dTu0_RgBrBi79iqHamKQJtZnIBA5xqKBQib8DNvnq=g"
+    );
 }

@@ -13,17 +13,21 @@ pub fn all_dezoomers(include_generic: bool) -> Vec<Box<dyn Dezoomer>> {
 }
 
 pub struct GenericDezoomer {
-    dezoomers: Vec<Box<dyn Dezoomer>>
+    dezoomers: Vec<Box<dyn Dezoomer>>,
 }
 
 impl Default for GenericDezoomer {
     fn default() -> Self {
-        GenericDezoomer { dezoomers: all_dezoomers(false) }
+        GenericDezoomer {
+            dezoomers: all_dezoomers(false),
+        }
     }
 }
 
 impl Dezoomer for GenericDezoomer {
-    fn name(&self) -> &'static str { "generic" }
+    fn name(&self) -> &'static str {
+        "generic"
+    }
 
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
         let mut errs = vec![];
@@ -46,17 +50,19 @@ impl Dezoomer for GenericDezoomer {
                     false
                 }
             };
-            if keep { i += 1 } else { self.dezoomers.remove(i); }
+            if keep {
+                i += 1
+            } else {
+                self.dezoomers.remove(i);
+            }
         }
         if successes.is_empty() {
-            Err(needs_uri.unwrap_or_else(||
-                DezoomerError::wrap(GenericError(errs))))
+            Err(needs_uri.unwrap_or_else(|| DezoomerError::wrap(GenericError(errs))))
         } else {
             Ok(successes)
         }
     }
 }
-
 
 #[derive(Debug)]
 pub struct GenericError(Vec<DezoomerError>);
@@ -66,9 +72,12 @@ impl std::error::Error for GenericError {}
 impl std::fmt::Display for GenericError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         if self.0.is_empty() {
-            return writeln!(f, "No dezoomer!")
+            return writeln!(f, "No dezoomer!");
         }
-        writeln!(f, "Tried all of the dezoomers, none succeeded. They returned the following errors:\n")?;
+        writeln!(
+            f,
+            "Tried all of the dezoomers, none succeeded. They returned the following errors:\n"
+        )?;
         for e in self.0.iter() {
             writeln!(f, " - {}", e)?;
         }

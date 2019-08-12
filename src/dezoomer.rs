@@ -21,9 +21,14 @@ pub struct DezoomerInputWithContents<'a> {
 impl DezoomerInput {
     pub fn with_contents(&self) -> Result<DezoomerInputWithContents, DezoomerError> {
         if let Some(contents) = &self.contents {
-            Ok(DezoomerInputWithContents { uri: &self.uri, contents })
+            Ok(DezoomerInputWithContents {
+                uri: &self.uri,
+                contents,
+            })
         } else {
-            Err(DezoomerError::NeedsData { uri: self.uri.clone() })
+            Err(DezoomerError::NeedsData {
+                uri: self.uri.clone(),
+            })
         }
     }
 }
@@ -48,8 +53,10 @@ pub trait IntoZoomLevels {
 }
 
 impl<I, Z> IntoZoomLevels for I
-    where I: Iterator<Item=Z>,
-          Z: TileProvider + Sync + 'static {
+where
+    I: Iterator<Item = Z>,
+    Z: TileProvider + Sync + 'static,
+{
     fn into_zoom_levels(self) -> ZoomLevels {
         self.map(|x| Box::new(x) as ZoomLevel).collect()
     }
@@ -59,7 +66,9 @@ pub trait Dezoomer {
     fn name(&self) -> &'static str;
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError>;
     fn assert(&self, c: bool) -> Result<(), DezoomerError> {
-        if c { Ok(()) } else {
+        if c {
+            Ok(())
+        } else {
             Err(DezoomerError::WrongDezoomer { name: self.name() })
         }
     }
@@ -67,19 +76,28 @@ pub trait Dezoomer {
 
 pub trait TileProvider: Debug {
     fn tiles(&self) -> Vec<Result<TileReference, Box<dyn Error>>>;
-    fn post_process_tile(&self, _tile: &TileReference, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
+    fn post_process_tile(
+        &self,
+        _tile: &TileReference,
+        data: Vec<u8>,
+    ) -> Result<Vec<u8>, Box<dyn Error>> {
         Ok(data)
     }
-    fn name(&self) -> String { format!("{:?}", self) }
-    fn size_hint(&self) -> Option<Vec2d> { None }
+    fn name(&self) -> String {
+        format!("{:?}", self)
+    }
+    fn size_hint(&self) -> Option<Vec2d> {
+        None
+    }
     fn http_headers(&self) -> HashMap<String, String> {
         HashMap::new()
     }
 }
 
 /// Shortcut to return a single zoom level from a dezoomer
-pub fn single_level<T: TileProvider + Sync + 'static>(level: T)
-                                                      -> Result<ZoomLevels, DezoomerError> {
+pub fn single_level<T: TileProvider + Sync + 'static>(
+    level: T,
+) -> Result<ZoomLevels, DezoomerError> {
     Ok(vec![Box::new(level)])
 }
 
@@ -87,7 +105,11 @@ pub trait TilesRect: Debug {
     fn size(&self) -> Vec2d;
     fn tile_size(&self) -> Vec2d;
     fn tile_url(&self, pos: Vec2d) -> String;
-    fn post_process_tile(&self, _tile: &TileReference, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
+    fn post_process_tile(
+        &self,
+        _tile: &TileReference,
+        data: Vec<u8>,
+    ) -> Result<Vec<u8>, Box<dyn Error>> {
         Ok(data)
     }
     fn tile_count(&self) -> u32 {
@@ -101,24 +123,41 @@ impl<T: TilesRect> TileProvider for T {
         let tile_size = self.tile_size();
         let Vec2d { x: w, y: h } = self.size().ceil_div(tile_size);
 
-        (0..w).flat_map(move |x| {
-            (0..h).map(move |y| {
-                let position = Vec2d { x, y };
-                let url = self.tile_url(position);
-                Ok(TileReference { url, position: position * tile_size })
+        (0..w)
+            .flat_map(move |x| {
+                (0..h).map(move |y| {
+                    let position = Vec2d { x, y };
+                    let url = self.tile_url(position);
+                    Ok(TileReference {
+                        url,
+                        position: position * tile_size,
+                    })
+                })
             })
-        }).collect()
+            .collect()
     }
 
-    fn post_process_tile(&self, tile: &TileReference, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
+    fn post_process_tile(
+        &self,
+        tile: &TileReference,
+        data: Vec<u8>,
+    ) -> Result<Vec<u8>, Box<dyn Error>> {
         TilesRect::post_process_tile(self, tile, data)
     }
 
     fn name(&self) -> String {
         let Vec2d { x, y } = self.size();
-        format!("{:?} ({:>5} x {:>5} pixels, {:>5} tiles)", self, x, y, self.tile_count())
+        format!(
+            "{:?} ({:>5} x {:>5} pixels, {:>5} tiles)",
+            self,
+            x,
+            y,
+            self.tile_count()
+        )
     }
-    fn size_hint(&self) -> Option<Vec2d> { Some(self.size()) }
+    fn size_hint(&self) -> Option<Vec2d> {
+        Some(self.size())
+    }
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Copy)]
@@ -157,7 +196,10 @@ impl Add<Vec2d> for Vec2d {
     type Output = Vec2d;
 
     fn add(self, rhs: Vec2d) -> Self::Output {
-        Vec2d { x: self.x + rhs.x, y: self.y + rhs.y }
+        Vec2d {
+            x: self.x + rhs.x,
+            y: self.y + rhs.y,
+        }
     }
 }
 
@@ -165,7 +207,10 @@ impl Sub<Vec2d> for Vec2d {
     type Output = Vec2d;
 
     fn sub(self, rhs: Vec2d) -> Self::Output {
-        Vec2d { x: self.x - rhs.x, y: self.y - rhs.y }
+        Vec2d {
+            x: self.x - rhs.x,
+            y: self.y - rhs.y,
+        }
     }
 }
 
@@ -173,7 +218,10 @@ impl Mul<Vec2d> for Vec2d {
     type Output = Vec2d;
 
     fn mul(self, rhs: Vec2d) -> Self::Output {
-        Vec2d { x: self.x * rhs.x, y: self.y * rhs.y }
+        Vec2d {
+            x: self.x * rhs.x,
+            y: self.y * rhs.y,
+        }
     }
 }
 
@@ -181,10 +229,12 @@ impl Div<Vec2d> for Vec2d {
     type Output = Vec2d;
 
     fn div(self, rhs: Vec2d) -> Self::Output {
-        Vec2d { x: self.x / rhs.x, y: self.y / rhs.y }
+        Vec2d {
+            x: self.x / rhs.x,
+            y: self.y / rhs.y,
+        }
     }
 }
-
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct TileReference {
@@ -197,7 +247,9 @@ impl FromStr for TileReference {
 
     fn from_str(tile_str: &str) -> Result<Self, Self::Err> {
         let mut parts = tile_str.split(' ');
-        let make_error = || ZoomError::MalformedTileStr { tile_str: String::from(tile_str) };
+        let make_error = || ZoomError::MalformedTileStr {
+            tile_str: String::from(tile_str),
+        };
 
         if let (Some(x), Some(y), Some(url)) = (parts.next(), parts.next(), parts.next()) {
             let x: u32 = x.parse().map_err(|_| make_error())?;

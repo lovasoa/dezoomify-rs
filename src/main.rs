@@ -86,7 +86,10 @@ impl Arguments {
 }
 
 fn stdin_line() -> String {
-    std::io::stdin().lock().lines().next()
+    std::io::stdin()
+        .lock()
+        .lines()
+        .next()
         .expect("Invalid input")
         .expect("Unable to read from stdin")
 }
@@ -116,8 +119,12 @@ struct Tile {
 }
 
 impl Tile {
-    fn size(&self) -> Vec2d { image_size(&self.image) }
-    fn bottom_right(&self) -> Vec2d { self.size() + self.position }
+    fn size(&self) -> Vec2d {
+        image_size(&self.image)
+    }
+    fn bottom_right(&self) -> Vec2d {
+        self.size() + self.position
+    }
     fn download(
         zoom_level: &ZoomLevel,
         tile_reference: &TileReference,
@@ -126,7 +133,8 @@ impl Tile {
         let mut buf: Vec<u8> = vec![];
         let mut data = client.get(&tile_reference.url).send()?.error_for_status()?;
         data.copy_to(&mut buf)?;
-        buf = zoom_level.post_process_tile(tile_reference, buf)
+        buf = zoom_level
+            .post_process_tile(tile_reference, buf)
             .map_err(|source| ZoomError::PostProcessing { source })?;
         Ok(Tile {
             image: image::load_from_memory(&buf)?,
@@ -148,21 +156,24 @@ fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
     }
 }
 
-fn list_tiles(dezoomer: &mut dyn Dezoomer, http: &Client, uri: &str)
-              -> Result<ZoomLevels, ZoomError> {
+fn list_tiles(
+    dezoomer: &mut dyn Dezoomer,
+    http: &Client,
+    uri: &str,
+) -> Result<ZoomLevels, ZoomError> {
     let mut i = DezoomerInput {
         uri: String::from(uri),
         contents: None,
     };
     loop {
         match dezoomer.zoom_levels(&i) {
-            Ok(levels) => { return Ok(levels) }
+            Ok(levels) => return Ok(levels),
             Err(DezoomerError::NeedsData { uri }) => {
                 let contents = fetch_uri(&uri, http)?;
                 i.uri = uri;
                 i.contents = Some(contents);
             }
-            Err(e) => { return Err(e.into()) }
+            Err(e) => return Err(e.into()),
         }
     }
 }
@@ -178,7 +189,7 @@ fn level_picker(mut levels: Vec<ZoomLevel>) -> Result<ZoomLevel, ZoomError> {
         let line = stdin_line();
         if let Ok(idx) = line.parse::<usize>() {
             if levels.get(idx).is_some() {
-                return Ok(levels.swap_remove(idx))
+                return Ok(levels.swap_remove(idx));
             }
         }
         println!("'{}' is not a valid level number", line);
@@ -218,9 +229,11 @@ fn display_err<T, E: std::fmt::Display>(res: Result<T, E>) -> Option<T> {
 
 fn progress_bar(n: usize) -> ProgressBar {
     let progress = ProgressBar::new(n as u64);
-    progress.set_style(ProgressStyle::default_bar()
-        .template("[ETA:{eta}] {bar:40.cyan/blue} {pos:>4}/{len:4} {msg}")
-        .progress_chars("##-"));
+    progress.set_style(
+        ProgressStyle::default_bar()
+            .template("[ETA:{eta}] {bar:40.cyan/blue} {pos:>4}/{len:4} {msg}")
+            .progress_chars("##-"),
+    );
     progress
 }
 
@@ -238,31 +251,49 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
 
     let http_client = client(zoom_level.http_headers())?;
 
-    let tile_refs: Vec<TileReference> = zoom_level.tiles().into_iter()
-        .filter_map(display_err).collect();
+    let tile_refs: Vec<TileReference> = zoom_level
+        .tiles()
+        .into_iter()
+        .filter_map(display_err)
+        .collect();
 
     let progress = progress_bar(tile_refs.len());
     let total_tiles = tile_refs.len();
-    let tiles: Vec<Tile> = tile_refs.into_par_iter()
+    let tiles: Vec<Tile> = tile_refs
+        .into_par_iter()
         .flat_map(|tile_ref: TileReference| {
             progress.inc(1);
             progress.set_message(&format!("Downloading tile at {}", tile_ref.position));
-            let result =
-                Tile::download(&zoom_level, &tile_ref, &http_client)
-                    .map_err(|e| ZoomError::TileDownloadError { uri: tile_ref.url.clone(), cause: e.into() });
-            if let Err(e) = &result { progress.println(e.to_string()) }
+            let result = Tile::download(&zoom_level, &tile_ref, &http_client).map_err(|e| {
+                ZoomError::TileDownloadError {
+                    uri: tile_ref.url.clone(),
+                    cause: e.into(),
+                }
+            });
+            if let Err(e) = &result {
+                progress.println(e.to_string())
+            }
             result.ok()
-        }).collect();
+        })
+        .collect();
     let final_msg = if tiles.len() == total_tiles {
         "Downloaded all tiles.".into()
     } else {
-        format!("Successfully downloaded {} tiles out of {}", tiles.len(), total_tiles)
+        format!(
+            "Successfully downloaded {} tiles out of {}",
+            tiles.len(),
+            total_tiles
+        )
     };
     progress.finish_with_message(&final_msg);
-    if tiles.is_empty() { return Err(ZoomError::NoTile) }
+    if tiles.is_empty() {
+        return Err(ZoomError::NoTile);
+    }
 
     let size = zoom_level.size_hint().unwrap_or_else(|| {
-        tiles.iter().map(Tile::bottom_right)
+        tiles
+            .iter()
+            .map(Tile::bottom_right)
             .fold(Vec2d::default(), Vec2d::max)
     });
 
@@ -278,13 +309,18 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
 
     println!("Saving the image to {}...", &args.outfile.to_string_lossy());
     canvas.image.save(&args.outfile)?;
-    println!("Saved the image to {}",
-             fs::canonicalize(&args.outfile).unwrap_or(args.outfile).to_string_lossy());
+    println!(
+        "Saved the image to {}",
+        fs::canonicalize(&args.outfile)
+            .unwrap_or(args.outfile)
+            .to_string_lossy()
+    );
     Ok(())
 }
 
 fn client(headers: HashMap<String, String>) -> Result<reqwest::Client, ZoomError> {
-    let header_map: Result<header::HeaderMap, ZoomError> = default_headers().iter()
+    let header_map: Result<header::HeaderMap, ZoomError> = default_headers()
+        .iter()
         .chain(headers.iter())
         .map(|(name, value)| Ok((name.parse()?, value.parse()?)))
         .collect();
@@ -295,15 +331,14 @@ fn client(headers: HashMap<String, String>) -> Result<reqwest::Client, ZoomError
 }
 
 struct Canvas {
-    image: ImageBuffer<
-        image::Rgba<u8>,
-        Vec<<image::Rgba<u8> as image::Pixel>::Subpixel>
-    >
+    image: ImageBuffer<image::Rgba<u8>, Vec<<image::Rgba<u8> as image::Pixel>::Subpixel>>,
 }
 
 impl Canvas {
     fn new(size: Vec2d) -> Self {
-        Canvas { image: image::ImageBuffer::new(size.x, size.y) }
+        Canvas {
+            image: image::ImageBuffer::new(size.x, size.y),
+        }
     }
     fn add_tile(self: &mut Self, tile: &Tile) -> Result<(), ZoomError> {
         let Vec2d { x: xmax, y: ymax } =
@@ -311,13 +346,30 @@ impl Canvas {
         let sub_tile = tile.image.view(0, 0, xmax, ymax);
         let Vec2d { x, y } = tile.position;
         let success = self.image.copy_from(&sub_tile, x, y);
-        if success { Ok(()) } else {
-            let Vec2d { x: twidth, y: theight } = tile.size();
-            let Vec2d { x: width, y: height } = self.size();
-            Err(ZoomError::TileCopyError { x, y, twidth, theight, width, height })
+        if success {
+            Ok(())
+        } else {
+            let Vec2d {
+                x: twidth,
+                y: theight,
+            } = tile.size();
+            let Vec2d {
+                x: width,
+                y: height,
+            } = self.size();
+            Err(ZoomError::TileCopyError {
+                x,
+                y,
+                twidth,
+                theight,
+                width,
+                height,
+            })
         }
     }
-    fn size(&self) -> Vec2d { image_size(&self.image) }
+    fn size(&self) -> Vec2d {
+        image_size(&self.image)
+    }
 }
 
 custom_error! {

@@ -1,8 +1,8 @@
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
 use aes::Aes128;
+use block_modes::block_padding::{PadError, Padding, UnpadError};
 use block_modes::{BlockMode, BlockModeError, Cbc};
-use block_modes::block_padding::{Padding, PadError, UnpadError};
 
 use custom_error::custom_error;
 
@@ -45,8 +45,14 @@ pub fn decrypt(encrypted: Vec<u8>) -> Result<Vec<u8>, InvalidEncryptedImage> {
 }
 
 fn aes_decrypt_buffer(encrypted: &mut [u8]) -> Result<&[u8], BlockModeError> {
-    let key = [91, 99, 219, 17, 59, 122, 243, 224, 177, 67, 85, 86, 200, 249, 83, 12].into();
-    let iv = [113, 231, 4, 5, 53, 58, 119, 139, 250, 111, 188, 48, 50, 27, 149, 146].into();
+    let key = [
+        91, 99, 219, 17, 59, 122, 243, 224, 177, 67, 85, 86, 200, 249, 83, 12,
+    ]
+    .into();
+    let iv = [
+        113, 231, 4, 5, 53, 58, 119, 139, 250, 111, 188, 48, 50, 27, 149, 146,
+    ]
+    .into();
     let cipher = Aes128Cbc::new_fix(&key, &iv);
     cipher.decrypt(encrypted)
 }
@@ -93,12 +99,13 @@ fn test_decrypt_dummy() {
         16, 0, 0, 0, // encrypted data length
         1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // encrypted data
         222, 173, 190, 175, // unencrypted footer
-        4, 0, 0, 0 // size of unencrypted header
+        4, 0, 0, 0, // size of unencrypted header
     ];
     let decrypted: Vec<u8> = vec![
         186, 186, 192, 192, // unencrypted header
-        202, 37, 17, 24, 3, 15, 249, 175, 241, 134, 189, 204, 188, 226, 106, 76, // decrypted data
-        222, 173, 190, 175 // unencrypted footer
+        202, 37, 17, 24, 3, 15, 249, 175, 241, 134, 189, 204, 188, 226, 106,
+        76, // decrypted data
+        222, 173, 190, 175, // unencrypted footer
     ];
     assert_eq!(decrypt(encrypted).unwrap(), decrypted);
 }

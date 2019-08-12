@@ -11,7 +11,9 @@ mod image_properties;
 pub struct ZoomifyDezoomer;
 
 impl Dezoomer for ZoomifyDezoomer {
-    fn name(&self) -> &'static str { "zoomify" }
+    fn name(&self) -> &'static str {
+        "zoomify"
+    }
 
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
         self.assert(data.uri.contains("/ImageProperties.xml"))?;
@@ -35,16 +37,16 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, Zoomif
     let image_properties: ImageProperties = serde_xml_rs::from_reader(contents)?;
     let base_url = &Arc::new(url.split("/ImageProperties.xml").next().unwrap().into());
     let reversed_levels: Vec<ZoomLevelInfo> = image_properties.levels().collect();
-    let levels: ZoomLevels = reversed_levels.into_iter()
+    let levels: ZoomLevels = reversed_levels
+        .into_iter()
         .rev()
         .enumerate()
-        .map(move |(level, level_info)| {
-            ZoomifyLevel {
-                base_url: Arc::clone(base_url),
-                level_info,
-                level,
-            }
-        }).into_zoom_levels();
+        .map(move |(level, level_info)| ZoomifyLevel {
+            base_url: Arc::clone(base_url),
+            level_info,
+            level,
+        })
+        .into_zoom_levels();
     Ok(levels)
 }
 
@@ -55,17 +57,22 @@ struct ZoomifyLevel {
 }
 
 impl TilesRect for ZoomifyLevel {
-    fn size(&self) -> Vec2d { self.level_info.size }
+    fn size(&self) -> Vec2d {
+        self.level_info.size
+    }
 
-    fn tile_size(&self) -> Vec2d { self.level_info.tile_size }
+    fn tile_size(&self) -> Vec2d {
+        self.level_info.tile_size
+    }
 
     fn tile_url(&self, pos: Vec2d) -> String {
-        format!("{base}/TileGroup{group}/{z}-{x}-{y}.jpg",
-                base = self.base_url,
-                group = self.level_info.tile_group(pos),
-                x = pos.x,
-                y = pos.y,
-                z = self.level
+        format!(
+            "{base}/TileGroup{group}/{z}-{x}-{y}.jpg",
+            base = self.base_url,
+            group = self.level_info.tile_group(pos),
+            x = pos.x,
+            y = pos.y,
+            z = self.level
         )
     }
 }
@@ -87,14 +94,17 @@ fn test_panorama() {
     assert_eq!(props.len(), 11);
     let level = &props[3];
     let tiles: Vec<String> = level.tiles().into_iter().map(|t| t.unwrap().url).collect();
-    assert_eq!(tiles, vec![
-        "http://x.fr/y/TileGroup0/3-0-0.jpg",
-        "http://x.fr/y/TileGroup0/3-1-0.jpg",
-        "http://x.fr/y/TileGroup0/3-2-0.jpg",
-        "http://x.fr/y/TileGroup0/3-3-0.jpg",
-        "http://x.fr/y/TileGroup0/3-4-0.jpg",
-        "http://x.fr/y/TileGroup0/3-5-0.jpg"
-    ]);
+    assert_eq!(
+        tiles,
+        vec![
+            "http://x.fr/y/TileGroup0/3-0-0.jpg",
+            "http://x.fr/y/TileGroup0/3-1-0.jpg",
+            "http://x.fr/y/TileGroup0/3-2-0.jpg",
+            "http://x.fr/y/TileGroup0/3-3-0.jpg",
+            "http://x.fr/y/TileGroup0/3-4-0.jpg",
+            "http://x.fr/y/TileGroup0/3-5-0.jpg"
+        ]
+    );
 }
 
 #[test]

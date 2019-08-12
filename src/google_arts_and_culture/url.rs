@@ -31,7 +31,6 @@ fn mac_digest(b: &[u8]) -> Vec<u8> {
     mac.result().code().to_vec()
 }
 
-
 #[test]
 fn test_compute_url() {
     let path = "https://lh3.googleusercontent.com/wGcDNN8L-2COcm9toX5BTp6HPxpMPPPuxrMU-ZL-W-nDHW8I_L4R5vlBJ6ITtlmONQ".into();
