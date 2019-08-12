@@ -5,6 +5,7 @@ use std::io::{BufRead, Read};
 
 use image::{GenericImage, GenericImageView, ImageBuffer};
 use indicatif::{ProgressBar, ProgressStyle};
+use itertools::Itertools;
 use rayon::prelude::*;
 use reqwest::{Client, header};
 use structopt::StructOpt;
@@ -16,9 +17,9 @@ use dezoomer::Vec2d;
 
 use crate::dezoomer::ZoomLevel;
 
+mod custom_yaml;
 mod dezoomer;
 mod generic;
-mod custom_yaml;
 mod google_arts_and_culture;
 mod zoomify;
 
@@ -33,7 +34,21 @@ struct Arguments {
 
     /// Name of the dezoomer to use
     #[structopt(short = "d", long = "dezoomer", default_value = "generic")]
-    dezoomer: String
+    dezoomer: String,
+
+    /// If several zoom levels are available, then select the largest one
+    #[structopt(short = "l")]
+    largest: bool,
+
+    /// If several zoom levels are available, then select the one with the largest width that
+    /// is inferior to max-width.
+    #[structopt(short = "w", long = "max-width")]
+    max_width: Option<u32>,
+
+    /// If several zoom levels are available, then select the one with the largest width that
+    /// is inferior to max-width.
+    #[structopt(short = "h", long = "max-height")]
+    max_height: Option<u32>,
 }
 
 impl Arguments {
@@ -47,9 +62,26 @@ impl Arguments {
         }
     }
     fn find_dezoomer(&self) -> Result<Box<dyn Dezoomer>, ZoomError> {
-        generic::all_dezoomers(true).into_iter()
+        generic::all_dezoomers(true)
+            .into_iter()
             .find(|d| d.name() == self.dezoomer)
-            .ok_or_else(|| ZoomError::NoSuchDezoomer { name: self.dezoomer.clone() })
+            .ok_or_else(|| ZoomError::NoSuchDezoomer {
+                name: self.dezoomer.clone(),
+            })
+    }
+    fn best_size<I: Iterator<Item=Vec2d>>(&self, sizes: I) -> Option<Vec2d> {
+        if self.largest {
+            sizes.max_by_key(|s| s.x * s.y)
+        } else if self.max_width.is_some() || self.max_height.is_some() {
+            sizes
+                .filter(|s| {
+                    self.max_width.map(|w| s.x < w).unwrap_or(true)
+                        && self.max_height.map(|h| s.y < h).unwrap_or(true)
+                })
+                .max_by_key(|s| s.x * s.y)
+        } else {
+            None
+        }
     }
 }
 
@@ -153,11 +185,24 @@ fn level_picker(mut levels: Vec<ZoomLevel>) -> Result<ZoomLevel, ZoomError> {
     }
 }
 
-fn choose_level(mut levels: Vec<ZoomLevel>) -> Result<ZoomLevel, ZoomError> {
+fn choose_level(mut levels: Vec<ZoomLevel>, args: &Arguments) -> Result<ZoomLevel, ZoomError> {
     match levels.len() {
         0 => Err(ZoomError::NoLevels),
         1 => Ok(levels.swap_remove(0)),
-        _ => level_picker(levels)
+        _ => {
+            let pos = args
+                .best_size(levels.iter().filter_map(|l| l.size_hint()))
+                .and_then(|best_size| {
+                    levels
+                        .iter()
+                        .find_position(|&l| l.size_hint() == Some(best_size))
+                });
+            if let Some((i, _)) = pos {
+                Ok(levels.swap_remove(i))
+            } else {
+                level_picker(levels)
+            }
+        }
     }
 }
 
@@ -185,7 +230,7 @@ fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
     let http_client = client(HashMap::new())?;
     println!("Trying to locate a zoomable image...");
     let zoom_levels: Vec<ZoomLevel> = list_tiles(dezoomer.as_mut(), &http_client, &uri)?;
-    choose_level(zoom_levels)
+    choose_level(zoom_levels, args)
 }
 
 fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
