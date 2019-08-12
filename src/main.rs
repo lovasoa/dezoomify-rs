@@ -69,7 +69,7 @@ impl Arguments {
                 name: self.dezoomer.clone(),
             })
     }
-    fn best_size<I: Iterator<Item=Vec2d>>(&self, sizes: I) -> Option<Vec2d> {
+    fn best_size<I: Iterator<Item = Vec2d>>(&self, sizes: I) -> Option<Vec2d> {
         if self.largest {
             sizes.max_by_key(|s| s.x * s.y)
         } else if self.max_width.is_some() || self.max_height.is_some() {
@@ -349,21 +349,15 @@ impl Canvas {
         if success {
             Ok(())
         } else {
-            let Vec2d {
-                x: twidth,
-                y: theight,
-            } = tile.size();
-            let Vec2d {
-                x: width,
-                y: height,
-            } = self.size();
+            let tile_size = tile.size();
+            let size = self.size();
             Err(ZoomError::TileCopyError {
                 x,
                 y,
-                twidth,
-                theight,
-                width,
-                height,
+                twidth: tile_size.x,
+                theight: tile_size.y,
+                width: size.x,
+                height: size.y,
             })
         }
     }
