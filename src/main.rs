@@ -248,6 +248,7 @@ fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
 
 fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     let zoom_level = find_zoomlevel(&args)?;
+    println!("Dezooming {}", zoom_level.name());
 
     let http_client = client(zoom_level.http_headers())?;
 
