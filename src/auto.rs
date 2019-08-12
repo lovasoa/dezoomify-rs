@@ -7,26 +7,26 @@ pub fn all_dezoomers(include_generic: bool) -> Vec<Box<dyn Dezoomer>> {
         Box::new(crate::zoomify::ZoomifyDezoomer::default()),
     ];
     if include_generic {
-        dezoomers.push(Box::new(GenericDezoomer::default()))
+        dezoomers.push(Box::new(AutoDezoomer::default()))
     }
     dezoomers
 }
 
-pub struct GenericDezoomer {
+pub struct AutoDezoomer {
     dezoomers: Vec<Box<dyn Dezoomer>>,
 }
 
-impl Default for GenericDezoomer {
+impl Default for AutoDezoomer {
     fn default() -> Self {
-        GenericDezoomer {
+        AutoDezoomer {
             dezoomers: all_dezoomers(false),
         }
     }
 }
 
-impl Dezoomer for GenericDezoomer {
+impl Dezoomer for AutoDezoomer {
     fn name(&self) -> &'static str {
-        "generic"
+        "auto"
     }
 
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
@@ -57,7 +57,7 @@ impl Dezoomer for GenericDezoomer {
             }
         }
         if successes.is_empty() {
-            Err(needs_uri.unwrap_or_else(|| DezoomerError::wrap(GenericError(errs))))
+            Err(needs_uri.unwrap_or_else(|| DezoomerError::wrap(AutoDezoomerError(errs))))
         } else {
             Ok(successes)
         }
@@ -65,11 +65,11 @@ impl Dezoomer for GenericDezoomer {
 }
 
 #[derive(Debug)]
-pub struct GenericError(Vec<DezoomerError>);
+pub struct AutoDezoomerError(Vec<DezoomerError>);
 
-impl std::error::Error for GenericError {}
+impl std::error::Error for AutoDezoomerError {}
 
-impl std::fmt::Display for GenericError {
+impl std::fmt::Display for AutoDezoomerError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         if self.0.is_empty() {
             return writeln!(f, "No dezoomer!");

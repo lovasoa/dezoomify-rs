@@ -82,3 +82,28 @@ If the image tile URLs have the form
 `http://example.com/path/to/TileGroup1/1-2-3.jpg`,
 then the URL to enter is
 `http://example.com/path/to/ImageProperties.xml`.
+
+## Command-line options
+
+When using dezoomify-rs from the command-line
+
+```
+USAGE:
+    dezoomify-rs [FLAGS] [OPTIONS] [ARGS]
+
+FLAGS:
+        --help       Prints help information
+    -l               If several zoom levels are available, then select the largest one
+    -V, --version    Prints version information
+
+OPTIONS:
+    -d, --dezoomer <dezoomer>        Name of the dezoomer to use [default: auto]
+    -h, --max-height <max_height>    If several zoom levels are available, then select the one with the largest width
+                                     that is inferior to max-width.
+    -w, --max-width <max_width>      If several zoom levels are available, then select the one with the largest width
+                                     that is inferior to max-width.
+
+ARGS:
+    <input_uri>    Input URL or local file name
+    <outfile>      File to which the resulting image should be saved [default: dezoomified.jpg]
+```

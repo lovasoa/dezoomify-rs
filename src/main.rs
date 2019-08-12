@@ -19,7 +19,7 @@ use crate::dezoomer::ZoomLevel;
 
 mod custom_yaml;
 mod dezoomer;
-mod generic;
+mod auto;
 mod google_arts_and_culture;
 mod zoomify;
 
@@ -33,7 +33,7 @@ struct Arguments {
     outfile: std::path::PathBuf,
 
     /// Name of the dezoomer to use
-    #[structopt(short = "d", long = "dezoomer", default_value = "generic")]
+    #[structopt(short = "d", long = "dezoomer", default_value = "auto")]
     dezoomer: String,
 
     /// If several zoom levels are available, then select the largest one
@@ -62,7 +62,7 @@ impl Arguments {
         }
     }
     fn find_dezoomer(&self) -> Result<Box<dyn Dezoomer>, ZoomError> {
-        generic::all_dezoomers(true)
+        auto::all_dezoomers(true)
             .into_iter()
             .find(|d| d.name() == self.dezoomer)
             .ok_or_else(|| ZoomError::NoSuchDezoomer {
