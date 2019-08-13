@@ -13,6 +13,7 @@ because of memory constraints.
 
 The following dezoomers are currently available:
  - [**zoomify**](#zoomify) supports the popular zoomable image format *Zoomify*.
+ - [**IIIF**](#IIIF) supports the widely used International Image Interoperability Framework format.
  - [**Google Arts & Culture**](#google-arts-culture) supports downloading images from
     [artsandculture.google.com](https://artsandculture.google.com/);
  - [**custom**](#Custom) for advanced users.
@@ -82,6 +83,12 @@ If the image tile URLs have the form
 `http://example.com/path/to/TileGroup1/1-2-3.jpg`,
 then the URL to enter is
 `http://example.com/path/to/ImageProperties.xml`.
+
+### IIIF
+
+The IIIF dezoomer takes the URL of an
+ [`info.json`](https://iiif.io/api/image/2.1/#image-information) file as input.
+You can find this url in your browser's network inspector when loading the image.
 
 ## Command-line options
 

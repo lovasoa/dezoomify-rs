@@ -5,6 +5,7 @@ pub fn all_dezoomers(include_generic: bool) -> Vec<Box<dyn Dezoomer>> {
         Box::new(crate::custom_yaml::CustomDezoomer::default()),
         Box::new(crate::google_arts_and_culture::GAPDezoomer::default()),
         Box::new(crate::zoomify::ZoomifyDezoomer::default()),
+        Box::new(crate::iiif::IIIF::default()),
     ];
     if include_generic {
         dezoomers.push(Box::new(AutoDezoomer::default()))

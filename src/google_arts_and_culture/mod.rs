@@ -1,8 +1,9 @@
 use std::error::Error;
 use std::sync::Arc;
 
+use tile_info::{PageInfo, TileInfo};
+
 use crate::dezoomer::*;
-use crate::google_arts_and_culture::tile_info::{PageInfo, TileInfo};
 
 mod decryption;
 mod tile_info;

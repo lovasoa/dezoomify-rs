@@ -13,14 +13,16 @@ use structopt::StructOpt;
 use custom_error::custom_error;
 use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 use dezoomer::TileReference;
-use dezoomer::Vec2d;
+pub use vec2d::Vec2d;
 
-use crate::dezoomer::ZoomLevel;
+use crate::dezoomer::{max_size_in_rect, ZoomLevel};
 
+mod vec2d;
+mod auto;
 mod custom_yaml;
 mod dezoomer;
-mod auto;
 mod google_arts_and_culture;
+mod iiif;
 mod zoomify;
 
 #[derive(StructOpt, Debug)]
@@ -343,7 +345,7 @@ impl Canvas {
     }
     fn add_tile(self: &mut Self, tile: &Tile) -> Result<(), ZoomError> {
         let Vec2d { x: xmax, y: ymax } =
-            (tile.position + tile.size()).min(self.size()) - tile.position;
+            max_size_in_rect(tile.position, tile.size(), self.size());
         let sub_tile = tile.image.view(0, 0, xmax, ymax);
         let Vec2d { x, y } = tile.position;
         let success = self.image.copy_from(&sub_tile, x, y);
