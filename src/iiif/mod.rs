@@ -66,10 +66,7 @@ struct IIIFZoomLevel {
 
 impl TilesRect for IIIFZoomLevel {
     fn size(&self) -> Vec2d {
-        Vec2d {
-            x: self.page_info.width / self.scale_factor,
-            y: self.page_info.height / self.scale_factor,
-        }
+        self.page_info.size() / self.scale_factor
     }
 
     fn tile_size(&self) -> Vec2d {
@@ -79,7 +76,7 @@ impl TilesRect for IIIFZoomLevel {
     fn tile_url(&self, col_and_row_pos: Vec2d) -> String {
         let scaled_tile_size = self.tile_size * self.scale_factor;
         let xy_pos = col_and_row_pos * scaled_tile_size;
-        let scaled_tile_size = max_size_in_rect(xy_pos, scaled_tile_size, self.size() * self.scale_factor);
+        let scaled_tile_size = max_size_in_rect(xy_pos, scaled_tile_size, self.page_info.size());
         let tile_size = scaled_tile_size / self.scale_factor;
         format!(
             "{base}/{x},{y},{img_w},{img_h}/{tile_w},{tile_h}/{rotation}/{quality}.{format}",
@@ -130,6 +127,7 @@ fn test_tiles() {
         .map(|t| t.unwrap().url)
         .collect();
     assert_eq!(tiles, vec![
-        "",
+        "http://www.asmilano.it/fast/iipsrv.fcgi?IIIF=/opt/divenire/files/./tifs/05/36/536765.tif/0,0,15001,32768/234,512/0/default.jpg",
+        "http://www.asmilano.it/fast/iipsrv.fcgi?IIIF=/opt/divenire/files/./tifs/05/36/536765.tif/0,32768,15001,15234/234,238/0/default.jpg",
     ])
 }

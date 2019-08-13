@@ -1,5 +1,7 @@
 use serde::Deserialize;
 
+use crate::Vec2d;
+
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct ImageInfo {
     #[serde(rename = "@id")]
@@ -9,6 +11,11 @@ pub struct ImageInfo {
     pub tiles: Option<Vec<TileInfo>>,
 }
 
+impl ImageInfo {
+    pub fn size(&self) -> Vec2d {
+        Vec2d { x: self.width, y: self.height }
+    }
+}
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct TileInfo {
     pub width: u32,
