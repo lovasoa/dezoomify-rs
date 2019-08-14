@@ -13,7 +13,10 @@ pub struct ImageInfo {
 
 impl ImageInfo {
     pub fn size(&self) -> Vec2d {
-        Vec2d { x: self.width, y: self.height }
+        Vec2d {
+            x: self.width,
+            y: self.height,
+        }
     }
 }
 #[derive(Debug, Deserialize, PartialEq)]

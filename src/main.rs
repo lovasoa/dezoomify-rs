@@ -3,26 +3,27 @@ use std::error::Error;
 use std::fs;
 use std::io::{BufRead, Read};
 
-use image::{GenericImage, GenericImageView, ImageBuffer};
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
 use rayon::prelude::*;
-use reqwest::{Client, header};
+use reqwest::{header, Client};
 use structopt::StructOpt;
 
+use canvas::{Canvas, Tile};
 use custom_error::custom_error;
-use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 use dezoomer::TileReference;
+use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 pub use vec2d::Vec2d;
 
-use crate::dezoomer::{max_size_in_rect, ZoomLevel};
+use crate::dezoomer::ZoomLevel;
 
-mod vec2d;
 mod auto;
+mod canvas;
 mod custom_yaml;
 mod dezoomer;
 mod google_arts_and_culture;
 mod iiif;
+mod vec2d;
 mod zoomify;
 
 #[derive(StructOpt, Debug)]
@@ -107,41 +108,6 @@ fn main() {
         std::process::exit(1);
     } else {
         println!("Done!");
-    }
-}
-
-fn image_size<T: GenericImageView>(image: &T) -> Vec2d {
-    let (x, y) = image.dimensions();
-    Vec2d { x, y }
-}
-
-struct Tile {
-    image: image::DynamicImage,
-    position: Vec2d,
-}
-
-impl Tile {
-    fn size(&self) -> Vec2d {
-        image_size(&self.image)
-    }
-    fn bottom_right(&self) -> Vec2d {
-        self.size() + self.position
-    }
-    fn download(
-        zoom_level: &ZoomLevel,
-        tile_reference: &TileReference,
-        client: &reqwest::Client,
-    ) -> Result<Tile, ZoomError> {
-        let mut buf: Vec<u8> = vec![];
-        let mut data = client.get(&tile_reference.url).send()?.error_for_status()?;
-        data.copy_to(&mut buf)?;
-        buf = zoom_level
-            .post_process_tile(tile_reference, buf)
-            .map_err(|source| ZoomError::PostProcessing { source })?;
-        Ok(Tile {
-            image: image::load_from_memory(&buf)?,
-            position: tile_reference.position,
-        })
     }
 }
 
@@ -305,13 +271,13 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     let progress = progress_bar(tiles.len());
     for tile in tiles.iter() {
         progress.inc(1);
-        progress.set_message(&format!("Adding tile at {} to the canvas", tile.position));
+        progress.set_message(&format!("Adding tile at {} to the canvas", tile.position()));
         canvas.add_tile(tile)?;
     }
     progress.finish_with_message("Finished stitching all tiles together");
 
     println!("Saving the image to {}...", &args.outfile.to_string_lossy());
-    canvas.image.save(&args.outfile)?;
+    canvas.image().save(&args.outfile)?;
     println!(
         "Saved the image to {}",
         fs::canonicalize(&args.outfile)
@@ -331,42 +297,6 @@ fn client(headers: HashMap<String, String>) -> Result<reqwest::Client, ZoomError
         .default_headers(header_map?)
         .build()?;
     Ok(client)
-}
-
-struct Canvas {
-    image: ImageBuffer<image::Rgba<u8>, Vec<<image::Rgba<u8> as image::Pixel>::Subpixel>>,
-}
-
-impl Canvas {
-    fn new(size: Vec2d) -> Self {
-        Canvas {
-            image: image::ImageBuffer::new(size.x, size.y),
-        }
-    }
-    fn add_tile(self: &mut Self, tile: &Tile) -> Result<(), ZoomError> {
-        let Vec2d { x: xmax, y: ymax } =
-            max_size_in_rect(tile.position, tile.size(), self.size());
-        let sub_tile = tile.image.view(0, 0, xmax, ymax);
-        let Vec2d { x, y } = tile.position;
-        let success = self.image.copy_from(&sub_tile, x, y);
-        if success {
-            Ok(())
-        } else {
-            let tile_size = tile.size();
-            let size = self.size();
-            Err(ZoomError::TileCopyError {
-                x,
-                y,
-                twidth: tile_size.x,
-                theight: tile_size.y,
-                width: size.x,
-                height: size.y,
-            })
-        }
-    }
-    fn size(&self) -> Vec2d {
-        image_size(&self.image)
-    }
 }
 
 custom_error! {

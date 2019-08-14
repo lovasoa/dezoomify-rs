@@ -80,7 +80,6 @@ mod tests {
         assert_eq!(extract_between("A B C", "A ", " C"), Some("B"));
     }
 
-
     #[test]
     fn test_xml_parse() {
         let infos: TileInfo = serde_xml_rs::from_str(r#"
@@ -128,7 +127,8 @@ mod tests {
     fn test_parse_html_wildflower() {
         // See: https://github.com/lovasoa/dezoomify-rs/issues/5
         let info: PageInfo = parse_html_file("page_source_wildflower.html");
-        let base_url = "https://lh5.ggpht.com/D0sqZ0sJbzoQeYFoySoXLJqgLMfXhi8-gGVGRqD_UEYUqkqk9Eqdxx5NNaw";
+        let base_url =
+            "https://lh5.ggpht.com/D0sqZ0sJbzoQeYFoySoXLJqgLMfXhi8-gGVGRqD_UEYUqkqk9Eqdxx5NNaw";
         assert_eq!(info.base_url, base_url);
         assert_eq!(info.token, "mcOPEQJmk1514hP_dJkpwVwIhPU");
     }

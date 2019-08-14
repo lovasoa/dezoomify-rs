@@ -123,7 +123,9 @@ fn test_tiles() {
       ]
     }"#;
     let levels = zoom_levels(data).unwrap();
-    let tiles: Vec<String> = levels[6].tiles().into_iter()
+    let tiles: Vec<String> = levels[6]
+        .tiles()
+        .into_iter()
         .map(|t| t.unwrap().url)
         .collect();
     assert_eq!(tiles, vec![

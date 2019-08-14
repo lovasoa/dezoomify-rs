@@ -44,7 +44,8 @@ fn test_compute_url() {
 #[test]
 fn test_compute_url_flowers() {
     // From https://artsandculture.google.com/asset/wildflower-painting-of-red-grevillea/wwEzEHEBAqxv4w
-    let path = "https://lh5.ggpht.com/D0sqZ0sJbzoQeYFoySoXLJqgLMfXhi8-gGVGRqD_UEYUqkqk9Eqdxx5NNaw".into();
+    let path =
+        "https://lh5.ggpht.com/D0sqZ0sJbzoQeYFoySoXLJqgLMfXhi8-gGVGRqD_UEYUqkqk9Eqdxx5NNaw".into();
     let token = "mcOPEQJmk1514hP_dJkpwVwIhPU".into();
     assert_eq!(
         compute_url(&PageInfo { base_url: path, token, name: "".into() }, 0, 0, 7),
