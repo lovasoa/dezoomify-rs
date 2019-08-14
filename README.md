@@ -105,8 +105,8 @@ FLAGS:
 
 OPTIONS:
     -d, --dezoomer <dezoomer>        Name of the dezoomer to use [default: auto]
-    -h, --max-height <max_height>    If several zoom levels are available, then select the one with the largest width
-                                     that is inferior to max-width.
+    -h, --max-height <max_height>    If several zoom levels are available, then select the one with the largest height
+                                     that is inferior to max-height.
     -w, --max-width <max_width>      If several zoom levels are available, then select the one with the largest width
                                      that is inferior to max-width.
 

@@ -48,8 +48,8 @@ struct Arguments {
     #[structopt(short = "w", long = "max-width")]
     max_width: Option<u32>,
 
-    /// If several zoom levels are available, then select the one with the largest width that
-    /// is inferior to max-width.
+    /// If several zoom levels are available, then select the one with the largest height that
+    /// is inferior to max-height.
     #[structopt(short = "h", long = "max-height")]
     max_height: Option<u32>,
 }
