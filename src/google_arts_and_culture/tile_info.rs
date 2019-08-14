@@ -19,23 +19,6 @@ pub struct PyramidLevel {
     pub empty_pels_y: u32,
 }
 
-#[test]
-fn test_xml_parse() {
-    let infos: TileInfo = serde_xml_rs::from_str(r#"
-        <?xml version="1.0" encoding="UTF-8"?>
-        <TileInfo tile_width="512" tile_height="512" full_pyramid_depth="5" origin="TOP_LEFT" timestamp="1564671682" tiler_version_number="2" image_width="5436" image_height="4080">
-            <pyramid_level num_tiles_x="1" num_tiles_y="1" inverse_scale="16" empty_pels_x="173" empty_pels_y="257"/>
-            <pyramid_level num_tiles_x="2" num_tiles_y="1" inverse_scale="8" empty_pels_x="345" empty_pels_y="2"/>
-            <pyramid_level num_tiles_x="3" num_tiles_y="2" inverse_scale="4" empty_pels_x="177" empty_pels_y="4"/>
-            <pyramid_level num_tiles_x="6" num_tiles_y="4" inverse_scale="2" empty_pels_x="354" empty_pels_y="8"/>
-            <pyramid_level num_tiles_x="11" num_tiles_y="8" inverse_scale="1" empty_pels_x="196" empty_pels_y="16"/>
-         </TileInfo>
-     "#).unwrap();
-    dbg!(&infos);
-    assert_eq!(infos.tile_width, 512);
-    assert_eq!(infos.pyramid_level[4].num_tiles_x, 11);
-}
-
 pub struct PageInfo {
     pub base_url: String,
     pub token: String,
@@ -61,7 +44,7 @@ impl FromStr for PageInfo {
             .to_string();
 
         let path_no_protocol = base_url.split(':').nth(1).ok_or(PageParseError::BadPath)?;
-        let before_token = format!(",\"{}\",\"", path_no_protocol);
+        let before_token = format!("]\n,\"{}\",\"", path_no_protocol);
         let token = extract_between(s, &before_token, "\"")
             .ok_or(PageParseError::NoToken)?
             .to_string();
@@ -82,35 +65,71 @@ fn extract_between<'a, 'b, 'c>(s: &'a str, start: &'b str, end: &'c str) -> Opti
     Some(&s[start_pos..end_pos])
 }
 
-#[test]
-fn test_extract_between() {
-    assert_eq!(extract_between("A B C", "A ", " C"), Some("B"));
-}
-
 custom_error! {pub PageParseError
     NoPath  = "Unable to find path information",
     BadPath = "The path has an invalid form",
     NoToken = "Unable to find the token in the page",
 }
 
-#[test]
-fn test_parse_html() {
-    use std::fs;
-    use std::path::Path;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let test_source_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("testdata")
-        .join("google_arts_and_culture")
-        .join("page_source.html");
-    let test_html = fs::read_to_string(test_source_path).unwrap();
-    let info: PageInfo = test_html.parse().unwrap();
-    assert_eq!(
-        info.base_url,
-        "https://lh5.ggpht.com/4AX4ua174encReZyEE7dTu0_RgBrBi79iqHamKQJtZnIBA5xqKBQib8DNvnq"
-    );
-    assert_eq!(info.token, "RQhR1krE-uvCYNXm5CmP6k2MuPY");
-    assert_eq!(
-        info.tile_info_url(),
-        "https://lh5.ggpht.com/4AX4ua174encReZyEE7dTu0_RgBrBi79iqHamKQJtZnIBA5xqKBQib8DNvnq=g"
-    );
+    #[test]
+    fn test_extract_between() {
+        assert_eq!(extract_between("A B C", "A ", " C"), Some("B"));
+    }
+
+
+    #[test]
+    fn test_xml_parse() {
+        let infos: TileInfo = serde_xml_rs::from_str(r#"
+            <?xml version="1.0" encoding="UTF-8"?>
+            <TileInfo tile_width="512" tile_height="512" full_pyramid_depth="5" origin="TOP_LEFT" timestamp="1564671682" tiler_version_number="2" image_width="5436" image_height="4080">
+                <pyramid_level num_tiles_x="1" num_tiles_y="1" inverse_scale="16" empty_pels_x="173" empty_pels_y="257"/>
+                <pyramid_level num_tiles_x="2" num_tiles_y="1" inverse_scale="8" empty_pels_x="345" empty_pels_y="2"/>
+                <pyramid_level num_tiles_x="3" num_tiles_y="2" inverse_scale="4" empty_pels_x="177" empty_pels_y="4"/>
+                <pyramid_level num_tiles_x="6" num_tiles_y="4" inverse_scale="2" empty_pels_x="354" empty_pels_y="8"/>
+                <pyramid_level num_tiles_x="11" num_tiles_y="8" inverse_scale="1" empty_pels_x="196" empty_pels_y="16"/>
+             </TileInfo>
+         "#).unwrap();
+        dbg!(&infos);
+        assert_eq!(infos.tile_width, 512);
+        assert_eq!(infos.pyramid_level[4].num_tiles_x, 11);
+    }
+
+    fn parse_html_file(test_file_name: &str) -> PageInfo {
+        use std::fs;
+        use std::path::Path;
+
+        let test_source_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata")
+            .join("google_arts_and_culture")
+            .join(test_file_name);
+        let test_html = fs::read_to_string(test_source_path).unwrap();
+        test_html.parse().unwrap()
+    }
+
+    #[test]
+    fn test_parse_html() {
+        let info: PageInfo = parse_html_file("page_source.html");
+        assert_eq!(
+            info.base_url,
+            "https://lh5.ggpht.com/4AX4ua174encReZyEE7dTu0_RgBrBi79iqHamKQJtZnIBA5xqKBQib8DNvnq"
+        );
+        assert_eq!(info.token, "RQhR1krE-uvCYNXm5CmP6k2MuPY");
+        assert_eq!(
+            info.tile_info_url(),
+            "https://lh5.ggpht.com/4AX4ua174encReZyEE7dTu0_RgBrBi79iqHamKQJtZnIBA5xqKBQib8DNvnq=g"
+        );
+    }
+
+    #[test]
+    fn test_parse_html_wildflower() {
+        // See: https://github.com/lovasoa/dezoomify-rs/issues/5
+        let info: PageInfo = parse_html_file("page_source_wildflower.html");
+        let base_url = "https://lh5.ggpht.com/D0sqZ0sJbzoQeYFoySoXLJqgLMfXhi8-gGVGRqD_UEYUqkqk9Eqdxx5NNaw";
+        assert_eq!(info.base_url, base_url);
+        assert_eq!(info.token, "mcOPEQJmk1514hP_dJkpwVwIhPU");
+    }
 }
