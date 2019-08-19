@@ -10,12 +10,18 @@ use crate::TileReference;
 mod tile_set;
 mod variable;
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize)]
 struct CustomYamlTiles {
     #[serde(flatten)]
     tile_set: tile_set::TileSet,
     #[serde(default = "default_headers")]
     headers: HashMap<String, String>,
+}
+
+impl std::fmt::Debug for CustomYamlTiles {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Custom tiles")
+    }
 }
 
 impl TileProvider for CustomYamlTiles {
