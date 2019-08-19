@@ -24,13 +24,10 @@ fn grow_buffer(buffer: CanvasBuffer, size: Vec2d) -> CanvasBuffer {
     raw.resize(byte_size(size), 0);
     if new_width != old_width {
         for y in (0..old_height).rev() {
-            for x in (0..old_width).rev() {
-                let new_pos = x + y * new_width;
-                let old_pos = x + y * old_width;
-                for i in 0..PIXEL_SIZE {
-                    raw[new_pos * PIXEL_SIZE + i] = raw[old_pos * PIXEL_SIZE + i]
-                }
-            }
+            let start = y * old_width * PIXEL_SIZE;
+            let end = (y + 1) * old_width * PIXEL_SIZE;
+            let dest = y * new_width * PIXEL_SIZE;
+            raw.copy_within(start..end, dest);
         }
     }
     ImageBuffer::from_raw(size.x, size.y, raw).unwrap()
@@ -135,13 +132,15 @@ mod tests {
 
     #[test]
     fn test_grow_buffer() {
-        let mut buf = empty_buffer(Vec2d { x: 1, y: 2 });
-        let p1 = Pix::from_channels(1, 2, 3, 4);
-        buf.put_pixel(0, 0, p1);
-        let p2 = Pix::from_channels(10, 20, 30, 40);
-        buf.put_pixel(0, 1, p2);
-        let resized = grow_buffer(buf, Vec2d { x: 2, y: 2 });
-        assert_eq!(&p1, resized.get_pixel(0, 0));
-        assert_eq!(&p2, resized.get_pixel(0, 1));
+        for new_x in 1..10 {
+            let mut buf = empty_buffer(Vec2d { x: 1, y: 3 });
+            let p1 = Pix::from_channels(1, 2, 3, 4);
+            buf.put_pixel(0, 0, p1);
+            let p2 = Pix::from_channels(10, 20, 30, 40);
+            buf.put_pixel(0, 1, p2);
+            let resized = grow_buffer(buf, Vec2d { x: new_x, y: 3 });
+            assert_eq!(&p1, resized.get_pixel(0, 0));
+            assert_eq!(&p2, resized.get_pixel(0, 1));
+        }
     }
 }
