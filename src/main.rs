@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::io::{BufRead, Read};
+use std::sync::Mutex;
 
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
@@ -229,46 +230,34 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     let progress = progress_bar(tile_refs.len());
     let total_tiles = tile_refs.len();
 
-    let mut canvas = Canvas::new(zoom_level.size_hint());
+    let canvas = Mutex::new(Canvas::new(zoom_level.size_hint()));
 
-    let tiles: Vec<Tile> = tile_refs
+    let successful_tiles = tile_refs
         .into_par_iter()
         .flat_map(|tile_ref: TileReference| {
             progress.inc(1);
             progress.set_message(&format!("Downloading tile at {}", tile_ref.position));
-            let result = Tile::download(&zoom_level, &tile_ref, &http_client).map_err(|e| {
-                ZoomError::TileDownloadError {
+            Tile::download(&zoom_level, &tile_ref, &http_client)
+                .map_err(|e| ZoomError::TileDownloadError {
                     uri: tile_ref.url.clone(),
                     cause: e.into(),
-                }
-            });
-            if let Err(e) = &result {
-                progress.println(e.to_string())
-            }
-            result.ok()
+                })
+                .and_then(|tile| canvas.lock().unwrap().add_tile(&tile))
+                .ok()
         })
-        .collect();
-    let final_msg = if tiles.len() == total_tiles {
+        .count();
+    let canvas = canvas.into_inner().unwrap();
+    let final_msg = if successful_tiles == total_tiles {
         "Downloaded all tiles.".into()
-    } else {
+    } else if successful_tiles > 0 {
         format!(
             "Successfully downloaded {} tiles out of {}",
-            tiles.len(),
-            total_tiles
+            successful_tiles, total_tiles
         )
+    } else {
+        return Err(ZoomError::NoTile);
     };
     progress.finish_with_message(&final_msg);
-    if tiles.is_empty() {
-        return Err(ZoomError::NoTile);
-    }
-
-    let progress = progress_bar(tiles.len());
-    for tile in tiles.iter() {
-        progress.inc(1);
-        progress.set_message(&format!("Adding tile at {} to the canvas", tile.position()));
-        canvas.add_tile(tile)?;
-    }
-    progress.finish_with_message("Finished stitching all tiles together");
 
     println!("Saving the image to {}...", &args.outfile.to_string_lossy());
     canvas.image().save(&args.outfile)?;
