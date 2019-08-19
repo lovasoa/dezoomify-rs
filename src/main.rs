@@ -228,6 +228,9 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
 
     let progress = progress_bar(tile_refs.len());
     let total_tiles = tile_refs.len();
+
+    let mut canvas = Canvas::new(zoom_level.size_hint());
+
     let tiles: Vec<Tile> = tile_refs
         .into_par_iter()
         .flat_map(|tile_ref: TileReference| {
@@ -258,15 +261,6 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     if tiles.is_empty() {
         return Err(ZoomError::NoTile);
     }
-
-    let size = zoom_level.size_hint().unwrap_or_else(|| {
-        tiles
-            .iter()
-            .map(Tile::bottom_right)
-            .fold(Vec2d::default(), Vec2d::max)
-    });
-
-    let mut canvas = Canvas::new(size);
 
     let progress = progress_bar(tiles.len());
     for tile in tiles.iter() {
