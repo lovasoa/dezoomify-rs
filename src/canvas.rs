@@ -40,21 +40,20 @@ fn empty_buffer(size: Vec2d) -> CanvasBuffer {
 pub struct Canvas {
     image: CanvasBuffer,
     size: Vec2d,
+    is_size_exact: bool
 }
 
 impl Canvas {
     pub fn new(size_hint: Option<Vec2d>) -> Self {
         let size = size_hint.unwrap_or(Vec2d { x: 1, y: 1 });
-        let pixels = empty_buffer(size);
-        Canvas {
-            image: pixels,
-            size,
-        }
+        let image = empty_buffer(size);
+        let is_size_exact = size_hint.is_some();
+        Canvas { image, size, is_size_exact }
     }
 
     pub fn add_tile(self: &mut Self, tile: &Tile) -> Result<(), ZoomError> {
         let new_size = tile.bottom_right().max(self.size);
-        if new_size.x > self.size.x || new_size.y > self.size.y {
+        if !self.is_size_exact && new_size != self.size {
             self.size = new_size;
             let image = std::mem::replace(&mut self.image, empty_buffer(Vec2d { x: 0, y: 0 }));
             self.image = grow_buffer(image, new_size);
