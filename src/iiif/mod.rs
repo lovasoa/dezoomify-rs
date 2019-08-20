@@ -101,11 +101,13 @@ impl TilesRect for IIIFZoomLevel {
 
 impl std::fmt::Debug for IIIFZoomLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "IIIF image with {}x{} tiles",
-            self.tile_size.x, self.tile_size.y
-        )
+        let name = self.base_url.split('/')
+            .last()
+            .and_then(|s: &str| {
+                let s = s.trim();
+                if s.is_empty() { None } else { Some(s) }
+            }).unwrap_or("IIIF Image");
+        write!(f, "{}", name)
     }
 }
 
