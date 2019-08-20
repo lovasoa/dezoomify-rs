@@ -8,13 +8,13 @@ use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
-use reqwest::{Client, header};
+use reqwest::{header, Client};
 use structopt::StructOpt;
 
 use canvas::{Canvas, Tile};
 use custom_error::custom_error;
-use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 use dezoomer::TileReference;
+use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 pub use vec2d::Vec2d;
 
 use crate::dezoomer::ZoomLevel;
@@ -295,7 +295,9 @@ fn initialize_threadpool(args: &Arguments) {
         builder = builder.num_threads(num_threads)
     }
     builder = builder.thread_name(|i| format!("dezoomify-rs thread {}", i));
-    builder.build_global().expect("threadpool initialization failed");
+    builder
+        .build_global()
+        .expect("threadpool initialization failed");
 }
 
 custom_error! {

@@ -40,7 +40,7 @@ fn empty_buffer(size: Vec2d) -> CanvasBuffer {
 pub struct Canvas {
     image: CanvasBuffer,
     size: Vec2d,
-    is_size_exact: bool
+    is_size_exact: bool,
 }
 
 impl Canvas {
@@ -48,7 +48,11 @@ impl Canvas {
         let size = size_hint.unwrap_or(Vec2d { x: 1, y: 1 });
         let image = empty_buffer(size);
         let is_size_exact = size_hint.is_some();
-        Canvas { image, size, is_size_exact }
+        Canvas {
+            image,
+            size,
+            is_size_exact,
+        }
     }
 
     pub fn add_tile(self: &mut Self, tile: &Tile) -> Result<(), ZoomError> {
