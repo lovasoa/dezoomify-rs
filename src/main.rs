@@ -7,13 +7,14 @@ use std::sync::Mutex;
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
 use rayon::prelude::*;
-use reqwest::{header, Client};
+use rayon::ThreadPoolBuilder;
+use reqwest::{Client, header};
 use structopt::StructOpt;
 
 use canvas::{Canvas, Tile};
 use custom_error::custom_error;
-use dezoomer::TileReference;
 use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
+use dezoomer::TileReference;
 pub use vec2d::Vec2d;
 
 use crate::dezoomer::ZoomLevel;
@@ -53,6 +54,11 @@ struct Arguments {
     /// is inferior to max-height.
     #[structopt(short = "h", long = "max-height")]
     max_height: Option<u32>,
+
+    /// Degree of parallelism to use. At most this number of
+    /// tiles will be downloaded at the same time.
+    #[structopt(short = "n", long = "num-threads")]
+    num_threads: Option<usize>,
 }
 
 impl Arguments {
@@ -216,6 +222,7 @@ fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
 }
 
 fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
+    initialize_threadpool(&args);
     let zoom_level = find_zoomlevel(&args)?;
     println!("Dezooming {}", zoom_level.name());
 
@@ -280,6 +287,15 @@ fn client(headers: HashMap<String, String>) -> Result<reqwest::Client, ZoomError
         .default_headers(header_map?)
         .build()?;
     Ok(client)
+}
+
+fn initialize_threadpool(args: &Arguments) {
+    let mut builder = ThreadPoolBuilder::new();
+    if let Some(num_threads) = args.num_threads {
+        builder = builder.num_threads(num_threads)
+    }
+    builder = builder.thread_name(|i| format!("dezoomify-rs thread {}", i));
+    builder.build_global().expect("threadpool initialization failed");
 }
 
 custom_error! {
