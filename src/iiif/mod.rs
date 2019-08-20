@@ -27,16 +27,19 @@ impl Dezoomer for IIIF {
 
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
         self.assert(data.uri.ends_with("/info.json"))?;
-        let contents = data.with_contents()?.contents;
-        Ok(zoom_levels(contents)?)
+        let with_contents = data.with_contents()?;
+        let contents = with_contents.contents;
+        let uri = with_contents.uri;
+        Ok(zoom_levels(uri, contents)?)
     }
 }
 
-fn zoom_levels(raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
+fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
     let image_info: ImageInfo = serde_json::from_slice(raw_info)?;
     let img = Arc::new(image_info);
     let default_tiles = vec![Default::default()];
     let tiles = img.tiles.as_ref().unwrap_or(&default_tiles);
+    let base_url = &Arc::new(url.replace("/info.json", ""));
     let levels = tiles
         .iter()
         .flat_map(|tile_info| {
@@ -52,6 +55,7 @@ fn zoom_levels(raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
                     scale_factor,
                     tile_size,
                     page_info: Arc::clone(page_info),
+                    base_url: Arc::clone(base_url)
                 })
         })
         .into_zoom_levels();
@@ -62,6 +66,7 @@ struct IIIFZoomLevel {
     scale_factor: u32,
     tile_size: Vec2d,
     page_info: Arc<ImageInfo>,
+    base_url: Arc<String>
 }
 
 impl TilesRect for IIIFZoomLevel {
@@ -80,7 +85,7 @@ impl TilesRect for IIIFZoomLevel {
         let tile_size = scaled_tile_size / self.scale_factor;
         format!(
             "{base}/{x},{y},{img_w},{img_h}/{tile_w},{tile_h}/{rotation}/{quality}.{format}",
-            base = self.page_info.id,
+            base = self.page_info.id.as_ref().unwrap_or(&self.base_url),
             x = xy_pos.x,
             y = xy_pos.y,
             img_w = scaled_tile_size.x,
@@ -122,7 +127,7 @@ fn test_tiles() {
            "supports" : ["regionByPct","sizeByForcedWh","sizeByWh","sizeAboveFull","rotationBy90s","mirroring","gray"] }
       ]
     }"#;
-    let levels = zoom_levels(data).unwrap();
+    let levels = zoom_levels("test.com", data).unwrap();
     let tiles: Vec<String> = levels[6]
         .tiles()
         .into_iter()
@@ -131,5 +136,23 @@ fn test_tiles() {
     assert_eq!(tiles, vec![
         "http://www.asmilano.it/fast/iipsrv.fcgi?IIIF=/opt/divenire/files/./tifs/05/36/536765.tif/0,0,15001,32768/234,512/0/default.jpg",
         "http://www.asmilano.it/fast/iipsrv.fcgi?IIIF=/opt/divenire/files/./tifs/05/36/536765.tif/0,32768,15001,15234/234,238/0/default.jpg",
+    ])
+}
+
+#[test]
+fn test_missing_id() {
+    let data = br#"{
+      "width" : 600,
+      "height" : 350
+    }"#;
+    let levels = zoom_levels("http://test.com/info.json", data).unwrap();
+    let tiles: Vec<String> = levels[0]
+        .tiles()
+        .into_iter()
+        .map(|t| t.unwrap().url)
+        .collect();
+    assert_eq!(tiles, vec![
+        "http://test.com/0,0,512,350/512,350/0/default.jpg",
+        "http://test.com/512,0,88,350/88,350/0/default.jpg"
     ])
 }

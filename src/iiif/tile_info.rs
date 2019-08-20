@@ -5,7 +5,7 @@ use crate::Vec2d;
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct ImageInfo {
     #[serde(rename = "@id")]
-    pub id: String,
+    pub id: Option<String>,
     pub width: u32,
     pub height: u32,
     pub tiles: Option<Vec<TileInfo>>,
