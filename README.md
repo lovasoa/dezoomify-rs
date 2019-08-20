@@ -104,11 +104,15 @@ FLAGS:
     -V, --version    Prints version information
 
 OPTIONS:
-    -d, --dezoomer <dezoomer>        Name of the dezoomer to use [default: auto]
-    -h, --max-height <max_height>    If several zoom levels are available, then select the one with the largest height
-                                     that is inferior to max-height.
-    -w, --max-width <max_width>      If several zoom levels are available, then select the one with the largest width
-                                     that is inferior to max-width.
+    -d, --dezoomer <dezoomer>          Name of the dezoomer to use [default: auto]
+    -h, --max-height <max_height>      If several zoom levels are available, then select the one with the largest height
+                                       that is inferior to max-height.
+    -w, --max-width <max_width>        If several zoom levels are available, then select the one with the largest width
+                                       that is inferior to max-width.
+    -n, --num-threads <num_threads>    Degree of parallelism to use. At most this number of tiles will be downloaded at
+                                       the same time.
+    -r, --retries <retries>            Number of new attempts to make when a tile load fails before abandoning
+                                       [default: 1]
 
 ARGS:
     <input_uri>    Input URL or local file name

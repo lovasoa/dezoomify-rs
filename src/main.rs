@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::error::Error;
-use std::fs;
 use std::io::{BufRead, Read};
 use std::sync::Mutex;
+use std::time::Duration;
+use std::{fs, thread};
 
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
@@ -59,6 +60,11 @@ struct Arguments {
     /// tiles will be downloaded at the same time.
     #[structopt(short = "n", long = "num-threads")]
     num_threads: Option<usize>,
+
+    /// Number of new attempts to make when a tile load fails
+    /// before abandoning
+    #[structopt(short = "r", long = "retries", default_value = "1")]
+    retries: usize,
 }
 
 impl Arguments {
@@ -244,13 +250,9 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
         .flat_map(|tile_ref: TileReference| {
             progress.inc(1);
             progress.set_message(&format!("Downloading tile at {}", tile_ref.position));
-            Tile::download(&zoom_level, &tile_ref, &http_client)
-                .map_err(|e| ZoomError::TileDownloadError {
-                    uri: tile_ref.url.clone(),
-                    cause: e.into(),
-                })
-                .and_then(|tile| canvas.lock().unwrap().add_tile(&tile))
-                .ok()
+            let res = download_tile(&zoom_level, &tile_ref, &http_client, args.retries)
+                .and_then(|tile| canvas.lock().unwrap().add_tile(&tile));
+            display_err(res)
         })
         .count();
     let canvas = canvas.into_inner().unwrap();
@@ -275,6 +277,29 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
             .to_string_lossy()
     );
     Ok(())
+}
+
+fn download_tile(
+    zoom_level: &ZoomLevel,
+    tile_reference: &TileReference,
+    client: &reqwest::Client,
+    retries: usize,
+) -> Result<Tile, ZoomError> {
+    let mut res = Tile::download(zoom_level, tile_reference, client);
+    let mut wait_time = Duration::from_millis(100);
+    for _ in 0..retries {
+        thread::sleep(wait_time);
+        wait_time *= 2;
+        res = Tile::download(zoom_level, tile_reference, client);
+        match &res {
+            Ok(_) => break,
+            Err(e) => eprintln!("{}", e),
+        }
+    }
+    res.map_err(|e| ZoomError::TileDownloadError {
+        uri: tile_reference.url.clone(),
+        cause: e.into(),
+    })
 }
 
 fn client(headers: HashMap<String, String>) -> Result<reqwest::Client, ZoomError> {
