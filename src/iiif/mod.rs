@@ -55,7 +55,7 @@ fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
                     scale_factor,
                     tile_size,
                     page_info: Arc::clone(page_info),
-                    base_url: Arc::clone(base_url)
+                    base_url: Arc::clone(base_url),
                 })
         })
         .into_zoom_levels();
@@ -66,7 +66,7 @@ struct IIIFZoomLevel {
     scale_factor: u32,
     tile_size: Vec2d,
     page_info: Arc<ImageInfo>,
-    base_url: Arc<String>
+    base_url: Arc<String>,
 }
 
 impl TilesRect for IIIFZoomLevel {
@@ -101,12 +101,19 @@ impl TilesRect for IIIFZoomLevel {
 
 impl std::fmt::Debug for IIIFZoomLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let name = self.base_url.split('/')
+        let name = self
+            .base_url
+            .split('/')
             .last()
             .and_then(|s: &str| {
                 let s = s.trim();
-                if s.is_empty() { None } else { Some(s) }
-            }).unwrap_or("IIIF Image");
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s)
+                }
+            })
+            .unwrap_or("IIIF Image");
         write!(f, "{}", name)
     }
 }
@@ -153,8 +160,11 @@ fn test_missing_id() {
         .into_iter()
         .map(|t| t.unwrap().url)
         .collect();
-    assert_eq!(tiles, vec![
-        "http://test.com/0,0,512,350/512,350/0/default.jpg",
-        "http://test.com/512,0,88,350/88,350/0/default.jpg"
-    ])
+    assert_eq!(
+        tiles,
+        vec![
+            "http://test.com/0,0,512,350/512,350/0/default.jpg",
+            "http://test.com/512,0,88,350/88,350/0/default.jpg"
+        ]
+    )
 }
