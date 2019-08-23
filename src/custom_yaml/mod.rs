@@ -25,7 +25,9 @@ impl std::fmt::Debug for CustomYamlTiles {
 
 impl TileProvider for CustomYamlTiles {
     fn next_tiles(&mut self, previous: Option<TileFetchResult>) -> Vec<TileReference> {
-        if previous.is_some() { return vec![] }
+        if previous.is_some() {
+            return vec![];
+        }
         self.tile_set
             .into_iter()
             .collect::<Result<Vec<_>, _>>()

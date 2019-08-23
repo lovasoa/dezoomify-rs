@@ -20,13 +20,15 @@ pub use vec2d::Vec2d;
 
 use crate::dezoomer::{apply_to_tiles, PostProcessFn, TileFetchResult, ZoomLevel};
 
-mod auto;
 mod canvas;
-mod custom_yaml;
 mod dezoomer;
+mod vec2d;
+
+mod auto;
+mod custom_yaml;
+mod generic;
 mod google_arts_and_culture;
 mod iiif;
-mod vec2d;
 mod zoomify;
 
 #[derive(StructOpt, Debug)]

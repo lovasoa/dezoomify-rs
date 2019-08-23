@@ -81,6 +81,15 @@ pub struct TileFetchResult {
     pub tile_size: Option<Vec2d>,
 }
 
+impl TileFetchResult {
+    pub fn is_success(&self) -> bool {
+        self.tile_size
+            .filter(|&Vec2d { x, y }| x > 0 && y > 0)
+            .is_some()
+            && self.count == self.successes
+    }
+}
+
 pub type PostProcessFn = fn(tile: &TileReference, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>>;
 
 pub trait TileProvider: Debug {
@@ -103,8 +112,8 @@ pub trait TileProvider: Debug {
 /// Takes a zoom level and a function, and applies the function to all the batches of tiles
 /// in the level
 pub fn apply_to_tiles<F>(lvl: &mut ZoomLevel, mut downloader: F)
-    where
-        F: FnMut(Vec<TileReference>) -> TileFetchResult,
+where
+    F: FnMut(Vec<TileReference>) -> TileFetchResult,
 {
     let mut previous = None;
     while let Some(tiles) = Some(lvl.next_tiles(previous)).filter(|v| !v.is_empty()) {
@@ -143,14 +152,15 @@ impl<T: TilesRect> TileProvider for T {
         let tile_size = self.tile_size();
         let Vec2d { x: w, y: h } = self.size().ceil_div(tile_size);
         let this: &T = self.borrow();
-        (0..h).flat_map(move |y| {
-            (0..w).map(move |x| {
+        (0..h)
+            .flat_map(move |y| {
+                (0..w).map(move |x| {
                     let position = Vec2d { x, y };
-                let url = this.tile_url(position);
-                TileReference {
+                    let url = this.tile_url(position);
+                    TileReference {
                         url,
                         position: position * tile_size,
-                }
+                    }
                 })
             })
             .collect()
@@ -234,13 +244,32 @@ mod tests {
         let mut all_tiles = vec![];
         apply_to_tiles(&mut lvl, |tiles| {
             all_tiles.extend(tiles);
-            TileFetchResult { count: 0, successes: 0, tile_size: None }
+            TileFetchResult {
+                count: 0,
+                successes: 0,
+                tile_size: None,
+            }
         });
-        assert_eq!(all_tiles, vec![
-            TileReference { url: "0,0".into(), position: Vec2d { x: 0, y: 0 } },
-            TileReference { url: "1,0".into(), position: Vec2d { x: 60, y: 0 } },
-            TileReference { url: "0,1".into(), position: Vec2d { x: 0, y: 60 } },
-            TileReference { url: "1,1".into(), position: Vec2d { x: 60, y: 60 } }
-        ]);
+        assert_eq!(
+            all_tiles,
+            vec![
+                TileReference {
+                    url: "0,0".into(),
+                    position: Vec2d { x: 0, y: 0 },
+                },
+                TileReference {
+                    url: "1,0".into(),
+                    position: Vec2d { x: 60, y: 0 },
+                },
+                TileReference {
+                    url: "0,1".into(),
+                    position: Vec2d { x: 0, y: 60 },
+                },
+                TileReference {
+                    url: "1,1".into(),
+                    position: Vec2d { x: 60, y: 60 },
+                }
+            ]
+        );
     }
 }
