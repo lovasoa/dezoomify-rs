@@ -16,7 +16,8 @@ The following dezoomers are currently available:
  - [**IIIF**](#IIIF) supports the widely used International Image Interoperability Framework format.
  - [**Google Arts & Culture**](#google-arts-culture) supports downloading images from
     [artsandculture.google.com](https://artsandculture.google.com/);
- - [**custom**](#Custom) for advanced users.
+ - [**generic**](#Generic) For when you know the format of the tile URLs.
+ - [**custom**](#Custom-yaml) for advanced users.
     It allows you to specify a custom tile URL format.
 
 ## Usage instructions
@@ -34,42 +35,6 @@ before being able to launch it. See how to do
 
 
 ## Dezoomers
-
-### Custom
-
-The custom dezoomer can be used when you know the form of the individual tile URLs.
-
-#### Create a `tiles.yaml` file
-
-You have to generate a [`tiles.yaml`](tiles.yaml) file that describes your image.
-
- 1. In a text editor, create an empty plaintext file, and save it under `tiles.yaml`.
- 1. Paste the following template to the file, changing it to match your own image.
- 
-If you need help creating the file, you can follow the [step-by-step tutorial](https://github.com/lovasoa/dezoomify-rs/wiki/Usage-example), that follows a concrete example.
-
-```yaml
-# The url of individual tiles, where {{ expressions }} will be evaluated using the variables below
-url_template: "http://www.asmilano.it/fast/iipsrv.fcgi?deepzoom=/opt/divenire/files/./tifs/05/63/563559.tif_files/13/{{x/tile_size}}_{{y/tile_size}}.jpg"
-
-variables:
-  # The x position of tiles goes from 0 to the image width with an increment of the tile width
-  - name: x
-    from: 0
-    to: 7520 # Image width
-    step: 256 # Tile width
-
-  - name: y
-    from: 0
-    to: 6000 # Image height
-    step: 256 # Tile height
-
-  - name: tile_size
-    value: 256
-```
-
-Then place this file in the same directory as the executable file you downloaded,
-launch `dezoomify-rs` in a terminal and when asked, enter `tiles.yaml` as the tile source. 
 
 ### Google Arts Culture
 In order to download images from google arts and culture, just open 
@@ -89,6 +54,36 @@ then the URL to enter is
 The IIIF dezoomer takes the URL of an
  [`info.json`](https://iiif.io/api/image/2.1/#image-information) file as input.
 You can find this url in your browser's network inspector when loading the image.
+
+### Generic
+
+You can use this dezoomer if you know the format of tile URLs.
+For instance, if you noticed that the URL of the first tile is 
+
+```
+http://example.com/my_image/image-0-0.jpg
+```
+
+and the second is 
+
+```
+http://example.com/my_image/image-1-0.jpg
+```
+
+then you can guess what the general format will be, and give dezoomify-rs
+the following:
+
+```
+http://example.com/my_image/image-{{X}}-{{Y}}.jpg
+```
+
+### Custom yaml
+
+The custom dezoomer can be used when you know the form of the individual tile URLs,
+as well as some meta-informations about the file.
+
+In order to use this dezoomer, you'll need to create a `tiles.yaml` file.
+See: [Usage example for the custom YAML dezoomer](https://github.com/lovasoa/dezoomify-rs/wiki/Usage-example-for-the-custom-YAML-dezoomer).
 
 ## Command-line options
 
