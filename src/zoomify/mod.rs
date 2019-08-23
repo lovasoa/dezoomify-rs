@@ -90,10 +90,10 @@ fn test_panorama() {
         <IMAGE_PROPERTIES
             WIDTH="174550" HEIGHT="16991" NUMTILES="61284"
             NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>"#;
-    let props = load_from_properties(url, contents).unwrap();
+    let mut props = load_from_properties(url, contents).unwrap();
     assert_eq!(props.len(), 11);
-    let level = &props[3];
-    let tiles: Vec<String> = level.tiles().into_iter().map(|t| t.unwrap().url).collect();
+    let level = &mut props[3];
+    let tiles: Vec<String> = level.next_tiles(None).into_iter().map(|t| t.url).collect();
     assert_eq!(
         tiles,
         vec![
@@ -109,12 +109,13 @@ fn test_panorama() {
 
 #[test]
 fn test_tilegroups() {
+    use std::collections::HashSet;
     let url = "http://x.fr/y/ImageProperties.xml?t";
     let contents = br#"<IMAGE_PROPERTIES WIDTH="12000" HEIGHT="9788"
                                 NUMTILES="2477" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>"#;
-    let props = load_from_properties(url, contents).unwrap();
-    let level = &props[5];
-    let tiles: Vec<String> = level.tiles().into_iter().map(|t| t.unwrap().url).collect();
-    assert_eq!(tiles[14], "http://x.fr/y/TileGroup1/5-0-14.jpg");
-    assert_eq!(tiles[15], "http://x.fr/y/TileGroup2/5-0-15.jpg");
+    let mut props = load_from_properties(url, contents).unwrap();
+    let level = &mut props[5];
+    let tiles: HashSet<String> = level.next_tiles(None).into_iter().map(|t| t.url).collect();
+    assert!(tiles.contains("http://x.fr/y/TileGroup1/5-0-14.jpg"));
+    assert!(tiles.contains("http://x.fr/y/TileGroup2/5-0-15.jpg"));
 }

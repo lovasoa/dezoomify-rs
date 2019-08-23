@@ -84,13 +84,13 @@ impl TilesRect for GAPZoomLevel {
         url::compute_url(&self.page_info, x, y, self.z)
     }
 
-    fn post_process_tile(
-        &self,
-        _tile: &TileReference,
-        data: Vec<u8>,
-    ) -> Result<Vec<u8>, Box<dyn Error>> {
-        Ok(decryption::decrypt(data)?)
+    fn post_process_fn(&self) -> Option<PostProcessFn> {
+        Some(post_process_tile)
     }
+}
+
+fn post_process_tile(_tile: &TileReference, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
+    decryption::decrypt(data).map_err(|e| e.into())
 }
 
 impl std::fmt::Debug for GAPZoomLevel {

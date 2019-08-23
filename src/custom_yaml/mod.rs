@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::error::Error;
 
 use serde::Deserialize;
 
@@ -25,11 +24,12 @@ impl std::fmt::Debug for CustomYamlTiles {
 }
 
 impl TileProvider for CustomYamlTiles {
-    fn tiles(&self) -> Vec<Result<TileReference, Box<dyn Error>>> {
+    fn next_tiles(&mut self, previous: Option<TileFetchResult>) -> Vec<TileReference> {
+        if previous.is_some() { return vec![] }
         self.tile_set
             .into_iter()
-            .map(|r| r.map_err(|e| e.into()))
-            .collect()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("Invalid tiles")
     }
 
     fn http_headers(&self) -> HashMap<String, String> {

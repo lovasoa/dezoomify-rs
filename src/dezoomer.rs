@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Debug;
@@ -74,15 +75,20 @@ pub trait Dezoomer {
     }
 }
 
+pub struct TileFetchResult {
+    pub count: u64,
+    pub successes: u64,
+    pub tile_size: Option<Vec2d>,
+}
+
+pub type PostProcessFn = fn(tile: &TileReference, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>>;
+
 pub trait TileProvider: Debug {
-    fn tiles(&self) -> Vec<Result<TileReference, Box<dyn Error>>>;
-    fn post_process_tile(
-        &self,
-        _tile: &TileReference,
-        data: Vec<u8>,
-    ) -> Result<Vec<u8>, Box<dyn Error>> {
-        Ok(data)
+    fn next_tiles(&mut self, previous: Option<TileFetchResult>) -> Vec<TileReference>;
+    fn post_process_fn(&self) -> Option<PostProcessFn> {
+        None
     }
+
     fn name(&self) -> String {
         format!("{:?}", self)
     }
@@ -91,6 +97,18 @@ pub trait TileProvider: Debug {
     }
     fn http_headers(&self) -> HashMap<String, String> {
         HashMap::new()
+    }
+}
+
+/// Takes a zoom level and a function, and applies the function to all the batches of tiles
+/// in the level
+pub fn apply_to_tiles<F>(lvl: &mut ZoomLevel, mut downloader: F)
+    where
+        F: FnMut(Vec<TileReference>) -> TileFetchResult,
+{
+    let mut previous = None;
+    while let Some(tiles) = Some(lvl.next_tiles(previous)).filter(|v| !v.is_empty()) {
+        previous = Some(downloader(tiles))
     }
 }
 
@@ -105,12 +123,8 @@ pub trait TilesRect: Debug {
     fn size(&self) -> Vec2d;
     fn tile_size(&self) -> Vec2d;
     fn tile_url(&self, pos: Vec2d) -> String;
-    fn post_process_tile(
-        &self,
-        _tile: &TileReference,
-        data: Vec<u8>,
-    ) -> Result<Vec<u8>, Box<dyn Error>> {
-        Ok(data)
+    fn post_process_fn(&self) -> Option<PostProcessFn> {
+        None
     }
     fn tile_count(&self) -> u32 {
         let Vec2d { x, y } = self.size().ceil_div(self.tile_size());
@@ -119,30 +133,31 @@ pub trait TilesRect: Debug {
 }
 
 impl<T: TilesRect> TileProvider for T {
-    fn tiles(&self) -> Vec<Result<TileReference, Box<dyn Error>>> {
+    fn next_tiles(&mut self, previous: Option<TileFetchResult>) -> Vec<TileReference> {
+        // When the dimensions are known in advance, we can always generate
+        // a single batch of tile references. So any subsequent call returns an empty vector.
+        if previous.is_some() {
+            return vec![];
+        }
+
         let tile_size = self.tile_size();
         let Vec2d { x: w, y: h } = self.size().ceil_div(tile_size);
-
-        (0..w)
-            .flat_map(move |x| {
-                (0..h).map(move |y| {
+        let this: &T = self.borrow();
+        (0..h).flat_map(move |y| {
+            (0..w).map(move |x| {
                     let position = Vec2d { x, y };
-                    let url = self.tile_url(position);
-                    Ok(TileReference {
+                let url = this.tile_url(position);
+                TileReference {
                         url,
                         position: position * tile_size,
-                    })
+                }
                 })
             })
             .collect()
     }
 
-    fn post_process_tile(
-        &self,
-        tile: &TileReference,
-        data: Vec<u8>,
-    ) -> Result<Vec<u8>, Box<dyn Error>> {
-        TilesRect::post_process_tile(self, tile, data)
+    fn post_process_fn(&self) -> Option<PostProcessFn> {
+        TilesRect::post_process_fn(self)
     }
 
     fn name(&self) -> String {
@@ -189,5 +204,43 @@ impl FromStr for TileReference {
         } else {
             Err(make_error())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug)]
+    struct FakeLvl;
+
+    impl TilesRect for FakeLvl {
+        fn size(&self) -> Vec2d {
+            Vec2d { x: 100, y: 100 }
+        }
+
+        fn tile_size(&self) -> Vec2d {
+            Vec2d { x: 60, y: 60 }
+        }
+
+        fn tile_url(&self, pos: Vec2d) -> String {
+            format!("{},{}", pos.x, pos.y)
+        }
+    }
+
+    #[test]
+    fn assert_tiles() {
+        let mut lvl: ZoomLevel = Box::new(FakeLvl {});
+        let mut all_tiles = vec![];
+        apply_to_tiles(&mut lvl, |tiles| {
+            all_tiles.extend(tiles);
+            TileFetchResult { count: 0, successes: 0, tile_size: None }
+        });
+        assert_eq!(all_tiles, vec![
+            TileReference { url: "0,0".into(), position: Vec2d { x: 0, y: 0 } },
+            TileReference { url: "1,0".into(), position: Vec2d { x: 60, y: 0 } },
+            TileReference { url: "0,1".into(), position: Vec2d { x: 0, y: 60 } },
+            TileReference { url: "1,1".into(), position: Vec2d { x: 60, y: 60 } }
+        ]);
     }
 }

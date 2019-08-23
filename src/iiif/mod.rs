@@ -136,11 +136,11 @@ fn test_tiles() {
            "supports" : ["regionByPct","sizeByForcedWh","sizeByWh","sizeAboveFull","rotationBy90s","mirroring","gray"] }
       ]
     }"#;
-    let levels = zoom_levels("test.com", data).unwrap();
+    let mut levels = zoom_levels("test.com", data).unwrap();
     let tiles: Vec<String> = levels[6]
-        .tiles()
+        .next_tiles(None)
         .into_iter()
-        .map(|t| t.unwrap().url)
+        .map(|t| t.url)
         .collect();
     assert_eq!(tiles, vec![
         "http://www.asmilano.it/fast/iipsrv.fcgi?IIIF=/opt/divenire/files/./tifs/05/36/536765.tif/0,0,15001,32768/234,512/0/default.jpg",
@@ -154,11 +154,11 @@ fn test_missing_id() {
       "width" : 600,
       "height" : 350
     }"#;
-    let levels = zoom_levels("http://test.com/info.json", data).unwrap();
+    let mut levels = zoom_levels("http://test.com/info.json", data).unwrap();
     let tiles: Vec<String> = levels[0]
-        .tiles()
+        .next_tiles(None)
         .into_iter()
-        .map(|t| t.unwrap().url)
+        .map(|t| t.url)
         .collect();
     assert_eq!(
         tiles,

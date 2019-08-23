@@ -18,7 +18,7 @@ use dezoomer::TileReference;
 use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 pub use vec2d::Vec2d;
 
-use crate::dezoomer::ZoomLevel;
+use crate::dezoomer::{apply_to_tiles, PostProcessFn, TileFetchResult, ZoomLevel};
 
 mod auto;
 mod canvas;
@@ -229,33 +229,47 @@ fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
 
 fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     initialize_threadpool(&args);
-    let zoom_level = find_zoomlevel(&args)?;
+    let mut zoom_level = find_zoomlevel(&args)?;
     println!("Dezooming {}", zoom_level.name());
 
     let http_client = client(zoom_level.http_headers())?;
 
-    let tile_refs: Vec<TileReference> = zoom_level
-        .tiles()
-        .into_iter()
-        .filter_map(display_err)
-        .collect();
-
-    let progress = progress_bar(tile_refs.len());
-    let total_tiles = tile_refs.len();
-
     let canvas = Mutex::new(Canvas::new(zoom_level.size_hint()));
 
-    let successful_tiles = tile_refs
-        .into_par_iter()
-        .flat_map(|tile_ref: TileReference| {
-            progress.inc(1);
-            progress.set_message(&format!("Downloading tile at {}", tile_ref.position));
-            let res = download_tile(&zoom_level, &tile_ref, &http_client, args.retries)
-                .and_then(|tile| canvas.lock().unwrap().add_tile(&tile));
-            display_err(res)
-        })
-        .count();
-    let canvas = canvas.into_inner().unwrap();
+    let progress = progress_bar(0);
+    let mut total_tiles = 0u64;
+    let mut successful_tiles = 0u64;
+
+    let post_process_fn = zoom_level.post_process_fn();
+
+    apply_to_tiles(&mut zoom_level, |tile_refs| {
+        let count = tile_refs.len() as u64;
+        total_tiles += count;
+        progress.set_length(total_tiles);
+
+        let (successes, tile_size) = tile_refs
+            .into_par_iter()
+            .map(|tile_ref: TileReference| {
+                progress.inc(1);
+                progress.set_message(&format!("Downloading tile at {}", tile_ref.position));
+                let tile = download_tile(post_process_fn, &tile_ref, &http_client, args.retries);
+                let res = tile.and_then(|tile| {
+                    canvas.lock().unwrap().add_tile(&tile)?;
+                    Ok(tile.size())
+                });
+                display_err(res)
+                    .map(|size| (1, Some(size)))
+                    .unwrap_or((0, None))
+            })
+            .reduce(|| (0, None), |a, b| (a.0 + b.0, a.1.or(b.1)));
+        successful_tiles += successes;
+        TileFetchResult {
+            count,
+            successes,
+            tile_size,
+        }
+    });
+
     let final_msg = if successful_tiles == total_tiles {
         "Downloaded all tiles.".into()
     } else if successful_tiles > 0 {
@@ -267,6 +281,8 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
         return Err(ZoomError::NoTile);
     };
     progress.finish_with_message(&final_msg);
+
+    let canvas = canvas.into_inner().unwrap();
 
     println!("Saving the image to {}...", &args.outfile.to_string_lossy());
     canvas.image().save(&args.outfile)?;
@@ -280,17 +296,17 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
 }
 
 fn download_tile(
-    zoom_level: &ZoomLevel,
+    post_process_fn: Option<PostProcessFn>,
     tile_reference: &TileReference,
     client: &reqwest::Client,
     retries: usize,
 ) -> Result<Tile, ZoomError> {
-    let mut res = Tile::download(zoom_level, tile_reference, client);
+    let mut res = Tile::download(post_process_fn, tile_reference, client);
     let mut wait_time = Duration::from_millis(100);
     for _ in 0..retries {
         thread::sleep(wait_time);
         wait_time *= 2;
-        res = Tile::download(zoom_level, tile_reference, client);
+        res = Tile::download(post_process_fn, tile_reference, client);
         match &res {
             Ok(_) => break,
             Err(e) => eprintln!("{}", e),

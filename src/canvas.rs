@@ -109,16 +109,19 @@ impl Tile {
         self.size() + self.position
     }
     pub fn download(
-        zoom_level: &ZoomLevel,
+        post_process_fn: Option<PostProcessFn>,
         tile_reference: &TileReference,
         client: &reqwest::Client,
     ) -> Result<Tile, ZoomError> {
         let mut buf: Vec<u8> = vec![];
         let mut data = client.get(&tile_reference.url).send()?.error_for_status()?;
         data.copy_to(&mut buf)?;
-        buf = zoom_level
-            .post_process_tile(tile_reference, buf)
-            .map_err(|source| ZoomError::PostProcessing { source })?;
+
+        if let Some(post_process) = post_process_fn {
+            buf = post_process(tile_reference, buf)
+                .map_err(|source| ZoomError::PostProcessing { source })?;
+        }
+
         Ok(Tile {
             image: image::load_from_memory(&buf)?,
             position: tile_reference.position,
