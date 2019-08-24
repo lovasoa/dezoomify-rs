@@ -36,9 +36,19 @@ pub struct Arguments {
     pub num_threads: Option<usize>,
 
     /// Number of new attempts to make when a tile load fails
-    /// before abandoning
+    /// before giving up. Setting this to 0 is useful to speed up the
+    /// generic dezoomer, which relies on failed tile loads to detect the
+    /// dimensions of the image. On the contrary, if a server is not reliable,
+    /// set this value to a higher number.
     #[structopt(short = "r", long = "retries", default_value = "1")]
     pub retries: usize,
+
+    /// Sets an HTTP header to use on requests.
+    /// This option can be repeated in order to set multiple headers.
+    /// You can use `-H "Referer: URL"` where URL is the URL of the website's
+    /// viewer page in order to let the site think you come from a the legitimate viewer.
+    #[structopt(short = "H", long = "header", parse(try_from_str = "parse_header"))]
+    headers: Vec<(String, String)>,
 }
 
 impl Arguments {
@@ -72,5 +82,18 @@ impl Arguments {
         } else {
             None
         }
+    }
+
+    pub fn headers(&self) -> impl Iterator<Item=(&String, &String)> {
+        self.headers.iter().map(|(k, v)| (k, v))
+    }
+}
+
+fn parse_header(s: &str) -> Result<(String, String), &'static str> {
+    let vals: Vec<&str> = s.splitn(2, ':').map(str::trim).collect();
+    if let &[key, value] = &vals[..] {
+        Ok((key.into(), value.into()))
+    } else {
+        Err("Invalid header format. Expected 'Name: Value'")
     }
 }

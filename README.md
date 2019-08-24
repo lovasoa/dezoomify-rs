@@ -108,7 +108,7 @@ When using dezoomify-rs from the command-line
 
 ```
 USAGE:
-    dezoomify-rs [FLAGS] [OPTIONS] [ARGS]
+    dezoomify-rs [FLAGS] [OPTIONS] [--] [ARGS]
 
 FLAGS:
         --help       Prints help information
@@ -117,14 +117,20 @@ FLAGS:
 
 OPTIONS:
     -d, --dezoomer <dezoomer>          Name of the dezoomer to use [default: auto]
+    -H, --header <headers>...          Sets an HTTP header to use on requests. This option can be repeated in order to
+                                       set multiple headers. You can use `-H "Referer: URL"` where URL is the URL of the
+                                       website's viewer page in order to let the site think you come from a the
+                                       legitimate viewer.
     -h, --max-height <max_height>      If several zoom levels are available, then select the one with the largest height
                                        that is inferior to max-height.
     -w, --max-width <max_width>        If several zoom levels are available, then select the one with the largest width
                                        that is inferior to max-width.
     -n, --num-threads <num_threads>    Degree of parallelism to use. At most this number of tiles will be downloaded at
                                        the same time.
-    -r, --retries <retries>            Number of new attempts to make when a tile load fails before abandoning
-                                       [default: 1]
+    -r, --retries <retries>            Number of new attempts to make when a tile load fails before giving up. Setting
+                                       this to 0 is useful to speed up the generic dezoomer, which relies on failed tile
+                                       loads to detect the dimensions of the image. On the contrary, if a server is not
+                                       reliable, set this value to a higher number. [default: 1]
 
 ARGS:
     <input_uri>    Input URL or local file name

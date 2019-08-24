@@ -1,25 +1,24 @@
+use std::{fs, thread};
 use std::collections::HashMap;
 use std::error::Error;
 use std::io::{BufRead, Read};
 use std::sync::Mutex;
 use std::time::Duration;
-use std::{fs, thread};
 
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
-use reqwest::{header, Client};
+use reqwest::{Client, header};
 use structopt::StructOpt;
 
+use arguments::Arguments;
 use canvas::{Canvas, Tile};
 use custom_error::custom_error;
-use dezoomer::TileReference;
 use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
-pub use vec2d::Vec2d;
-
 use dezoomer::{apply_to_tiles, PostProcessFn, TileFetchResult, ZoomLevel};
-use arguments::Arguments;
+use dezoomer::TileReference;
+pub use vec2d::Vec2d;
 
 mod canvas;
 mod dezoomer;
@@ -155,7 +154,7 @@ fn progress_bar(n: usize) -> ProgressBar {
 fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
     let mut dezoomer = args.find_dezoomer()?;
     let uri = args.choose_input_uri();
-    let http_client = client(HashMap::new())?;
+    let http_client = client(args.headers())?;
     println!("Trying to locate a zoomable image...");
     let zoom_levels: Vec<ZoomLevel> = list_tiles(dezoomer.as_mut(), &http_client, &uri)?;
     choose_level(zoom_levels, args)
@@ -166,7 +165,8 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     let mut zoom_level = find_zoomlevel(&args)?;
     println!("Dezooming {}", zoom_level.name());
 
-    let http_client = client(zoom_level.http_headers())?;
+    let level_headers = zoom_level.http_headers();
+    let http_client = client(level_headers.iter().chain(args.headers()))?;
 
     let canvas = Mutex::new(Canvas::new(zoom_level.size_hint()));
 
@@ -252,10 +252,10 @@ fn download_tile(
     })
 }
 
-fn client(headers: HashMap<String, String>) -> Result<reqwest::Client, ZoomError> {
-    let header_map: Result<header::HeaderMap, ZoomError> = default_headers()
-        .iter()
-        .chain(headers.iter())
+fn client<'a, I: Iterator<Item=(&'a String, &'a String)>>(headers: I)
+                                                          -> Result<reqwest::Client, ZoomError> {
+    let header_map: Result<header::HeaderMap, ZoomError> = default_headers().iter()
+        .chain(headers.map(|(k, v)| (k, v)))
         .map(|(name, value)| Ok((name.parse()?, value.parse()?)))
         .collect();
     let client = reqwest::Client::builder()
