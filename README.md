@@ -1,16 +1,22 @@
 # dezoomify-rs
 
-[![Build Status](https://travis-ci.org/lovasoa/dezoomify-rs.svg?branch=master)](https://travis-ci.org/lovasoa/dezoomify-rs)
+**dezoomify-rs** is a tiled image downloader.
+Some webpages present high-resolution zoomable images without a way to download them.
+These images are often *tiled*: the original large image has been split into smaller individual image files called tiles.
+The only way to download such an image is to download all the tiles separately and then stitch them together.
+This process can be automated by a tiled image downloader.
 
-This is a prototype for a new version of
-[dezoomify](https://github.com/lovasoa/dezoomify)
-written in [rust](https://www.rust-lang.org/).
+The most common tiled image downloader is probably [**dezoomify**](https://ophir.alwaysdata.net/dezoomify/dezoomify.html),
+an online tool which is very easy to use.
+
 
 The goal of this project is not to replace the traditional dezoomify.
-However, it can dezoom even 
-very large images, that currently cannot be dezoomed inside a browser
-because of memory constraints.
+However, some images are so large that they can't be efficiently downloaded and displayed inside a web browser.
+Other times, a website tries to protect its tiles by refusing access to them when certain 
+[HTTP headers](https://en.wikipedia.org/wiki/List_of_HTTP_header_fields) are not set to the right values.
+**dezoomify-rs** is a desktop application for Windows, MacOs and linux that does not have the same limitations as the online zoomify.
 
+dezoomify-rs supports several zoomable image formats, each backed by a dedicated *dezoomer*.
 The following dezoomers are currently available:
  - [**zoomify**](#zoomify) supports the popular zoomable image format *Zoomify*.
  - [**deepzoom**](#DeepZoom) supports Microsoft's *DZI* format (Deep Zoom Image),
