@@ -13,6 +13,8 @@ because of memory constraints.
 
 The following dezoomers are currently available:
  - [**zoomify**](#zoomify) supports the popular zoomable image format *Zoomify*.
+ - [**deepzoom**](#DeepZoom) supports Microsoft's *DZI* format (Deep Zoom Image),
+ that is often used with the seadragon viewer.
  - [**IIIF**](#IIIF) supports the widely used International Image Interoperability Framework format.
  - [**Google Arts & Culture**](#google-arts-culture) supports downloading images from
     [artsandculture.google.com](https://artsandculture.google.com/);
@@ -54,6 +56,15 @@ then the URL to enter is
 The IIIF dezoomer takes the URL of an
  [`info.json`](https://iiif.io/api/image/2.1/#image-information) file as input.
 You can find this url in your browser's network inspector when loading the image.
+
+### DeepZoom
+
+The DeepZoom dezoomer takes the URL of a `dzi` file as input.
+You can find this url in your browser's network inspector when loading the image.
+If the image tile URLs have the form
+`http://test.com/y/xy_files/1/2_3.jpg`,
+then the URL to enter is
+`http://test.com/y/xy.dzi`.
 
 ### Generic
 

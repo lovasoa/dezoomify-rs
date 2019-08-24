@@ -30,6 +30,7 @@ mod generic;
 mod google_arts_and_culture;
 mod iiif;
 mod zoomify;
+mod dzi;
 
 #[derive(StructOpt, Debug)]
 struct Arguments {

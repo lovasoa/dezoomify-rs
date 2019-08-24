@@ -7,6 +7,9 @@ pub struct Vec2d {
 }
 
 impl Vec2d {
+    pub fn square(size: u32) -> Vec2d {
+        Vec2d { x: size, y: size }
+    }
     pub fn max(self, other: Vec2d) -> Vec2d {
         Vec2d {
             x: self.x.max(other.x),
