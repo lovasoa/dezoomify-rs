@@ -62,6 +62,7 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, DziErr
                 size,
                 tile_size: image_properties.get_tile_size(),
                 format: image_properties.format.clone(),
+                overlap: image_properties.overlap,
                 level: max_level - level_num as u32,
             }
         })
@@ -74,6 +75,7 @@ struct DziLevel {
     size: Vec2d,
     tile_size: Vec2d,
     format: String,
+    overlap: u32,
     level: u32,
 }
 
@@ -95,6 +97,17 @@ impl TilesRect for DziLevel {
             y = pos.y,
             format = self.format
         )
+    }
+
+    fn tile_ref(&self, pos: Vec2d) -> TileReference {
+        let delta = Vec2d {
+            x: if pos.x == 0 { 0 } else { self.overlap },
+            y: if pos.y == 0 { 0 } else { self.overlap },
+        };
+        TileReference {
+            url: self.tile_url(pos),
+            position: self.tile_size() * pos - delta,
+        }
     }
 }
 

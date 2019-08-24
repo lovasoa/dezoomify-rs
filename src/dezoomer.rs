@@ -132,6 +132,12 @@ pub trait TilesRect: Debug {
     fn size(&self) -> Vec2d;
     fn tile_size(&self) -> Vec2d;
     fn tile_url(&self, pos: Vec2d) -> String;
+    fn tile_ref(&self, pos: Vec2d) -> TileReference {
+        TileReference {
+            url: self.tile_url(pos),
+            position: self.tile_size() * pos,
+        }
+    }
     fn post_process_fn(&self) -> Option<PostProcessFn> {
         None
     }
@@ -151,16 +157,11 @@ impl<T: TilesRect> TileProvider for T {
 
         let tile_size = self.tile_size();
         let Vec2d { x: w, y: h } = self.size().ceil_div(tile_size);
-        let this: &T = self.borrow();
+        let this: &T = self.borrow(); // Immutable borrow
         (0..h)
             .flat_map(move |y| {
                 (0..w).map(move |x| {
-                    let position = Vec2d { x, y };
-                    let url = this.tile_url(position);
-                    TileReference {
-                        url,
-                        position: position * tile_size,
-                    }
+                    this.tile_ref(Vec2d { x, y })
                 })
             })
             .collect()
