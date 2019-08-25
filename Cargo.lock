@@ -356,7 +356,7 @@ dependencies = [
 
 [[package]]
 name = "dezoomify-rs"
-version = "1.5.2"
+version = "1.5.3"
 dependencies = [
  "aes 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "base64 0.10.1 (registry+https://github.com/rust-lang/crates.io-index)",
