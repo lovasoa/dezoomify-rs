@@ -39,7 +39,8 @@ impl Dezoomer for AutoDezoomer {
         // TO DO: Use drain_filter when it is stabilized
         let mut i = 0;
         while i != self.dezoomers.len() {
-            let keep = match self.dezoomers[i].zoom_levels(data) {
+            let dezoomer = &mut self.dezoomers[i];
+            let keep = match dezoomer.zoom_levels(data) {
                 Ok(mut levels) => {
                     successes.append(&mut levels);
                     true
@@ -49,7 +50,7 @@ impl Dezoomer for AutoDezoomer {
                     true
                 }
                 Err(e) => {
-                    errs.push(e);
+                    errs.push((dezoomer.name(), e));
                     false
                 }
             };
@@ -68,7 +69,7 @@ impl Dezoomer for AutoDezoomer {
 }
 
 #[derive(Debug)]
-pub struct AutoDezoomerError(Vec<DezoomerError>);
+pub struct AutoDezoomerError(Vec<(&'static str, DezoomerError)>);
 
 impl std::error::Error for AutoDezoomerError {}
 
@@ -81,8 +82,8 @@ impl std::fmt::Display for AutoDezoomerError {
             f,
             "Tried all of the dezoomers, none succeeded. They returned the following errors:\n"
         )?;
-        for e in self.0.iter() {
-            writeln!(f, " - {}", e)?;
+        for (dezoomer_name, err) in self.0.iter() {
+            writeln!(f, " - {}: {}", dezoomer_name, err)?;
         }
         Ok(())
     }
