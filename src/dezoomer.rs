@@ -159,11 +159,7 @@ impl<T: TilesRect> TileProvider for T {
         let Vec2d { x: w, y: h } = self.size().ceil_div(tile_size);
         let this: &T = self.borrow(); // Immutable borrow
         (0..h)
-            .flat_map(move |y| {
-                (0..w).map(move |x| {
-                    this.tile_ref(Vec2d { x, y })
-                })
-            })
+            .flat_map(move |y| (0..w).map(move |x| this.tile_ref(Vec2d { x, y })))
             .collect()
     }
 

@@ -1,38 +1,37 @@
-use std::{fs, thread};
 use std::collections::HashMap;
 use std::error::Error;
 use std::io::{BufRead, Read};
 use std::sync::Mutex;
 use std::time::Duration;
+use std::{fs, thread};
 
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
-use reqwest::{Client, header};
+use reqwest::{header, Client};
 use structopt::StructOpt;
 
 use arguments::Arguments;
 use canvas::{Canvas, Tile};
 use custom_error::custom_error;
-use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
-use dezoomer::{apply_to_tiles, PostProcessFn, TileFetchResult, ZoomLevel};
 use dezoomer::TileReference;
+use dezoomer::{apply_to_tiles, PostProcessFn, TileFetchResult, ZoomLevel};
+use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 pub use vec2d::Vec2d;
 
+mod arguments;
 mod canvas;
 mod dezoomer;
 mod vec2d;
-mod arguments;
 
 mod auto;
 mod custom_yaml;
+mod dzi;
 mod generic;
 mod google_arts_and_culture;
 mod iiif;
 mod zoomify;
-mod dzi;
-
 
 fn stdin_line() -> String {
     std::io::stdin()
@@ -252,9 +251,11 @@ fn download_tile(
     })
 }
 
-fn client<'a, I: Iterator<Item=(&'a String, &'a String)>>(headers: I)
-                                                          -> Result<reqwest::Client, ZoomError> {
-    let header_map: Result<header::HeaderMap, ZoomError> = default_headers().iter()
+fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
+    headers: I,
+) -> Result<reqwest::Client, ZoomError> {
+    let header_map: Result<header::HeaderMap, ZoomError> = default_headers()
+        .iter()
         .chain(headers.map(|(k, v)| (k, v)))
         .map(|(name, value)| Ok((name.parse()?, value.parse()?)))
         .collect();

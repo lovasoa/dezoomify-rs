@@ -18,8 +18,13 @@ pub struct DziFile {
 
 impl DziFile {
     pub fn get_size(&self) -> Result<Vec2d, DziError> {
-        self.sizes.iter().next()
-            .map(|s| Vec2d { x: s.width, y: s.height })
+        self.sizes
+            .iter()
+            .next()
+            .map(|s| Vec2d {
+                x: s.width,
+                y: s.height,
+            })
             .ok_or(DziError::NoSize)
     }
     pub fn get_tile_size(&self) -> Vec2d {
@@ -45,12 +50,14 @@ pub struct Size {
 
 #[test]
 fn test_dzi() {
-    let dzi: DziFile = serde_xml_rs::from_str(r#"
+    let dzi: DziFile = serde_xml_rs::from_str(
+        r#"
         <Image
             Format="png" Overlap="2" TileSize="256">
             <Size Height="3852" Width="5393"/>
-        </Image>"#
-    ).unwrap();
+        </Image>"#,
+    )
+    .unwrap();
     assert_eq!(dzi.get_size().unwrap(), Vec2d { x: 5393, y: 3852 });
     assert_eq!(dzi.get_tile_size(), Vec2d { x: 256, y: 256 });
     assert_eq!(dzi.max_level(), 13);

@@ -1,7 +1,7 @@
 use structopt::StructOpt;
 
-use crate::{auto, stdin_line, Vec2d, ZoomError};
 use crate::dezoomer::Dezoomer;
+use crate::{auto, stdin_line, Vec2d, ZoomError};
 
 #[derive(StructOpt, Debug)]
 pub struct Arguments {
@@ -69,7 +69,7 @@ impl Arguments {
                 name: self.dezoomer.clone(),
             })
     }
-    pub fn best_size<I: Iterator<Item=Vec2d>>(&self, sizes: I) -> Option<Vec2d> {
+    pub fn best_size<I: Iterator<Item = Vec2d>>(&self, sizes: I) -> Option<Vec2d> {
         if self.largest {
             sizes.max_by_key(|s| s.x * s.y)
         } else if self.max_width.is_some() || self.max_height.is_some() {
@@ -84,14 +84,14 @@ impl Arguments {
         }
     }
 
-    pub fn headers(&self) -> impl Iterator<Item=(&String, &String)> {
+    pub fn headers(&self) -> impl Iterator<Item = (&String, &String)> {
         self.headers.iter().map(|(k, v)| (k, v))
     }
 }
 
 fn parse_header(s: &str) -> Result<(String, String), &'static str> {
     let vals: Vec<&str> = s.splitn(2, ':').map(str::trim).collect();
-    if let &[key, value] = &vals[..] {
+    if let [key, value] = vals[..] {
         Ok((key.into(), value.into()))
     } else {
         Err("Invalid header format. Expected 'Name: Value'")

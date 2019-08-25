@@ -1,6 +1,6 @@
 use crate::dezoomer::{
-    Dezoomer, DezoomerError, DezoomerInput, single_level, TileFetchResult,
-    TileProvider, TileReference, ZoomLevels,
+    single_level, Dezoomer, DezoomerError, DezoomerInput, TileFetchResult, TileProvider,
+    TileReference, ZoomLevels,
 };
 use crate::Vec2d;
 
@@ -129,7 +129,8 @@ fn test_generic_dezoomer() {
     crate::dezoomer::apply_to_tiles(&mut lvl, |tiles| {
         let count = tiles.len() as u64;
 
-        let successes: Vec<_> = tiles.into_iter()
+        let successes: Vec<_> = tiles
+            .into_iter()
             .filter(|t| existing_tiles.contains(&t.url.as_str()))
             .collect();
         let res = TileFetchResult {
@@ -141,12 +142,33 @@ fn test_generic_dezoomer() {
         res
     });
 
-    assert_eq!(all_tiles, vec![
-        TileReference { url: "0,0".into(), position: Vec2d { x: 0, y: 0 } },
-        TileReference { url: "1,0".into(), position: Vec2d { x: 4, y: 0 } },
-        TileReference { url: "2,0".into(), position: Vec2d { x: 8, y: 0 } },
-        TileReference { url: "0,1".into(), position: Vec2d { x: 0, y: 5 } },
-        TileReference { url: "1,1".into(), position: Vec2d { x: 4, y: 5 } },
-        TileReference { url: "2,1".into(), position: Vec2d { x: 8, y: 5 } },
-    ])
+    assert_eq!(
+        all_tiles,
+        vec![
+            TileReference {
+                url: "0,0".into(),
+                position: Vec2d { x: 0, y: 0 }
+            },
+            TileReference {
+                url: "1,0".into(),
+                position: Vec2d { x: 4, y: 0 }
+            },
+            TileReference {
+                url: "2,0".into(),
+                position: Vec2d { x: 8, y: 0 }
+            },
+            TileReference {
+                url: "0,1".into(),
+                position: Vec2d { x: 0, y: 5 }
+            },
+            TileReference {
+                url: "1,1".into(),
+                position: Vec2d { x: 4, y: 5 }
+            },
+            TileReference {
+                url: "2,1".into(),
+                position: Vec2d { x: 8, y: 5 }
+            },
+        ]
+    )
 }

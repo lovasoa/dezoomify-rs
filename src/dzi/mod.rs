@@ -46,27 +46,23 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, DziErr
 
     let size = image_properties.get_size()?;
     let max_level = image_properties.max_level();
-    let levels = std::iter::successors(
-        Some(size),
-        |&size| {
-            if size.x > 1 || size.y > 1 {
-                Some(size.ceil_div(Vec2d::square(2)))
-            } else {
-                None
-            }
-        },
-    ).enumerate()
-        .map(|(level_num, size)| {
-            DziLevel {
-                base_url: Arc::clone(base_url),
-                size,
-                tile_size: image_properties.get_tile_size(),
-                format: image_properties.format.clone(),
-                overlap: image_properties.overlap,
-                level: max_level - level_num as u32,
-            }
-        })
-        .into_zoom_levels();
+    let levels = std::iter::successors(Some(size), |&size| {
+        if size.x > 1 || size.y > 1 {
+            Some(size.ceil_div(Vec2d::square(2)))
+        } else {
+            None
+        }
+    })
+    .enumerate()
+    .map(|(level_num, size)| DziLevel {
+        base_url: Arc::clone(base_url),
+        size,
+        tile_size: image_properties.get_tile_size(),
+        format: image_properties.format.clone(),
+        overlap: image_properties.overlap,
+        level: max_level - level_num as u32,
+    })
+    .into_zoom_levels();
     Ok(levels)
 }
 
