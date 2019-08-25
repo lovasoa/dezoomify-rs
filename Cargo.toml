@@ -1,9 +1,10 @@
 [package]
 name = "dezoomify-rs"
 version = "1.5.2"
-authors = ["Ophir LOJKINE <ophir.lojkine@auto-grid.com>"]
+authors = ["Ophir LOJKINE"]
 edition = "2018"
 license-file = "LICENSE"
+description = "Allows you to download zoomable images"
 
 [dependencies]
 image = "0.22.1"
