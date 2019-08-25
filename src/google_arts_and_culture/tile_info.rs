@@ -44,10 +44,24 @@ impl FromStr for PageInfo {
             .to_string();
 
         let path_no_protocol = base_url.split(':').nth(1).ok_or(PageParseError::BadPath)?;
-        let before_token = format!("]\n,\"{}\",\"", path_no_protocol);
-        let token = extract_between(s, &before_token, "\"")
+        let before_token = format!("]\n,\"{}\",", path_no_protocol);
+        let mut token = extract_between(s, &before_token, ",")
             .ok_or(PageParseError::NoToken)?
             .to_string();
+
+        if token == "null" {
+            token = "".into()
+        } else if token.len() >= 2 {
+            // Remove the quotes
+            let last = token.remove(token.len() - 1);
+            let first = token.remove(0);
+            if last != '"' || first != '"' {
+                return Err(PageParseError::InvalidToken { token });
+            }
+        } else {
+            return Err(PageParseError::InvalidToken { token });
+        }
+
         let name = extract_between(s, "\"name\":\"", "\"")
             .unwrap_or("Google Arts and culture image")
             .into();
@@ -66,9 +80,10 @@ fn extract_between<'a, 'b, 'c>(s: &'a str, start: &'b str, end: &'c str) -> Opti
 }
 
 custom_error! {pub PageParseError
-    NoPath  = "Unable to find path information",
-    BadPath = "The path has an invalid form",
-    NoToken = "Unable to find the token in the page",
+    NoPath                      = "Unable to find path information",
+    BadPath                     = "The path has an invalid form",
+    NoToken                     = "Unable to find the token in the page",
+    InvalidToken{token: String} = "Invalid token: '{token}'",
 }
 
 #[cfg(test)]
@@ -131,5 +146,15 @@ mod tests {
             "https://lh5.ggpht.com/D0sqZ0sJbzoQeYFoySoXLJqgLMfXhi8-gGVGRqD_UEYUqkqk9Eqdxx5NNaw";
         assert_eq!(info.base_url, base_url);
         assert_eq!(info.token, "mcOPEQJmk1514hP_dJkpwVwIhPU");
+    }
+
+    #[test]
+    fn test_parse_html_null() {
+        // See: https://github.com/lovasoa/dezoomify/issues/315
+        let info: PageInfo = parse_html_file("page_source_null.html");
+        let base_url =
+            "https://lh6.ggpht.com/lzVeTLZkOLzaRoI6WjNRYfNhu4I20a7L_Eko7DBb1iHR8YjzErIGRTmt6A";
+        assert_eq!(info.base_url, base_url);
+        assert_eq!(info.token, "");
     }
 }
