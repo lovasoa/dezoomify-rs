@@ -136,3 +136,7 @@ ARGS:
     <input_uri>    Input URL or local file name
     <outfile>      File to which the resulting image should be saved [default: dezoomified.jpg]
 ```
+
+## Documentation
+  - For documentation specific to dezoomify-rs [dezoomify-rs wiki](https://github.com/lovasoa/dezoomify-rs/wiki). Do not hesitate to contribute to it by creating new pages or modifying existing ones.
+  - For general purpose documentation about zoomable images, the [dezoomify wiki](https://github.com/lovasoa/dezoomify/wiki) may be useful.
