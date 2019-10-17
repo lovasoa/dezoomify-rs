@@ -1,5 +1,7 @@
+use std::default::Default;
 use std::str::FromStr;
 
+use regex::Regex;
 use serde::Deserialize;
 
 use custom_error::custom_error;
@@ -39,44 +41,25 @@ impl FromStr for PageInfo {
 
     /// Parses a google arts project HTML page
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let base_url = extract_between(s, "<meta property=\"og:image\" content=\"", "\"")
-            .ok_or(PageParseError::NoPath)?
-            .to_string();
+        let re = Regex::new(r#"]\n,"(//[^"/]+/[^"/]+)",(?:"([^"]+)"|null)"#).unwrap();
+        let mat = re.captures(s)
+            .ok_or(PageParseError::NoToken)?;
+        let base_url = format!("https:{}", &mat[1]);
+        let token = mat.get(2).map_or_else(
+            Default::default,
+            |s| s.as_str().into());
 
-        let path_no_protocol = base_url.split(':').nth(1).ok_or(PageParseError::BadPath)?;
-        let before_token = format!("]\n,\"{}\",", path_no_protocol);
-        let mut token = extract_between(s, &before_token, ",")
-            .ok_or(PageParseError::NoToken)?
-            .to_string();
+        let name = Regex::new(r#""name":"([^"]+)"#).unwrap()
+            .captures(s)
+            .map(|c| (&c[1]).to_string())
+            .unwrap_or_else(|| "Google Arts and culture image".into());
 
-        if token == "null" {
-            token = "".into()
-        } else if token.len() >= 2 {
-            // Remove the quotes
-            let last = token.remove(token.len() - 1);
-            let first = token.remove(0);
-            if last != '"' || first != '"' {
-                return Err(PageParseError::InvalidToken { token });
-            }
-        } else {
-            return Err(PageParseError::InvalidToken { token });
-        }
-
-        let name = extract_between(s, "\"name\":\"", "\"")
-            .unwrap_or("Google Arts and culture image")
-            .into();
         Ok(PageInfo {
             base_url,
             token,
             name,
         })
     }
-}
-
-fn extract_between<'a, 'b, 'c>(s: &'a str, start: &'b str, end: &'c str) -> Option<&'a str> {
-    let start_pos = start.len() + s.find(start)?;
-    let end_pos = start_pos + (&s[start_pos..]).find(end)?;
-    Some(&s[start_pos..end_pos])
 }
 
 custom_error! {pub PageParseError
@@ -89,11 +72,6 @@ custom_error! {pub PageParseError
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_extract_between() {
-        assert_eq!(extract_between("A B C", "A ", " C"), Some("B"));
-    }
 
     #[test]
     fn test_xml_parse() {
@@ -146,6 +124,16 @@ mod tests {
             "https://lh5.ggpht.com/D0sqZ0sJbzoQeYFoySoXLJqgLMfXhi8-gGVGRqD_UEYUqkqk9Eqdxx5NNaw";
         assert_eq!(info.base_url, base_url);
         assert_eq!(info.token, "mcOPEQJmk1514hP_dJkpwVwIhPU");
+    }
+
+    #[test]
+    fn test_parse_html_newformat() {
+        // See: https://github.com/lovasoa/dezoomify-rs/issues/11
+        let info: PageInfo = parse_html_file("page_source_newformat.html");
+        let base_url =
+            "https://lh6.ggpht.com/V4etPVsk7ooKgotTWex4Cat1uaXYEYV9yaan76p1PMZTikOxZvc6QRAArifFStw";
+        assert_eq!(info.base_url, base_url);
+        assert_eq!(info.token, "K7E6UJlQsaoENCVi1uyxnnkiB4s");
     }
 
     #[test]
