@@ -48,7 +48,12 @@ pub struct Arguments {
     /// This option can be repeated in order to set multiple headers.
     /// You can use `-H "Referer: URL"` where URL is the URL of the website's
     /// viewer page in order to let the site think you come from a the legitimate viewer.
-    #[structopt(short = "H", long = "header", parse(try_from_str = "parse_header"), number_of_values = 1)]
+    #[structopt(
+        short = "H",
+        long = "header",
+        parse(try_from_str = "parse_header"),
+        number_of_values = 1
+    )]
     headers: Vec<(String, String)>,
 }
 
@@ -101,18 +106,27 @@ fn parse_header(s: &str) -> Result<(String, String), &'static str> {
 
 #[test]
 fn test_headers_and_input() -> Result<(), structopt::clap::Error> {
-    let args: Arguments = StructOpt::from_iter_safe([
-        "dezoomify-rs",
-        "--header", "Referer: http://test.com",
-        "--header", "User-Agent: custom",
-        "--header", "A:B",
-        "input-url"
-    ].iter())?;
+    let args: Arguments = StructOpt::from_iter_safe(
+        [
+            "dezoomify-rs",
+            "--header",
+            "Referer: http://test.com",
+            "--header",
+            "User-Agent: custom",
+            "--header",
+            "A:B",
+            "input-url",
+        ]
+        .iter(),
+    )?;
     assert_eq!(args.input_uri, Some("input-url".into()));
-    assert_eq!(args.headers, vec![
-        ("Referer".into(), "http://test.com".into()),
-        ("User-Agent".into(), "custom".into()),
-        ("A".into(), "B".into()),
-    ]);
+    assert_eq!(
+        args.headers,
+        vec![
+            ("Referer".into(), "http://test.com".into()),
+            ("User-Agent".into(), "custom".into()),
+            ("A".into(), "B".into()),
+        ]
+    );
     Ok(())
 }

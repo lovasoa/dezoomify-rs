@@ -42,14 +42,14 @@ impl FromStr for PageInfo {
     /// Parses a google arts project HTML page
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let re = Regex::new(r#"]\n,"(//[^"/]+/[^"/]+)",(?:"([^"]+)"|null)"#).unwrap();
-        let mat = re.captures(s)
-            .ok_or(PageParseError::NoToken)?;
+        let mat = re.captures(s).ok_or(PageParseError::NoToken)?;
         let base_url = format!("https:{}", &mat[1]);
-        let token = mat.get(2).map_or_else(
-            Default::default,
-            |s| s.as_str().into());
+        let token = mat
+            .get(2)
+            .map_or_else(Default::default, |s| s.as_str().into());
 
-        let name = Regex::new(r#""name":"([^"]+)"#).unwrap()
+        let name = Regex::new(r#""name":"([^"]+)"#)
+            .unwrap()
             .captures(s)
             .map(|c| (&c[1]).to_string())
             .unwrap_or_else(|| "Google Arts and culture image".into());
