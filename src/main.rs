@@ -198,6 +198,7 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
         display_err(tile_result.and_then(|tile| {
             progress.set_message(&format!("Downloaded tile at {}", tile.position()));
             canvas.lock().unwrap().add_tile(&tile)?;
+            successes += 1;
             tile_size.replace(tile.size());
             Ok(())
         }));
