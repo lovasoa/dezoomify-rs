@@ -1,24 +1,27 @@
+use std::{fs, thread};
 use std::collections::HashMap;
 use std::error::Error;
 use std::io::{BufRead, Read};
 use std::sync::Mutex;
 use std::time::Duration;
-use std::{fs, thread};
 
+use futures::stream::{self, futures_unordered::FuturesUnordered, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
-use rayon::prelude::*;
-use rayon::ThreadPoolBuilder;
-use reqwest::{header, Client};
+use regex::Replacer;
+use reqwest::{Client, header};
 use structopt::StructOpt;
+use tokio::prelude::*;
 
 use arguments::Arguments;
 use canvas::{Canvas, Tile};
 use custom_error::custom_error;
-use dezoomer::TileReference;
 use dezoomer::{apply_to_tiles, PostProcessFn, TileFetchResult, ZoomLevel};
 use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
+use dezoomer::TileReference;
 pub use vec2d::Vec2d;
+
+use crate::canvas::WorkAround;
 
 mod arguments;
 mod canvas;
@@ -46,9 +49,10 @@ pub fn default_headers() -> HashMap<String, String> {
     serde_yaml::from_str(include_str!("default_headers.yaml")).unwrap()
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let conf: Arguments = Arguments::from_args();
-    if let Err(err) = dezoomify(conf) {
+    if let Err(err) = dezoomify(conf).await {
         eprintln!("{}", err);
         std::process::exit(1);
     } else {
@@ -56,12 +60,13 @@ fn main() {
     }
 }
 
-fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
+// TODO: return Bytes
+async fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
     if uri.starts_with("http://") || uri.starts_with("https://") {
         println!("Downloading {}...", uri);
+        let mut response = http.get(uri).send().await?.error_for_status()?;
         let mut contents = Vec::new();
-        let mut response = http.get(uri).send()?.error_for_status()?;
-        response.read_to_end(&mut contents)?;
+        contents.extend(response.bytes().await?);
         Ok(contents)
     } else {
         println!("Opening {}...", uri);
@@ -69,7 +74,7 @@ fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
     }
 }
 
-fn list_tiles(
+async fn list_tiles(
     dezoomer: &mut dyn Dezoomer,
     http: &Client,
     uri: &str,
@@ -82,7 +87,7 @@ fn list_tiles(
         match dezoomer.zoom_levels(&i) {
             Ok(levels) => return Ok(levels),
             Err(DezoomerError::NeedsData { uri }) => {
-                let contents = fetch_uri(&uri, http)?;
+                let contents = fetch_uri(&uri, http).await?;
                 i.uri = uri;
                 i.contents = Some(contents);
             }
@@ -150,18 +155,18 @@ fn progress_bar(n: usize) -> ProgressBar {
     progress
 }
 
-fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
+async fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
     let mut dezoomer = args.find_dezoomer()?;
     let uri = args.choose_input_uri();
     let http_client = client(args.headers())?;
     println!("Trying to locate a zoomable image...");
-    let zoom_levels: Vec<ZoomLevel> = list_tiles(dezoomer.as_mut(), &http_client, &uri)?;
+    let zoom_levels: Vec<ZoomLevel> = list_tiles(dezoomer.as_mut(), &http_client, &uri).await?;
     choose_level(zoom_levels, args)
 }
 
-fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
+async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     initialize_threadpool(&args);
-    let mut zoom_level = find_zoomlevel(&args)?;
+    let mut zoom_level = find_zoomlevel(&args).await?;
     println!("Dezooming {}", zoom_level.name());
 
     let level_headers = zoom_level.http_headers();
@@ -173,35 +178,36 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     let mut total_tiles = 0u64;
     let mut successful_tiles = 0u64;
 
-    let post_process_fn = zoom_level.post_process_fn();
+    let post_process_fn = WorkAround(zoom_level.post_process_fn());
 
-    apply_to_tiles(&mut zoom_level, |tile_refs| {
-        let count = tile_refs.len() as u64;
-        total_tiles += count;
-        progress.set_length(total_tiles);
+    // TODO: support multiple next_tiles
+    let tile_refs = zoom_level.next_tiles(None);
+    let count = tile_refs.len() as u64;
+    total_tiles += count;
+    progress.set_length(total_tiles);
 
-        let (successes, tile_size) = tile_refs
-            .into_par_iter()
-            .map(|tile_ref: TileReference| {
-                progress.inc(1);
-                progress.set_message(&format!("Downloading tile at {}", tile_ref.position));
-                let tile = download_tile(post_process_fn, &tile_ref, &http_client, args.retries);
-                let res = tile.and_then(|tile| {
-                    canvas.lock().unwrap().add_tile(&tile)?;
-                    Ok(tile.size())
-                });
-                display_err(res)
-                    .map(|size| (1, Some(size)))
-                    .unwrap_or((0, None))
-            })
-            .reduce(|| (0, None), |a, b| (a.0 + b.0, a.1.or(b.1)));
-        successful_tiles += successes;
-        TileFetchResult {
-            count,
-            successes,
-            tile_size,
-        }
-    });
+    let mut stream: FuturesUnordered<_> = tile_refs.iter()
+        .map(|tile_ref: &TileReference| download_tile(post_process_fn, tile_ref, &http_client, args.retries))
+        .collect();
+
+    let mut successes = 0;
+    let mut tile_size = None;
+
+    while let Some(tile_result) = stream.next().await {
+        progress.inc(1);
+        display_err(tile_result.and_then(|tile| {
+            progress.set_message(&format!("Downloaded tile at {}", tile.position()));
+            canvas.lock().unwrap().add_tile(&tile)?;
+            tile_size.replace(tile.size());
+            Ok(())
+        }));
+    }
+    successful_tiles += successes;
+    TileFetchResult {
+        count,
+        successes,
+        tile_size,
+    };
 
     let final_msg = if successful_tiles == total_tiles {
         "Downloaded all tiles.".into()
@@ -228,18 +234,18 @@ fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     Ok(())
 }
 
-fn download_tile(
-    post_process_fn: Option<PostProcessFn>,
+async fn download_tile(
+    post_process_fn: WorkAround,
     tile_reference: &TileReference,
     client: &reqwest::Client,
     retries: usize,
 ) -> Result<Tile, ZoomError> {
-    let mut res = Tile::download(post_process_fn, tile_reference, client);
+    let mut res = Tile::download(post_process_fn, tile_reference, client).await;
     let mut wait_time = Duration::from_millis(100);
     for _ in 0..retries {
         thread::sleep(wait_time);
         wait_time *= 2;
-        res = Tile::download(post_process_fn, tile_reference, client);
+        res = Tile::download(post_process_fn, tile_reference, client).await;
         match &res {
             Ok(_) => break,
             Err(e) => eprintln!("{}", e),
@@ -266,14 +272,10 @@ fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
 }
 
 fn initialize_threadpool(args: &Arguments) {
-    let mut builder = ThreadPoolBuilder::new();
     if let Some(num_threads) = args.num_threads {
-        builder = builder.num_threads(num_threads)
+        // TODO
+        unimplemented!("num_threads is not implemented")
     }
-    builder = builder.thread_name(|i| format!("dezoomify-rs thread {}", i));
-    builder
-        .build_global()
-        .expect("threadpool initialization failed");
 }
 
 custom_error! {

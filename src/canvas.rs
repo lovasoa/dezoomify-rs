@@ -101,6 +101,11 @@ pub struct Tile {
     position: Vec2d,
 }
 
+// TODO : fix
+// see: https://github.com/rust-lang/rust/issues/63033
+#[derive(Clone, Copy)]
+pub struct WorkAround(pub Option<PostProcessFn>);
+
 impl Tile {
     pub fn size(&self) -> Vec2d {
         image_size(&self.image)
@@ -108,16 +113,16 @@ impl Tile {
     pub fn bottom_right(&self) -> Vec2d {
         self.size() + self.position
     }
-    pub fn download(
-        post_process_fn: Option<PostProcessFn>,
+    pub async fn download(
+        post_process_fn: WorkAround,
         tile_reference: &TileReference,
         client: &reqwest::Client,
     ) -> Result<Tile, ZoomError> {
-        let mut buf: Vec<u8> = vec![];
-        let mut data = client.get(&tile_reference.url).send()?.error_for_status()?;
-        data.copy_to(&mut buf)?;
+        let mut buf: Vec<u8> = vec![]; // TODO: use bytes
+        let mut data = client.get(&tile_reference.url).send().await?.error_for_status()?;
+        buf.extend(data.bytes().await?);
 
-        if let Some(post_process) = post_process_fn {
+        if let Some(post_process) = post_process_fn.0 {
             buf = post_process(tile_reference, buf)
                 .map_err(|source| ZoomError::PostProcessing { source })?;
         }

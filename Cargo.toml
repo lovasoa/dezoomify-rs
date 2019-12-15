@@ -8,7 +8,9 @@ description = "Allows you to download zoomable images"
 
 [dependencies]
 image = "0.22.1"
-reqwest = "0.9"
+reqwest = "0.10.0-alpha.2"
+tokio = "0.2.0-alpha.6"
+futures = "0.3"
 custom_error = "1.7.1"
 structopt = "0.2"
 evalexpr = "4.1"
@@ -19,7 +21,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.8"
 serde-xml-rs = "0.3"
 serde_json = "1.0"
-rayon = "1.1"
 block-modes = "0.3"
 aes = "0.3"
 hmac = "0.7"
