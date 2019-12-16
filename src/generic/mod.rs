@@ -1,6 +1,8 @@
 use crate::dezoomer::{
-    single_level, Dezoomer, DezoomerError, DezoomerInput, TileFetchResult, TileProvider,
-    TileReference, ZoomLevels,
+    single_level,
+    Dezoomer, DezoomerError, DezoomerInput,
+    TileFetchResult, TileProvider, TileReference,
+    ZoomLevels,
 };
 use crate::Vec2d;
 
@@ -126,21 +128,21 @@ fn test_generic_dezoomer() {
 
     let mut all_tiles = vec![];
 
-    crate::dezoomer::apply_to_tiles(&mut lvl, |tiles| {
+    let mut zoom_level_iter = crate::dezoomer::ZoomLevelIter::new(&mut lvl);
+    while let Some(tiles) = zoom_level_iter.next() {
         let count = tiles.len() as u64;
 
         let successes: Vec<_> = tiles
             .into_iter()
             .filter(|t| existing_tiles.contains(&t.url.as_str()))
             .collect();
-        let res = TileFetchResult {
+        zoom_level_iter.set_fetch_result(TileFetchResult {
             count,
             successes: successes.len() as u64,
             tile_size: Some(Vec2d { x: 4, y: 5 }),
-        };
+        });
         all_tiles.extend(successes);
-        res
-    });
+    };
 
     assert_eq!(
         all_tiles,

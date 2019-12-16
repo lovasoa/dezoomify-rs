@@ -14,7 +14,7 @@ use structopt::StructOpt;
 use arguments::Arguments;
 use canvas::{Canvas, Tile};
 use custom_error::custom_error;
-use dezoomer::{apply_to_tiles, PostProcessFn, TileFetchResult, ZoomLevel};
+use dezoomer::{ZoomLevelIter, PostProcessFn, TileFetchResult, ZoomLevel};
 use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 use dezoomer::TileReference;
 pub use vec2d::Vec2d;
@@ -177,44 +177,39 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
 
     progress.set_message("Computing the URLs of the image tiles...");
 
-    // TODO: support multiple next_tiles
-    let tile_refs = zoom_level.next_tiles(None);
+    let mut zoom_level_iter = ZoomLevelIter::new(&mut zoom_level);
+    while let Some(tile_refs) = zoom_level_iter.next() {
+        let count = tile_refs.len() as u64;
+        total_tiles += count;
+        progress.set_length(total_tiles);
 
-    let count = tile_refs.len() as u64;
-    total_tiles += count;
-    progress.set_length(total_tiles);
+        progress.set_message("Requesting the tiles...");
 
-    progress.set_message("Requesting the tiles...");
+        let retries = args.retries;
+        let mut stream = futures::stream::iter(&tile_refs)
+            .map(|tile_ref: &TileReference| download_tile(post_process_fn, tile_ref, &http_client, retries))
+            .buffer_unordered(args.num_threads);
 
-    let retries = args.retries;
-    let mut stream = futures::stream::iter(&tile_refs)
-        .map(|tile_ref: &TileReference| download_tile(post_process_fn, tile_ref, &http_client, retries))
-        .buffer_unordered(args.num_threads);
+        let mut successes = 0;
+        let mut tile_size = None;
 
-    let mut successes = 0;
-    let mut tile_size = None;
-
-    while let Some(tile_result) = stream.next().await {
-        progress.inc(1);
-        if let Some(tile) = display_err(tile_result) {
-            progress.set_message(&format!("Downloaded tile at {}", tile.position()));
-            tile_size.replace(tile.size());
-            let canvas = Arc::clone(&canvas);
-            tokio::spawn(async move {
-                tokio::task::block_in_place(move || {
-                    display_err(canvas.lock().unwrap().add_tile(&tile));
-                })
-            }).await?;
-            successes += 1;
+        while let Some(tile_result) = stream.next().await {
+            progress.inc(1);
+            if let Some(tile) = display_err(tile_result) {
+                progress.set_message(&format!("Downloaded tile at {}", tile.position()));
+                tile_size.replace(tile.size());
+                let canvas = Arc::clone(&canvas);
+                tokio::spawn(async move {
+                    tokio::task::block_in_place(move || {
+                        display_err(canvas.lock().unwrap().add_tile(&tile));
+                    })
+                }).await?;
+                successes += 1;
+            }
         }
+        successful_tiles += successes;
+        zoom_level_iter.set_fetch_result(TileFetchResult { count, successes, tile_size });
     }
-    successful_tiles += successes;
-    TileFetchResult {
-        count,
-        successes,
-        tile_size,
-    };
-
     let final_msg = if successful_tiles == total_tiles {
         "Downloaded all tiles.".into()
     } else if successful_tiles > 0 {

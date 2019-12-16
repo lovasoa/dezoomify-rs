@@ -75,6 +75,7 @@ pub trait Dezoomer {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct TileFetchResult {
     pub count: u64,
     pub successes: u64,
@@ -116,15 +117,27 @@ pub trait TileProvider: Debug {
     }
 }
 
-/// Takes a zoom level and a function, and applies the function to all the batches of tiles
-/// in the level
-pub fn apply_to_tiles<F>(lvl: &mut ZoomLevel, mut downloader: F)
-where
-    F: FnMut(Vec<TileReference>) -> TileFetchResult,
-{
-    let mut previous = None;
-    while let Some(tiles) = Some(lvl.next_tiles(previous)).filter(|v| !v.is_empty()) {
-        previous = Some(downloader(tiles))
+/// Used to iterate over all the batches of tiles in a zoom level
+pub struct ZoomLevelIter<'a> {
+    zoom_level: &'a mut ZoomLevel,
+    previous: Option<TileFetchResult>,
+    waiting_results: bool,
+}
+
+impl<'a> ZoomLevelIter<'a> {
+    pub fn new(zoom_level: &'a mut ZoomLevel) -> Self {
+        ZoomLevelIter { zoom_level, previous: None, waiting_results: false }
+    }
+    pub fn next(&mut self) -> Option<Vec<TileReference>> {
+        assert!(!self.waiting_results);
+        self.waiting_results = true;
+        let tiles = self.zoom_level.next_tiles(self.previous);
+        if tiles.is_empty() { None } else { Some(tiles) }
+    }
+    pub fn set_fetch_result(&mut self, result: TileFetchResult) {
+        assert!(self.waiting_results);
+        self.waiting_results = false;
+        self.previous = Some(result)
     }
 }
 
@@ -254,14 +267,15 @@ mod tests {
     fn assert_tiles() {
         let mut lvl: ZoomLevel = Box::new(FakeLvl {});
         let mut all_tiles = vec![];
-        apply_to_tiles(&mut lvl, |tiles| {
+        let mut zoom_level_iter = ZoomLevelIter::new(&mut lvl);
+        while let Some(tiles) = zoom_level_iter.next() {
             all_tiles.extend(tiles);
-            TileFetchResult {
+            zoom_level_iter.set_fetch_result(TileFetchResult {
                 count: 0,
                 successes: 0,
                 tile_size: None,
-            }
-        });
+            });
+        };
         assert_eq!(
             all_tiles,
             vec![
