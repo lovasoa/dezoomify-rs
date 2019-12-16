@@ -81,8 +81,8 @@ impl Arguments {
         } else if self.max_width.is_some() || self.max_height.is_some() {
             sizes
                 .filter(|s| {
-                    self.max_width.map(|w| s.x < w).unwrap_or(true)
-                        && self.max_height.map(|h| s.y < h).unwrap_or(true)
+                    self.max_width.map(|w| s.x <= w).unwrap_or(true)
+                        && self.max_height.map(|h| s.y <= h).unwrap_or(true)
                 })
                 .max_by_key(|s| s.x * s.y)
         } else {
