@@ -1,4 +1,3 @@
-use std::{fs, thread};
 use std::collections::HashMap;
 use std::error::Error;
 use std::io::{BufRead, Read};
@@ -24,6 +23,7 @@ use dezoomer::TileReference;
 pub use vec2d::Vec2d;
 
 use crate::canvas::WorkAround;
+use std::fs;
 
 mod arguments;
 mod canvas;
@@ -254,7 +254,10 @@ async fn download_tile(
     retries: usize,
 ) -> Result<Tile, ZoomError> {
     let mut res = Tile::download(post_process_fn, tile_reference, client).await;
-    let mut wait_time = Duration::from_millis(100);
+    // The initial delay after which a failed request is retried depends on the position of the tile
+    // in order to avoid sending repeated "bursts" of requests to a server that is struggling
+    let retry_delay = 1 + (tile_reference.position.x + tile_reference.position.y) as u64 % 100;
+    let mut wait_time = Duration::from_millis(retry_delay);
     for _ in 0..retries {
         res = Tile::download(post_process_fn, tile_reference, client).await;
         match &res {
