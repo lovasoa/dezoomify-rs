@@ -4,6 +4,7 @@ use crate::dezoomer::Dezoomer;
 
 use super::{auto, stdin_line, Vec2d, ZoomError};
 use std::time::Duration;
+use regex::Regex;
 
 #[derive(StructOpt, Debug)]
 pub struct Arguments {
@@ -127,20 +128,17 @@ fn parse_header(s: &str) -> Result<(String, String), &'static str> {
 }
 
 fn parse_duration(s: &str) -> Result<Duration, &'static str> {
-    let val: u64 = s.chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect::<String>()
-        .parse()
-        .map_err(|_| "Invalid duration value")?;
-    let unit = s.chars()
-        .skip_while(|c| c.is_ascii_digit() || c.is_whitespace())
-        .collect::<String>();
-    match &unit[..] {
+    let err_msg = "Invalid duration. \
+                        A duration is a number followed by a unit, such as '10ms' or '5s'";
+    let re = Regex::new(r"^(\d+)\s*(min|s|ms|ns)$").unwrap();
+    let caps = re.captures(s).ok_or(err_msg)?;
+    let val: u64 = caps[1].parse().map_err(|_| err_msg)?;
+    match &caps[2] {
         "min" => Ok(Duration::from_secs(60 * val)),
         "s" => Ok(Duration::from_secs(val)),
         "ms" => Ok(Duration::from_millis(val)),
         "ns" => Ok(Duration::from_nanos(val)),
-        _ => Err("Invalid duration unit")
+        _ => Err(err_msg)
     }
 }
 
@@ -174,10 +172,12 @@ fn test_headers_and_input() -> Result<(), structopt::clap::Error> {
 
 #[test]
 fn test_parse_duration() {
-    assert_eq!(Ok(Duration::from_secs(2)), parse_duration("2s"));
-    assert_eq!(Ok(Duration::from_secs(29)), parse_duration("29 s"));
-    assert_eq!(Ok(Duration::from_secs(120)), parse_duration("2min"));
-    assert_eq!(Ok(Duration::from_secs(1)), parse_duration("1000 ms"));
+    assert_eq!(parse_duration("2s"), Ok(Duration::from_secs(2)));
+    assert_eq!(parse_duration("29 s"), Ok(Duration::from_secs(29)));
+    assert_eq!(parse_duration("2min"), Ok(Duration::from_secs(120)));
+    assert_eq!(parse_duration("1000 ms"), Ok(Duration::from_secs(1)));
+    assert!(parse_duration("1 2 ms").is_err());
+    assert!(parse_duration("1 s s").is_err());
     assert!(parse_duration("ms").is_err());
     assert!(parse_duration("1j").is_err());
     assert!(parse_duration("").is_err());
