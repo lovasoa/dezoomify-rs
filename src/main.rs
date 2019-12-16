@@ -1,4 +1,3 @@
-use std::{fs, thread};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
