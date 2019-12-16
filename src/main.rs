@@ -1,3 +1,4 @@
+use std::{fs, thread};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
@@ -8,6 +9,7 @@ use std::time::Duration;
 use futures::stream::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
+
 use reqwest::{Client, header};
 use structopt::StructOpt;
 
@@ -15,6 +17,7 @@ use arguments::Arguments;
 use canvas::{Canvas, Tile};
 use custom_error::custom_error;
 use dezoomer::{ZoomLevelIter, PostProcessFn, TileFetchResult, ZoomLevel};
+
 use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 use dezoomer::TileReference;
 pub use vec2d::Vec2d;
