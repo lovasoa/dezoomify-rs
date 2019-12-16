@@ -156,7 +156,7 @@ fn progress_bar(n: usize) -> ProgressBar {
 async fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
     let mut dezoomer = args.find_dezoomer()?;
     let uri = args.choose_input_uri();
-    let http_client = client(args.headers())?;
+    let http_client = client(args.headers(), args)?;
     println!("Trying to locate a zoomable image...");
     let zoom_levels: Vec<ZoomLevel> = list_tiles(dezoomer.as_mut(), &http_client, &uri).await?;
     choose_level(zoom_levels, args)
@@ -167,7 +167,7 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     println!("Dezooming {}", zoom_level.name());
 
     let level_headers = zoom_level.http_headers();
-    let http_client = client(level_headers.iter().chain(args.headers()))?;
+    let http_client = client(level_headers.iter().chain(args.headers()), &args)?;
 
     let canvas = Arc::new(Mutex::new(Canvas::new(zoom_level.size_hint())));
 
@@ -187,9 +187,10 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
 
         progress.set_message("Requesting the tiles...");
 
-        let retries = args.retries;
+        let Arguments { retries, retry_delay, .. } = args;
         let mut stream = futures::stream::iter(&tile_refs)
-            .map(|tile_ref: &TileReference| download_tile(post_process_fn, tile_ref, &http_client, retries))
+            .map(|tile_ref: &TileReference|
+                download_tile(post_process_fn, tile_ref, &http_client, retries, retry_delay))
             .buffer_unordered(args.num_threads);
 
         let mut successes = 0;
@@ -242,12 +243,14 @@ async fn download_tile(
     tile_reference: &TileReference,
     client: &reqwest::Client,
     retries: usize,
+    retry_delay: Duration,
 ) -> Result<Tile, ZoomError> {
     let mut res = Tile::download(post_process_fn, tile_reference, client).await;
     // The initial delay after which a failed request is retried depends on the position of the tile
     // in order to avoid sending repeated "bursts" of requests to a server that is struggling
-    let retry_delay = 1 + (tile_reference.position.x + tile_reference.position.y) as u64 % 100;
-    let mut wait_time = Duration::from_millis(retry_delay);
+    let n = 100;
+    let idx: f64 = ((tile_reference.position.x + tile_reference.position.y) % n).into();
+    let mut wait_time = retry_delay + Duration::from_secs_f64(idx * retry_delay.as_secs_f64() / n as f64);
     for _ in 0..retries {
         res = Tile::download(post_process_fn, tile_reference, client).await;
         match &res {
@@ -265,6 +268,7 @@ async fn download_tile(
 
 fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
     headers: I,
+    args: &Arguments,
 ) -> Result<reqwest::Client, ZoomError> {
     let header_map: Result<header::HeaderMap, ZoomError> = default_headers()
         .iter()
@@ -273,7 +277,9 @@ fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
         .collect();
     let client = reqwest::Client::builder()
         .default_headers(header_map?)
-        .max_idle_per_host(64)
+        .max_idle_per_host(args.max_idle_per_host)
+        .danger_accept_invalid_certs(args.accept_invalid_certs)
+        .timeout(args.timeout)
         .build()?;
     Ok(client)
 }

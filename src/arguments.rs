@@ -3,6 +3,7 @@ use structopt::StructOpt;
 use crate::dezoomer::Dezoomer;
 
 use super::{auto, stdin_line, Vec2d, ZoomError};
+use std::time::Duration;
 
 #[derive(StructOpt, Debug)]
 pub struct Arguments {
@@ -44,17 +45,38 @@ pub struct Arguments {
     #[structopt(short = "r", long = "retries", default_value = "1")]
     pub retries: usize,
 
+    /// Amount of time to wait before retrying a request that failed
+    #[structopt(long = "retry-delay", default_value = "2s", parse(try_from_str = "parse_duration"))]
+    pub retry_delay: Duration,
+
     /// Sets an HTTP header to use on requests.
     /// This option can be repeated in order to set multiple headers.
     /// You can use `-H "Referer: URL"` where URL is the URL of the website's
     /// viewer page in order to let the site think you come from a the legitimate viewer.
     #[structopt(
-        short = "H",
-        long = "header",
-        parse(try_from_str = "parse_header"),
-        number_of_values = 1
+    short = "H",
+    long = "header",
+    parse(try_from_str = "parse_header"),
+    number_of_values = 1
     )]
     headers: Vec<(String, String)>,
+
+    /// Maximum number of idle connections per host allowed at the same time
+    #[structopt(long = "max-idle-per-host", default_value = "64")]
+    pub max_idle_per_host: usize,
+
+    /// Whether to accept connecting to insecure HTTPS servers
+    #[structopt(long = "accept-invalid-certs")]
+    pub accept_invalid_certs: bool,
+
+    /// Maximum time between the beginning of a request and the end of a response before
+    ///the request should be interrupted and considered considered failed
+    #[structopt(long = "timeout", default_value = "30s", parse(try_from_str = "parse_duration"))]
+    pub timeout: Duration,
+
+    /// Time after which we should give up when trying to connect to a server
+    #[structopt(long = "connect-timeout", default_value = "6s", parse(try_from_str = "parse_duration"))]
+    pub connect_timeout: Duration,
 }
 
 impl Arguments {
@@ -104,6 +126,25 @@ fn parse_header(s: &str) -> Result<(String, String), &'static str> {
     }
 }
 
+fn parse_duration(s: &str) -> Result<Duration, &'static str> {
+    let val: u64 = s.chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .map_err(|_| "Invalid duration value")?;
+    let unit = s.chars()
+        .skip_while(|c| c.is_ascii_digit() || c.is_whitespace())
+        .collect::<String>();
+    match &unit[..] {
+        "min" => Ok(Duration::from_secs(60 * val)),
+        "s" => Ok(Duration::from_secs(val)),
+        "ms" => Ok(Duration::from_millis(val)),
+        "ns" => Ok(Duration::from_nanos(val)),
+        _ => Err("Invalid duration unit")
+    }
+}
+
+
 #[test]
 fn test_headers_and_input() -> Result<(), structopt::clap::Error> {
     let args: Arguments = StructOpt::from_iter_safe(
@@ -129,4 +170,15 @@ fn test_headers_and_input() -> Result<(), structopt::clap::Error> {
         ]
     );
     Ok(())
+}
+
+#[test]
+fn test_parse_duration() {
+    assert_eq!(Ok(Duration::from_secs(2)), parse_duration("2s"));
+    assert_eq!(Ok(Duration::from_secs(29)), parse_duration("29 s"));
+    assert_eq!(Ok(Duration::from_secs(120)), parse_duration("2min"));
+    assert_eq!(Ok(Duration::from_secs(1)), parse_duration("1000 ms"));
+    assert!(parse_duration("ms").is_err());
+    assert!(parse_duration("1j").is_err());
+    assert!(parse_duration("").is_err());
 }
