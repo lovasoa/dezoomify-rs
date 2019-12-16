@@ -191,7 +191,7 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
         let mut stream = futures::stream::iter(&tile_refs)
             .map(|tile_ref: &TileReference|
                 download_tile(post_process_fn, tile_ref, &http_client, retries, retry_delay))
-            .buffer_unordered(args.num_threads);
+            .buffer_unordered(args.parallelism);
 
         let mut successes = 0;
         let mut tile_size = None;
