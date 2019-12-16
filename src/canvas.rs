@@ -101,11 +101,6 @@ pub struct Tile {
     position: Vec2d,
 }
 
-// TODO : fix
-// see: https://github.com/rust-lang/rust/issues/63033
-#[derive(Clone, Copy)]
-pub struct WorkAround(pub Option<PostProcessFn>);
-
 impl Tile {
     pub fn size(&self) -> Vec2d {
         image_size(&self.image)
@@ -114,7 +109,7 @@ impl Tile {
         self.size() + self.position
     }
     pub async fn download(
-        post_process_fn: WorkAround,
+        post_process_fn: PostProcessFn,
         tile_reference: &TileReference,
         client: &reqwest::Client,
     ) -> Result<Tile, ZoomError> {
@@ -126,7 +121,7 @@ impl Tile {
 
         let tile = tokio::spawn(async move {
             tokio::task::block_in_place(move || {
-                if let Some(post_process) = post_process_fn.0 {
+                if let PostProcessFn::Fn(post_process) = post_process_fn {
                     buf = post_process(&tile_reference, buf).expect("Unable to apply pos-processing to tile");
                 }
 

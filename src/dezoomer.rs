@@ -90,12 +90,18 @@ impl TileFetchResult {
     }
 }
 
-pub type PostProcessFn = fn(tile: &TileReference, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>>;
+// TODO : fix
+// see: https://github.com/rust-lang/rust/issues/63033
+#[derive(Clone, Copy)]
+pub enum PostProcessFn {
+    Fn(fn(tile: &TileReference, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>>),
+    None,
+}
 
 pub trait TileProvider: Debug {
     fn next_tiles(&mut self, previous: Option<TileFetchResult>) -> Vec<TileReference>;
-    fn post_process_fn(&self) -> Option<PostProcessFn> {
-        None
+    fn post_process_fn(&self) -> PostProcessFn {
+        PostProcessFn::None
     }
 
     fn name(&self) -> String {
@@ -138,9 +144,10 @@ pub trait TilesRect: Debug {
             position: self.tile_size() * pos,
         }
     }
-    fn post_process_fn(&self) -> Option<PostProcessFn> {
-        None
+    fn post_process_fn(&self) -> PostProcessFn {
+        PostProcessFn::None
     }
+
     fn tile_count(&self) -> u32 {
         let Vec2d { x, y } = self.size().ceil_div(self.tile_size());
         x * y
@@ -163,7 +170,7 @@ impl<T: TilesRect> TileProvider for T {
             .collect()
     }
 
-    fn post_process_fn(&self) -> Option<PostProcessFn> {
+    fn post_process_fn(&self) -> PostProcessFn {
         TilesRect::post_process_fn(self)
     }
 

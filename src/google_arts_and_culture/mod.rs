@@ -84,8 +84,8 @@ impl TilesRect for GAPZoomLevel {
         url::compute_url(&self.page_info, x, y, self.z)
     }
 
-    fn post_process_fn(&self) -> Option<PostProcessFn> {
-        Some(post_process_tile)
+    fn post_process_fn(&self) -> PostProcessFn {
+        PostProcessFn::Fn(post_process_tile)
     }
 }
 

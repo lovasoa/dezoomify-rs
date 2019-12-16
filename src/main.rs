@@ -19,8 +19,6 @@ use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 use dezoomer::TileReference;
 pub use vec2d::Vec2d;
 
-use crate::canvas::WorkAround;
-
 mod arguments;
 mod canvas;
 mod dezoomer;
@@ -175,7 +173,7 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     let mut total_tiles = 0u64;
     let mut successful_tiles = 0u64;
 
-    let post_process_fn = WorkAround(zoom_level.post_process_fn());
+    let post_process_fn = zoom_level.post_process_fn();
 
     progress.set_message("Computing the URLs of the image tiles...");
 
@@ -243,7 +241,7 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
 }
 
 async fn download_tile(
-    post_process_fn: WorkAround,
+    post_process_fn: PostProcessFn,
     tile_reference: &TileReference,
     client: &reqwest::Client,
     retries: usize,
