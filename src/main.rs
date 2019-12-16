@@ -256,13 +256,13 @@ async fn download_tile(
     let mut res = Tile::download(post_process_fn, tile_reference, client).await;
     let mut wait_time = Duration::from_millis(100);
     for _ in 0..retries {
-        tokio::time::delay_for(wait_time).await;
-        wait_time *= 2;
         res = Tile::download(post_process_fn, tile_reference, client).await;
         match &res {
             Ok(_) => break,
             Err(e) => eprintln!("{}", e),
         }
+        tokio::time::delay_for(wait_time).await;
+        wait_time *= 2;
     }
     res.map_err(|e| ZoomError::TileDownloadError {
         uri: tile_reference.url.clone(),
