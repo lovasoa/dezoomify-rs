@@ -33,8 +33,8 @@ pub struct Arguments {
 
     /// Degree of parallelism to use. At most this number of
     /// tiles will be downloaded at the same time.
-    #[structopt(short = "n", long = "num-threads")]
-    pub num_threads: Option<usize>,
+    #[structopt(short = "n", long = "num-downloads", default_value = "16")]
+    pub num_threads: usize,
 
     /// Number of new attempts to make when a tile load fails
     /// before giving up. Setting this to 0 is useful to speed up the

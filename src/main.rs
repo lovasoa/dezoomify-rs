@@ -2,7 +2,8 @@ use std::{fs, thread};
 use std::collections::HashMap;
 use std::error::Error;
 use std::io::{BufRead, Read};
-use std::sync::{Mutex, Arc};
+use std::ops::Deref;
+use std::sync::{Arc, Mutex};
 use std::thread::spawn;
 use std::time::Duration;
 
@@ -23,7 +24,6 @@ use dezoomer::TileReference;
 pub use vec2d::Vec2d;
 
 use crate::canvas::WorkAround;
-use std::ops::Deref;
 
 mod arguments;
 mod canvas;
@@ -167,7 +167,6 @@ async fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
 }
 
 async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
-    initialize_threadpool(&args);
     let mut zoom_level = find_zoomlevel(&args).await?;
     println!("Dezooming {}", zoom_level.name());
 
@@ -185,30 +184,24 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     progress.set_message("Computing the URLs of the image tiles...");
 
     // TODO: support multiple next_tiles
+    let start = std::time::Instant::now();
     let tile_refs = zoom_level.next_tiles(None);
+
     let count = tile_refs.len() as u64;
     total_tiles += count;
     progress.set_length(total_tiles);
 
     progress.set_message("Requesting the tiles...");
 
-    let (initial_tiles, rest_tiles) = tile_refs.split_at(64);
-
-    let mut tile_ref_iter = rest_tiles.iter();
-
-    let mut stream: FuturesUnordered<_> = initial_tiles.iter()
-        .map(|tile_ref: &TileReference| download_tile(post_process_fn, tile_ref, &http_client, args.retries))
-        .collect();
+    let retries = args.retries;
+    let mut stream = futures::stream::iter(&tile_refs)
+        .map(|tile_ref: &TileReference| download_tile(post_process_fn, tile_ref, &http_client, retries))
+        .buffer_unordered(args.num_threads);
 
     let mut successes = 0;
     let mut tile_size = None;
 
     while let Some(tile_result) = stream.next().await {
-        if let Some(next_tile_ref) = tile_ref_iter.next() {
-            let f = download_tile(post_process_fn, next_tile_ref, &http_client, args.retries);
-            stream.push(f);
-        }
-
         progress.inc(1);
         if let Some(tile) = display_err(tile_result) {
             progress.set_message(&format!("Downloaded tile at {}", tile.position()));
@@ -218,7 +211,7 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
                 tokio::task::block_in_place(move || {
                     display_err(canvas.lock().unwrap().add_tile(&tile));
                 })
-            }).await;
+            }).await?;
             successes += 1;
         }
     }
@@ -263,7 +256,7 @@ async fn download_tile(
     let mut res = Tile::download(post_process_fn, tile_reference, client).await;
     let mut wait_time = Duration::from_millis(100);
     for _ in 0..retries {
-        thread::sleep(wait_time);
+        tokio::time::delay_for(wait_time).await;
         wait_time *= 2;
         res = Tile::download(post_process_fn, tile_reference, client).await;
         match &res {
@@ -290,13 +283,6 @@ fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
         .max_idle_per_host(64)
         .build()?;
     Ok(client)
-}
-
-fn initialize_threadpool(args: &Arguments) {
-    if let Some(num_threads) = args.num_threads {
-        // TODO
-        unimplemented!("num_threads is not implemented")
-    }
 }
 
 custom_error! {
