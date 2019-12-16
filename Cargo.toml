@@ -8,8 +8,8 @@ description = "Allows you to download zoomable images"
 
 [dependencies]
 image = "0.22.1"
-reqwest = "0.10.0-alpha.2"
-tokio = "0.2.0-alpha.6"
+reqwest = { git = "https://github.com/seanmonstar/reqwest" }
+tokio = { version = "0.2", features = ["rt-threaded", "rt-core", "macros", "rt-util"] }
 futures = "0.3"
 custom_error = "1.7.1"
 structopt = "0.2"
@@ -27,3 +27,6 @@ hmac = "0.7"
 sha-1 = "0.8"
 base64 = "0.10"
 indicatif = "0.11"
+
+[profile.release]
+debug = true

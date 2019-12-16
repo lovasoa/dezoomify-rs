@@ -122,15 +122,21 @@ impl Tile {
         let mut data = client.get(&tile_reference.url).send().await?.error_for_status()?;
         buf.extend(data.bytes().await?);
 
-        if let Some(post_process) = post_process_fn.0 {
-            buf = post_process(tile_reference, buf)
-                .map_err(|source| ZoomError::PostProcessing { source })?;
-        }
+        let tile_reference = tile_reference.clone();
 
-        Ok(Tile {
-            image: image::load_from_memory(&buf)?,
-            position: tile_reference.position,
-        })
+        let tile = tokio::spawn(async move {
+            tokio::task::block_in_place(move || {
+                if let Some(post_process) = post_process_fn.0 {
+                    buf = post_process(&tile_reference, buf).expect("Unable to apply pos-processing to tile");
+                }
+
+                Tile {
+                    image: image::load_from_memory(&buf).expect("Unable to read image tile"),
+                    position: tile_reference.position,
+                }
+            })
+        }).await?;
+        Ok(tile)
     }
     pub fn position(&self) -> Vec2d {
         self.position

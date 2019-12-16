@@ -2,7 +2,8 @@ use std::{fs, thread};
 use std::collections::HashMap;
 use std::error::Error;
 use std::io::{BufRead, Read};
-use std::sync::Mutex;
+use std::sync::{Mutex, Arc};
+use std::thread::spawn;
 use std::time::Duration;
 
 use futures::stream::{self, futures_unordered::FuturesUnordered, StreamExt};
@@ -22,6 +23,7 @@ use dezoomer::TileReference;
 pub use vec2d::Vec2d;
 
 use crate::canvas::WorkAround;
+use std::ops::Deref;
 
 mod arguments;
 mod canvas;
@@ -172,7 +174,7 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     let level_headers = zoom_level.http_headers();
     let http_client = client(level_headers.iter().chain(args.headers()))?;
 
-    let canvas = Mutex::new(Canvas::new(zoom_level.size_hint()));
+    let canvas = Arc::new(Mutex::new(Canvas::new(zoom_level.size_hint())));
 
     let progress = progress_bar(0);
     let mut total_tiles = 0u64;
@@ -180,13 +182,21 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
 
     let post_process_fn = WorkAround(zoom_level.post_process_fn());
 
+    progress.set_message("Computing the URLs of the image tiles...");
+
     // TODO: support multiple next_tiles
     let tile_refs = zoom_level.next_tiles(None);
     let count = tile_refs.len() as u64;
     total_tiles += count;
     progress.set_length(total_tiles);
 
-    let mut stream: FuturesUnordered<_> = tile_refs.iter()
+    progress.set_message("Requesting the tiles...");
+
+    let (initial_tiles, rest_tiles) = tile_refs.split_at(64);
+
+    let mut tile_ref_iter = rest_tiles.iter();
+
+    let mut stream: FuturesUnordered<_> = initial_tiles.iter()
         .map(|tile_ref: &TileReference| download_tile(post_process_fn, tile_ref, &http_client, args.retries))
         .collect();
 
@@ -194,14 +204,23 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     let mut tile_size = None;
 
     while let Some(tile_result) = stream.next().await {
+        if let Some(next_tile_ref) = tile_ref_iter.next() {
+            let f = download_tile(post_process_fn, next_tile_ref, &http_client, args.retries);
+            stream.push(f);
+        }
+
         progress.inc(1);
-        display_err(tile_result.and_then(|tile| {
+        if let Some(tile) = display_err(tile_result) {
             progress.set_message(&format!("Downloaded tile at {}", tile.position()));
-            canvas.lock().unwrap().add_tile(&tile)?;
-            successes += 1;
             tile_size.replace(tile.size());
-            Ok(())
-        }));
+            let canvas = Arc::clone(&canvas);
+            tokio::spawn(async move {
+                tokio::task::block_in_place(move || {
+                    display_err(canvas.lock().unwrap().add_tile(&tile));
+                })
+            }).await;
+            successes += 1;
+        }
     }
     successful_tiles += successes;
     TileFetchResult {
@@ -222,7 +241,7 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     };
     progress.finish_with_message(&final_msg);
 
-    let canvas = canvas.into_inner().unwrap();
+    let canvas = canvas.lock().unwrap();
 
     println!("Saving the image to {}...", &args.outfile.to_string_lossy());
     canvas.image().save(&args.outfile)?;
@@ -268,6 +287,7 @@ fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
         .collect();
     let client = reqwest::Client::builder()
         .default_headers(header_map?)
+        .max_idle_per_host(64)
         .build()?;
     Ok(client)
 }
@@ -299,4 +319,5 @@ custom_error! {
     NoSuchDezoomer{name: String} = "No such dezoomer: {name}",
     InvalidHeaderName{source: header::InvalidHeaderName} = "Invalid header name: {source}",
     InvalidHeaderValue{source: header::InvalidHeaderValue} = "Invalid header value: {source}",
+    AsyncError{source: tokio::task::JoinError} = "Unable get the result from a thread: {source}",
 }
