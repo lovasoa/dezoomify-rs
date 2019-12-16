@@ -1,18 +1,15 @@
 use std::collections::HashMap;
 use std::error::Error;
-use std::io::{BufRead, Read};
-use std::ops::Deref;
+use std::fs;
+use std::io::BufRead;
 use std::sync::{Arc, Mutex};
-use std::thread::spawn;
 use std::time::Duration;
 
-use futures::stream::{self, futures_unordered::FuturesUnordered, StreamExt};
+use futures::stream::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
-use regex::Replacer;
 use reqwest::{Client, header};
 use structopt::StructOpt;
-use tokio::prelude::*;
 
 use arguments::Arguments;
 use canvas::{Canvas, Tile};
@@ -23,7 +20,6 @@ use dezoomer::TileReference;
 pub use vec2d::Vec2d;
 
 use crate::canvas::WorkAround;
-use std::fs;
 
 mod arguments;
 mod canvas;
@@ -66,7 +62,7 @@ async fn main() {
 async fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
     if uri.starts_with("http://") || uri.starts_with("https://") {
         println!("Downloading {}...", uri);
-        let mut response = http.get(uri).send().await?.error_for_status()?;
+        let response = http.get(uri).send().await?.error_for_status()?;
         let mut contents = Vec::new();
         contents.extend(response.bytes().await?);
         Ok(contents)
@@ -184,7 +180,6 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     progress.set_message("Computing the URLs of the image tiles...");
 
     // TODO: support multiple next_tiles
-    let start = std::time::Instant::now();
     let tile_refs = zoom_level.next_tiles(None);
 
     let count = tile_refs.len() as u64;

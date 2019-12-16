@@ -119,7 +119,7 @@ impl Tile {
         client: &reqwest::Client,
     ) -> Result<Tile, ZoomError> {
         let mut buf: Vec<u8> = vec![]; // TODO: use bytes
-        let mut data = client.get(&tile_reference.url).send().await?.error_for_status()?;
+        let data = client.get(&tile_reference.url).send().await?.error_for_status()?;
         buf.extend(data.bytes().await?);
 
         let tile_reference = tile_reference.clone();
