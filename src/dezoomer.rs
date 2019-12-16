@@ -90,11 +90,12 @@ impl TileFetchResult {
     }
 }
 
+type PostProcessResult = Result<Vec<u8>, Box<dyn Error>>;
 // TODO : fix
 // see: https://github.com/rust-lang/rust/issues/63033
 #[derive(Clone, Copy)]
 pub enum PostProcessFn {
-    Fn(fn(tile: &TileReference, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>>),
+    Fn(fn(&TileReference, Vec<u8>) -> PostProcessResult),
     None,
 }
 
