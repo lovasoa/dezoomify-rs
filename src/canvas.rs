@@ -1,8 +1,9 @@
 use image::{GenericImage, GenericImageView, ImageBuffer, Pixel};
 
 use crate::dezoomer::*;
-use crate::Vec2d;
+use crate::{Vec2d, errors};
 use crate::ZoomError;
+use errors::BufferToImageError;
 
 type SubPix = u8;
 type Pix = image::Rgba<SubPix>;
@@ -113,25 +114,30 @@ impl Tile {
         tile_reference: &TileReference,
         client: &reqwest::Client,
     ) -> Result<Tile, ZoomError> {
-        let mut buf: Vec<u8> = vec![]; // TODO: use bytes
         let data = client.get(&tile_reference.url).send().await?.error_for_status()?;
-        buf.extend(data.bytes().await?);
+        let bytes = data.bytes().await?;
 
         let tile_reference = tile_reference.clone();
 
-        let tile = tokio::spawn(async move {
+        let tile: Result<Tile, BufferToImageError> = tokio::spawn(async move {
             tokio::task::block_in_place(move || {
-                if let PostProcessFn::Fn(post_process) = post_process_fn {
-                    buf = post_process(&tile_reference, buf).expect("Unable to apply pos-processing to tile");
-                }
+                let transformed_bytes =
+                    if let PostProcessFn::Fn(post_process) = post_process_fn {
+                        post_process(&tile_reference, Vec::from(&*bytes))
+                            .map_err(|e|
+                                BufferToImageError::PostProcessing { e }
+                            )?.into()
+                    } else {
+                        bytes
+                    };
 
-                Tile {
-                    image: image::load_from_memory(&buf).expect("Unable to read image tile"),
+                Ok(Tile {
+                    image: image::load_from_memory(&transformed_bytes)?,
                     position: tile_reference.position,
-                }
+                })
             })
         }).await?;
-        Ok(tile)
+        Ok(tile?)
     }
     pub fn position(&self) -> Vec2d {
         self.position

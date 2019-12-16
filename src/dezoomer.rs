@@ -4,9 +4,9 @@ use std::error::Error;
 use std::fmt::Debug;
 use std::str::FromStr;
 
-use custom_error::custom_error;
-
 pub use super::Vec2d;
+pub use crate::errors::DezoomerError;
+
 use super::ZoomError;
 
 pub struct DezoomerInput {
@@ -31,18 +31,6 @@ impl DezoomerInput {
                 uri: self.uri.clone(),
             })
         }
-    }
-}
-
-custom_error! {pub DezoomerError
-    NeedsData{uri: String}           = "Need to download data from {uri}",
-    WrongDezoomer{name:&'static str} = "The '{name}' dezoomer cannot handle this URI",
-    Other{source: Box<dyn Error>}    = "Unable to create the dezoomer: {source}"
-}
-
-impl DezoomerError {
-    pub fn wrap<E: Error + 'static>(err: E) -> DezoomerError {
-        DezoomerError::Other { source: err.into() }
     }
 }
 
@@ -91,7 +79,7 @@ impl TileFetchResult {
     }
 }
 
-type PostProcessResult = Result<Vec<u8>, Box<dyn Error>>;
+type PostProcessResult = Result<Vec<u8>, Box<dyn Error + Send>>;
 // TODO : fix
 // see: https://github.com/rust-lang/rust/issues/63033
 #[derive(Clone, Copy)]

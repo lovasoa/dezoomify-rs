@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::error::Error;
 use std::fs;
 use std::io::BufRead;
 use std::sync::{Arc, Mutex};
@@ -14,17 +13,18 @@ use structopt::StructOpt;
 
 use arguments::Arguments;
 use canvas::{Canvas, Tile};
-use custom_error::custom_error;
 use dezoomer::{ZoomLevelIter, PostProcessFn, TileFetchResult, ZoomLevel};
 
 use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 use dezoomer::TileReference;
 pub use vec2d::Vec2d;
+pub use errors::ZoomError;
 
 mod arguments;
 mod canvas;
 mod dezoomer;
 mod vec2d;
+mod errors;
 
 mod auto;
 mod custom_yaml;
@@ -276,27 +276,4 @@ fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
         .max_idle_per_host(64)
         .build()?;
     Ok(client)
-}
-
-custom_error! {
-    pub ZoomError
-    Networking{source: reqwest::Error} = "network error: {source}",
-    Dezoomer{source: DezoomerError} = "Dezoomer error: {source}",
-    NoLevels = "A zoomable image was found, but it did not contain any zoom level",
-    NoTile = "Could not get any tile for the image",
-    Image{source: image::ImageError} = "invalid image error: {source}",
-    TileDownloadError{uri: String, cause: Box<ZoomError>} = "error with tile {uri}: {cause}",
-    PostProcessing{source: Box<dyn Error>} = "unable to process the downloaded tile: {source}",
-    Io{source: std::io::Error} = "Input/Output error: {source}",
-    Yaml{source: serde_yaml::Error} = "Invalid YAML configuration file: {source}",
-    TileCopyError{x:u32, y:u32, twidth:u32, theight:u32, width:u32, height:u32} =
-                                "Unable to copy a {twidth}x{theight} tile \
-                                 at position {x},{y} \
-                                 on a canvas of size {width}x{height}",
-    MalformedTileStr{tile_str: String} = "Malformed tile string: '{tile_str}' \
-                                          expected 'x y url'",
-    NoSuchDezoomer{name: String} = "No such dezoomer: {name}",
-    InvalidHeaderName{source: header::InvalidHeaderName} = "Invalid header name: {source}",
-    InvalidHeaderValue{source: header::InvalidHeaderValue} = "Invalid header value: {source}",
-    AsyncError{source: tokio::task::JoinError} = "Unable get the result from a thread: {source}",
 }

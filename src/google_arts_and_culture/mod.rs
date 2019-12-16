@@ -89,8 +89,9 @@ impl TilesRect for GAPZoomLevel {
     }
 }
 
-fn post_process_tile(_tile: &TileReference, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
-    decryption::decrypt(data).map_err(|e| e.into())
+fn post_process_tile(_tile: &TileReference, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error + Send + 'static>> {
+    decryption::decrypt(data)
+        .map_err(|e| Box::new(e) as Box<(dyn Error + Send + 'static)>)
 }
 
 impl std::fmt::Debug for GAPZoomLevel {
