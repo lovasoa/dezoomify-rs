@@ -1,23 +1,23 @@
+use std::{fs, thread};
 use std::collections::HashMap;
 use std::error::Error;
 use std::io::{BufRead, Read};
 use std::sync::Mutex;
 use std::time::Duration;
-use std::{fs, thread};
 
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
-use reqwest::{header, Client};
+use reqwest::{Client, header};
 use structopt::StructOpt;
 
 use arguments::Arguments;
 use canvas::{Canvas, Tile};
 use custom_error::custom_error;
-use dezoomer::TileReference;
 use dezoomer::{apply_to_tiles, PostProcessFn, TileFetchResult, ZoomLevel};
 use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
+use dezoomer::TileReference;
 pub use vec2d::Vec2d;
 
 mod arguments;
@@ -235,7 +235,10 @@ fn download_tile(
     retries: usize,
 ) -> Result<Tile, ZoomError> {
     let mut res = Tile::download(post_process_fn, tile_reference, client);
-    let mut wait_time = Duration::from_millis(100);
+    // The initial delay after which a failed request is retried depends on the position of the tile
+    // in order to avoid sending repeated "bursts" of requests to a server that is struggling
+    let retry_delay = 1 + (tile_reference.position.x + tile_reference.position.y) as u64 % 100;
+    let mut wait_time = Duration::from_millis(retry_delay);
     for _ in 0..retries {
         res = Tile::download(post_process_fn, tile_reference, client);
         match &res {
