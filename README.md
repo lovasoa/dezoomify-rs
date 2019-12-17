@@ -1,5 +1,7 @@
 # dezoomify-rs
 
+[![Build Status](https://travis-ci.org/lovasoa/dezoomify-rs.svg?branch=master)](https://travis-ci.org/lovasoa/dezoomify-rs)
+
 **dezoomify-rs** is a tiled image downloader.
 Some webpages present high-resolution zoomable images without a way to download them.
 These images are often *tiled*: the original large image has been split into smaller individual image files called tiles.
