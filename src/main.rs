@@ -198,16 +198,21 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
 
         while let Some(tile_result) = stream.next().await {
             progress.inc(1);
-            if let Some(tile) = display_err(tile_result) {
-                progress.set_message(&format!("Downloaded tile at {}", tile.position()));
-                tile_size.replace(tile.size());
-                let canvas = Arc::clone(&canvas);
-                tokio::spawn(async move {
-                    tokio::task::block_in_place(move || {
-                        display_err(canvas.lock().unwrap().add_tile(&tile));
-                    })
-                }).await?;
-                successes += 1;
+            match tile_result {
+                Ok(tile) => {
+                    progress.set_message(&format!("Downloaded tile at {}", tile.position()));
+                    tile_size.replace(tile.size());
+                    let canvas = Arc::clone(&canvas);
+                    tokio::spawn(async move {
+                        tokio::task::block_in_place(move || {
+                            display_err(canvas.lock().unwrap().add_tile(&tile));
+                        })
+                    }).await?;
+                    successes += 1;
+                },
+                Err(e) => {
+                    progress.set_message(&e.to_string());
+                }
             }
         }
         successful_tiles += successes;
@@ -253,10 +258,7 @@ async fn download_tile(
     let mut wait_time = retry_delay + Duration::from_secs_f64(idx * retry_delay.as_secs_f64() / n as f64);
     for _ in 0..retries {
         res = Tile::download(post_process_fn, tile_reference, client).await;
-        match &res {
-            Ok(_) => break,
-            Err(e) => eprintln!("{}", e),
-        }
+        if res.is_ok() { break }
         tokio::time::delay_for(wait_time).await;
         wait_time *= 2;
     }
