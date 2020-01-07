@@ -75,7 +75,7 @@ impl TileFetchResult {
         self.tile_size
             .filter(|&Vec2d { x, y }| x > 0 && y > 0)
             .is_some()
-            && self.count == self.successes
+            && self.successes > 0
     }
 }
 

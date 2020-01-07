@@ -7,7 +7,6 @@ use crate::dezoomer::{
 use crate::Vec2d;
 
 enum Stage {
-    Init,
     FirstLine { current_x: u32 },
     NextLines { max_x: u32, current_y: u32 },
 }
@@ -40,31 +39,27 @@ impl TileProvider for ZoomLevel {
             // First request
             (None, _) => vec![self.tile_ref_at(0, 0)],
 
-            // First request failed
-            (Some(ref res), Stage::Init) if !res.is_success() => vec![],
-
-            // Switch from Init to FirstLine
-            (Some(TileFetchResult { tile_size, .. }), Stage::Init) => {
-                self.stage = Stage::FirstLine { current_x: 1 };
-                self.tile_size = tile_size;
-                vec![self.tile_ref_at(1, 0)]
-            }
-
             // Advance in the first line
-            (Some(ref res), &Stage::FirstLine { current_x }) if res.is_success() => {
-                let current_x = current_x + 1;
-                self.stage = Stage::FirstLine { current_x };
-                vec![self.tile_ref_at(current_x, 0)]
-            }
-
-            // End of first line
-            (Some(_), &Stage::FirstLine { current_x }) => {
-                let max_x = current_x - 1;
-                self.stage = Stage::NextLines {
-                    max_x,
-                    current_y: 1,
-                };
-                (0..=max_x).map(|x| self.tile_ref_at(x, 1)).collect()
+            (
+                Some(TileFetchResult { tile_size, successes, count, .. }),
+                &Stage::FirstLine { current_x }
+            ) => {
+                if current_x == 0 { self.tile_size = tile_size; }
+                let current_x = current_x + successes as u32;
+                if successes == count { // The first line is not over
+                    self.stage = Stage::FirstLine { current_x };
+                    // We don't want to make too many useless requests,
+                    // and we don't want to request tiles one by one either in order to be fast.
+                    // At each step, we estimate the total number of tiles in the line as
+                    // max(current number of tiles, 4) * 2
+                    (current_x..current_x.max(4) * 2)
+                        .map(|x| self.tile_ref_at(x, 0))
+                        .collect()
+                } else { // We had at least one failed tile, the line is over
+                    let max_x = current_x - 1;
+                    self.stage = Stage::NextLines { max_x, current_y: 1 };
+                    (0..=max_x).map(|x| self.tile_ref_at(x, 1)).collect()
+                }
             }
 
             // Advance to next line
@@ -104,7 +99,7 @@ impl Dezoomer for GenericDezoomer {
         self.assert(data.uri.contains("{{X}}"))?;
         let dezoomer = ZoomLevel {
             url_template: data.uri.clone(),
-            stage: Stage::Init,
+            stage: Stage::FirstLine { current_x: 0 },
             tile_size: None,
         };
         single_level(dezoomer)
