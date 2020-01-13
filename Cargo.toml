@@ -1,6 +1,6 @@
 [package]
 name = "dezoomify-rs"
-version = "1.6.0"
+version = "1.6.1"
 authors = ["Ophir LOJKINE"]
 edition = "2018"
 license-file = "LICENSE"
@@ -27,6 +27,3 @@ hmac = "0.7"
 sha-1 = "0.8"
 base64 = "0.10"
 indicatif = "0.11"
-
-[profile.release]
-debug = true
