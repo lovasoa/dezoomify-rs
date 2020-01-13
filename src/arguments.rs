@@ -7,6 +7,7 @@ use std::time::Duration;
 use regex::Regex;
 
 #[derive(StructOpt, Debug)]
+#[structopt(author, about)]
 pub struct Arguments {
     /// Input URL or local file name
     input_uri: Option<String>,
@@ -16,11 +17,11 @@ pub struct Arguments {
     pub outfile: std::path::PathBuf,
 
     /// Name of the dezoomer to use
-    #[structopt(short = "d", long = "dezoomer", default_value = "auto")]
+    #[structopt(short, long, default_value = "auto")]
     dezoomer: String,
 
     /// If several zoom levels are available, then select the largest one
-    #[structopt(short = "l")]
+    #[structopt(short, long)]
     largest: bool,
 
     /// If several zoom levels are available, then select the one with the largest width that
@@ -47,36 +48,36 @@ pub struct Arguments {
     pub retries: usize,
 
     /// Amount of time to wait before retrying a request that failed
-    #[structopt(long = "retry-delay", default_value = "2s", parse(try_from_str = "parse_duration"))]
+    #[structopt(long, default_value = "2s", parse(try_from_str = parse_duration))]
     pub retry_delay: Duration,
 
     /// Sets an HTTP header to use on requests.
     /// This option can be repeated in order to set multiple headers.
     /// You can use `-H "Referer: URL"` where URL is the URL of the website's
-    /// viewer page in order to let the site think you come from a the legitimate viewer.
+    /// viewer page in order to let the site think you come from the legitimate viewer.
     #[structopt(
     short = "H",
     long = "header",
-    parse(try_from_str = "parse_header"),
+    parse(try_from_str = parse_header),
     number_of_values = 1
     )]
     headers: Vec<(String, String)>,
 
     /// Maximum number of idle connections per host allowed at the same time
-    #[structopt(long = "max-idle-per-host", default_value = "64")]
+    #[structopt(long, default_value = "64")]
     pub max_idle_per_host: usize,
 
     /// Whether to accept connecting to insecure HTTPS servers
-    #[structopt(long = "accept-invalid-certs")]
+    #[structopt(long)]
     pub accept_invalid_certs: bool,
 
     /// Maximum time between the beginning of a request and the end of a response before
     ///the request should be interrupted and considered considered failed
-    #[structopt(long = "timeout", default_value = "30s", parse(try_from_str = "parse_duration"))]
+    #[structopt(long, default_value = "30s", parse(try_from_str = parse_duration))]
     pub timeout: Duration,
 
     /// Time after which we should give up when trying to connect to a server
-    #[structopt(long = "connect-timeout", default_value = "6s", parse(try_from_str = "parse_duration"))]
+    #[structopt(long = "connect-timeout", default_value = "6s", parse(try_from_str = parse_duration))]
     pub connect_timeout: Duration,
 }
 

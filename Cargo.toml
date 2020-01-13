@@ -1,6 +1,6 @@
 [package]
 name = "dezoomify-rs"
-version = "1.6.1"
+version = "1.6.2"
 authors = ["Ophir LOJKINE"]
 edition = "2018"
 license-file = "LICENSE"
@@ -12,7 +12,7 @@ reqwest = { version = "0.10", features = ["gzip"] }
 tokio = { version = "0.2", features = ["rt-threaded", "rt-core", "macros", "rt-util", "time"] }
 futures = "0.3"
 custom_error = "1.7.1"
-structopt = "0.2"
+structopt = "0.3"
 evalexpr = "4.1"
 regex = "1"
 lazy_static = "1.3"
