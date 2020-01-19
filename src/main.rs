@@ -32,6 +32,7 @@ mod dzi;
 mod generic;
 mod google_arts_and_culture;
 mod iiif;
+mod pff;
 mod zoomify;
 
 fn stdin_line() -> String {

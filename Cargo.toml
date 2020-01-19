@@ -21,6 +21,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.8"
 serde-xml-rs = "0.3"
 serde_json = "1.0"
+serde_urlencoded = "0.6"
 block-modes = "0.3"
 aes = "0.3"
 hmac = "0.7"
