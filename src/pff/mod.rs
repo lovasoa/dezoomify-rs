@@ -45,7 +45,10 @@ impl Dezoomer for PFF {
                 let init_params: InitialServletRequestParams =
                     urlencoded::from_str(params_str).map_err(PffError::from)?;
                 let file = init_params.file;
-                self.assert(init_params.request_type == RequestType::Metadata as u8)?;
+                if init_params.request_type != RequestType::Metadata as u8 {
+                    let uri = format!("{}?file={}&requestType={}", base_url, file, RequestType::Metadata as u8);
+                    return Err(DezoomerError::NeedsData { uri });
+                }
                 let DezoomerInputWithContents { contents, .. } = data.with_contents()?;
                 let reply: Reply<PffHeader> =
                     serde_urlencoded::from_bytes(contents).map_err(PffError::from)?;
