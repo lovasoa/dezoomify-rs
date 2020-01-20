@@ -8,6 +8,7 @@ pub fn all_dezoomers(include_generic: bool) -> Vec<Box<dyn Dezoomer>> {
         Box::new(crate::iiif::IIIF::default()),
         Box::new(crate::dzi::DziDezoomer::default()),
         Box::new(crate::generic::GenericDezoomer::default()),
+        Box::new(crate::pff::PFF::default()),
     ];
     if include_generic {
         dezoomers.push(Box::new(AutoDezoomer::default()))

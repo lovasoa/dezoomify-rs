@@ -58,8 +58,11 @@ pub trait Dezoomer {
         if c {
             Ok(())
         } else {
-            Err(DezoomerError::WrongDezoomer { name: self.name() })
+            Err(self.wrong_dezoomer())
         }
+    }
+    fn wrong_dezoomer(&self) -> DezoomerError {
+        DezoomerError::WrongDezoomer { name: self.name() }
     }
 }
 
