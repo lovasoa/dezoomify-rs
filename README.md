@@ -74,6 +74,13 @@ If the image tile URLs have the form
 then the URL to enter is
 `http://test.com/y/xy.dzi`.
 
+### Zoomify PFF
+
+[PFF](https://github.com/lovasoa/pff-extract/wiki/Zoomify-PFF-file-format-documentation)
+is an old zoomable image file format format developed by zoomify.
+You can give a pff meta-information URL (one that contains `requestType=1`)
+to dezoomify-rs and it will download it. 
+
 ### Generic
 
 You can use this dezoomer if you know the format of tile URLs.
