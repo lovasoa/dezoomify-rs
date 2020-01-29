@@ -100,6 +100,9 @@ pub trait TileProvider: Debug {
     fn name(&self) -> String {
         format!("{:?}", self)
     }
+    fn title(&self) -> String {
+        format!("{:?}", self)
+    }
     fn size_hint(&self) -> Option<Vec2d> {
         None
     }
@@ -189,6 +192,11 @@ impl<T: TilesRect> TileProvider for T {
             self.tile_count()
         )
     }
+
+    fn title(&self) -> String {
+        format!("{:?}", self)
+    }
+
     fn size_hint(&self) -> Option<Vec2d> {
         Some(self.size())
     }

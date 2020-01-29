@@ -4,6 +4,7 @@ use crate::dezoomer::Dezoomer;
 
 use super::{auto, stdin_line, Vec2d, ZoomError};
 use std::time::Duration;
+use std::path::PathBuf;
 use regex::Regex;
 
 #[derive(StructOpt, Debug)]
@@ -13,8 +14,8 @@ pub struct Arguments {
     input_uri: Option<String>,
 
     /// File to which the resulting image should be saved
-    #[structopt(default_value = "dezoomified.jpg")]
-    pub outfile: std::path::PathBuf,
+    #[structopt(parse(from_os_str))]
+    pub outfile: Option<PathBuf>,
 
     /// Name of the dezoomer to use
     #[structopt(short, long, default_value = "auto")]

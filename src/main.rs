@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::BufRead;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -57,6 +58,30 @@ async fn main() {
     } else {
         println!("Done!");
     }
+}
+
+// TODO: 
+// - append _1,_2,.. suffix to `outname` if file already exist
+// - create directories in path if needed (current behaviour 
+//   assumes that path exists)
+fn get_outname(uri: String, outfile: Option<PathBuf>, zoom_name: &str) -> PathBuf {
+    if outfile.is_none() && uri.contains("artsandculture.google.com") {
+        let mut outname = zoom_name.replace(&['(', ')', ',', '\"', '.', ';', ':', '\''][..], "");
+        let fixed_ext = ".jpg".to_string();
+        outname.push_str(&fixed_ext);
+        return PathBuf::from(outname);
+    }
+
+    if outfile.is_none() {
+        let default_name = "dezoomified.jpg".to_string();
+        return PathBuf::from(default_name);
+    }
+
+    if outfile.is_some() && !outfile.as_deref().unwrap().ends_with(".jpg") {
+        return outfile.unwrap().with_extension("jpg");
+    }
+
+    return outfile.unwrap();
 }
 
 // TODO: return Bytes
@@ -232,13 +257,14 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     progress.finish_with_message(&final_msg);
 
     let canvas = canvas.lock().unwrap();
+    let outname = get_outname(args.choose_input_uri(), args.outfile, &zoom_level.title());
 
-    println!("Saving the image to {}...", &args.outfile.to_string_lossy());
-    canvas.image().save(&args.outfile)?;
+    println!("Saving the image to {}...", outname.as_path().to_string_lossy());
+    canvas.image().save(outname.as_path())?;
     println!(
         "Saved the image to {}",
-        fs::canonicalize(&args.outfile)
-            .unwrap_or(args.outfile)
+        fs::canonicalize(outname.as_path())
+            .unwrap_or(outname)
             .to_string_lossy()
     );
     Ok(())
