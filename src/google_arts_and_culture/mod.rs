@@ -87,6 +87,10 @@ impl TilesRect for GAPZoomLevel {
     fn post_process_fn(&self) -> PostProcessFn {
         PostProcessFn::Fn(post_process_tile)
     }
+
+    fn title(&self) -> Option<String> {
+        Some(format!("{:?}", self))
+    }
 }
 
 fn post_process_tile(_tile: &TileReference, data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error + Send + 'static>> {

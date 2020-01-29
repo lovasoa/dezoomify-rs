@@ -100,9 +100,7 @@ pub trait TileProvider: Debug {
     fn name(&self) -> String {
         format!("{:?}", self)
     }
-    fn title(&self) -> String {
-        format!("{:?}", self)
-    }
+    fn title(&self) -> Option<String> { None }
     fn size_hint(&self) -> Option<Vec2d> {
         None
     }
@@ -146,6 +144,7 @@ pub trait TilesRect: Debug {
     fn size(&self) -> Vec2d;
     fn tile_size(&self) -> Vec2d;
     fn tile_url(&self, pos: Vec2d) -> String;
+    fn title(&self) -> Option<String> { None }
     fn tile_ref(&self, pos: Vec2d) -> TileReference {
         TileReference {
             url: self.tile_url(pos),
@@ -193,13 +192,11 @@ impl<T: TilesRect> TileProvider for T {
         )
     }
 
-    fn title(&self) -> String {
-        format!("{:?}", self)
-    }
-
     fn size_hint(&self) -> Option<Vec2d> {
         Some(self.size())
     }
+
+    fn title(&self) -> Option<String> { TilesRect::title(self) }
 
     fn http_headers(&self) -> HashMap<String, String> {
         let mut headers = HashMap::new();

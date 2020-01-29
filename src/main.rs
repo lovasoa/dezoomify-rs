@@ -64,7 +64,7 @@ async fn main() {
 // - append _1,_2,.. suffix to `outname` if file already exist
 // - create directories in path if needed (current behaviour 
 //   assumes that path exists)
-fn get_outname(uri: String, outfile: Option<PathBuf>, zoom_name: &str) -> PathBuf {
+fn get_outname(outfile: Option<PathBuf>, zoom_name: &Option<String>) -> PathBuf {
     if let Some(path) = outfile {
         if path.extension().is_none() {
             path.with_extension("jpg")
@@ -72,8 +72,8 @@ fn get_outname(uri: String, outfile: Option<PathBuf>, zoom_name: &str) -> PathBu
             path
         }
     } else {
-        let mut outname = if uri.contains("artsandculture.google.com") {
-            zoom_name.replace(&['(', ')', ',', '\"', '.', ';', ':', '\''][..], "")
+        let mut outname = if let Some(name) = zoom_name {
+            name.replace(&['(', ')', ',', '\"', '.', ';', ':', '\''][..], "")
         } else {
             String::from("dezoomified")
         };
@@ -255,7 +255,7 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     progress.finish_with_message(&final_msg);
 
     let canvas = canvas.lock().unwrap();
-    let outname = get_outname(args.choose_input_uri(), args.outfile, &zoom_level.title());
+    let outname = get_outname(args.outfile, &zoom_level.title());
 
     println!("Saving the image to {}...", outname.as_path().to_string_lossy());
     canvas.image().save(outname.as_path())?;
