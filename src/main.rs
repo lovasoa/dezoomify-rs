@@ -65,23 +65,21 @@ async fn main() {
 // - create directories in path if needed (current behaviour 
 //   assumes that path exists)
 fn get_outname(uri: String, outfile: Option<PathBuf>, zoom_name: &str) -> PathBuf {
-    if outfile.is_none() && uri.contains("artsandculture.google.com") {
-        let mut outname = zoom_name.replace(&['(', ')', ',', '\"', '.', ';', ':', '\''][..], "");
-        let fixed_ext = ".jpg".to_string();
-        outname.push_str(&fixed_ext);
-        return PathBuf::from(outname);
+    if let Some(path) = outfile {
+        if path.extension().is_none() {
+            path.with_extension("jpg")
+        } else {
+            path
+        }
+    } else {
+        let mut outname = if uri.contains("artsandculture.google.com") {
+            zoom_name.replace(&['(', ')', ',', '\"', '.', ';', ':', '\''][..], "")
+        } else {
+            String::from("dezoomified")
+        };
+        outname.push_str(".jpg");
+        PathBuf::from(outname)
     }
-
-    if outfile.is_none() {
-        let default_name = "dezoomified.jpg".to_string();
-        return PathBuf::from(default_name);
-    }
-
-    if outfile.is_some() && !outfile.as_deref().unwrap().ends_with(".jpg") {
-        return outfile.unwrap().with_extension("jpg");
-    }
-
-    return outfile.unwrap();
 }
 
 // TODO: return Bytes
