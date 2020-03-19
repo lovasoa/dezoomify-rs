@@ -1,0 +1,38 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+        include:
+          - os: windows-latest
+            binary_path: target/debug/dezoomify-rs.exe
+          - os: macos-latest
+            binary_path: target/debug/dezoomify-rs
+          - os: ubuntu-latest
+            binary_path: target/debug/dezoomify-rs
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with: {toolchain: stable, override: true}
+      - uses: actions-rs/cargo@v1
+        with: { command: build }
+      - uses: actions/upload-artifact@v1
+        with:
+          name: dezoomify-rs ${{ matrix.os }}
+          path: ${{ matrix.binary_path }}
+      - uses: actions-rs/cargo@v1
+        with: { command: test }
+      - run: rustup component add rustfmt clippy
+      - uses: actions-rs/cargo@v1
+        with: { command: fmt, args: --all -- --check }
+      - uses: actions-rs/cargo@v1
+        with: { command: clippy, args: -- -D warnings }
