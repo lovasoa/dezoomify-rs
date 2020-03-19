@@ -23,14 +23,17 @@ jobs:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
         with: {toolchain: stable, override: true}
-      - uses: actions-rs/cargo@v1
+      - name: build
+        uses: actions-rs/cargo@v1
         with: { command: build }
       - uses: actions/upload-artifact@v1
         with:
           name: dezoomify-rs ${{ matrix.os }}
           path: ${{ matrix.binary_path }}
-      - uses: actions-rs/cargo@v1
+      - name: test
+        uses: actions-rs/cargo@v1
         with: { command: test }
       - run: rustup component add clippy
-      - uses: actions-rs/cargo@v1
+      - name: clippy
+        uses: actions-rs/cargo@v1
         with: { command: clippy, args: -- -D warnings }
