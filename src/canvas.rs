@@ -68,21 +68,18 @@ impl Canvas {
 
         let Vec2d { x, y } = tile.position();
 
-        let success = self.image.copy_from(&sub_tile, x, y);
-        if success {
-            Ok(())
-        } else {
+        self.image.copy_from(&sub_tile, x, y).map_err(|_err| {
             let tile_size = tile.size();
             let size = self.size();
-            Err(ZoomError::TileCopyError {
+            ZoomError::TileCopyError {
                 x,
                 y,
                 twidth: tile_size.x,
                 theight: tile_size.y,
                 width: size.x,
                 height: size.y,
-            })
-        }
+            }
+        })
     }
     fn size(&self) -> Vec2d {
         image_size(&self.image)
