@@ -31,8 +31,6 @@ jobs:
           path: ${{ matrix.binary_path }}
       - uses: actions-rs/cargo@v1
         with: { command: test }
-      - run: rustup component add rustfmt clippy
-      - uses: actions-rs/cargo@v1
-        with: { command: fmt, args: --all -- --check }
+      - run: rustup component add clippy
       - uses: actions-rs/cargo@v1
         with: { command: clippy, args: -- -D warnings }
