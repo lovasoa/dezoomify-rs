@@ -99,7 +99,10 @@ mod tests {
             .join("google_arts_and_culture")
             .join(test_file_name);
         let test_html = fs::read_to_string(test_source_path).unwrap();
-        test_html.parse().unwrap()
+        match test_html.parse() {
+            Ok(info) => info,
+            Err(err) => panic!("Unable to parse '{}'. Error: {}", test_html, err)
+        }
     }
 
     #[test]
