@@ -1,6 +1,6 @@
 # dezoomify-rs
 
-[![Build Status](https://travis-ci.org/lovasoa/dezoomify-rs.svg?branch=master)](https://travis-ci.org/lovasoa/dezoomify-rs)
+[![Continuous Integration](https://github.com/lovasoa/dezoomify-rs/workflows/Continuous%20Integration/badge.svg)](https://github.com/lovasoa/dezoomify-rs/actions)
 
 **dezoomify-rs** is a tiled image downloader.
 Some webpages present high-resolution zoomable images without a way to download them.
