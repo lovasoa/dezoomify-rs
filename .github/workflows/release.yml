@@ -7,8 +7,32 @@ on:
 name: Create Release
 
 jobs:
-  release:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+        include:
+          - os: windows-latest
+            binary_path: target/release/dezoomify-rs.exe
+          - os: macos-latest
+            binary_path: target/release/dezoomify-rs
+          - os: ubuntu-latest
+            binary_path: target/release/dezoomify-rs
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with: {toolchain: stable, override: true}
+      - name: build
+        uses: actions-rs/cargo@v1
+        with: { command: build, args: --release }
+      - uses: actions/upload-artifact@v1
+        with:
+          name: dezoomify-rs ${{ matrix.os }}
+          path: ${{ matrix.binary_path }}
+  create_release:
     name: Create Release
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -26,3 +50,39 @@ jobs:
           body: ${{ env.commitmsg }}
           draft: false
           prerelease: false
+
+      - uses: actions/download-artifact@v1
+        with: { name: dezoomify-rs windows-latest, path: dezoomify-rs-windows.exe }
+      - name: Upload Windows binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: dezoomify-rs-windows.exe
+          asset_name: Dezoomify-rs for Windows
+          asset_content_type: application/vnd.microsoft.portable-executable
+
+      - uses: actions/download-artifact@v1
+        with: { name: dezoomify-rs macos-latest, path: dezoomify-rs-macos }
+      - name: Upload MacOs binary
+        id: upload-release-asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: dezoomify-rs-macos
+          asset_name: Dezoomify-rs for MacOS
+
+      - uses: actions/download-artifact@v1
+        with: { name: dezoomify-rs ubuntu-latest, path: dezoomify-rs-linux }
+      - name: Upload Linux binary
+        id: upload-release-asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: dezoomify-rs-linux
+          asset_name: Dezoomify-rs for Linux
