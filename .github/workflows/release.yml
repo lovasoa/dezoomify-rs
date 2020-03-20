@@ -38,7 +38,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@master
       - name: get commit message
-        run: echo ::set-env name=commitmsg::$(git log --format=%B -n 1 ${{ github.ref }})
+        run: echo ::set-env name=commitmsg::$(git tag --format='%(subject)' -l | tail -n 1)
       - name: Create Release
         id: create_release
         uses: actions/create-release@latest
@@ -73,6 +73,7 @@ jobs:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: dezoomify-rs
           asset_name: Dezoomify-rs for MacOS
+          asset_content_type: application/octet-stream
 
       - uses: actions/download-artifact@v1
         with: { name: dezoomify-rs ubuntu-latest, path: . }
@@ -84,3 +85,4 @@ jobs:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: dezoomify-rs
           asset_name: Dezoomify-rs for Linux
+          asset_content_type: application/octet-stream
