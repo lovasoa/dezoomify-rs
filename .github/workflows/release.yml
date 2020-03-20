@@ -54,35 +54,38 @@ jobs:
       - uses: actions/download-artifact@v1
         with: { name: dezoomify-rs windows-latest, path: . }
       - name: Upload Windows binary
-        uses: actions/upload-release-asset@v1
+        uses: lovasoa/upload-release-asset@851d9cc
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: dezoomify-rs.exe
-          asset_name: Dezoomify-rs for Windows
+          asset_name: dezoomify-rs.exe
+          asset_label: Dezoomify-rs for Windows
           asset_content_type: application/vnd.microsoft.portable-executable
 
       - uses: actions/download-artifact@v1
         with: { name: dezoomify-rs macos-latest, path: . }
       - name: Upload MacOs binary
-        uses: actions/upload-release-asset@v1
+        uses: lovasoa/upload-release-asset@851d9cc
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: dezoomify-rs
-          asset_name: Dezoomify-rs for MacOS
+          asset_name: dezoomify-rs
+          asset_label: Dezoomify-rs for MacOS
           asset_content_type: application/octet-stream
 
       - uses: actions/download-artifact@v1
         with: { name: dezoomify-rs ubuntu-latest, path: . }
       - name: Upload Linux binary
-        uses: actions/upload-release-asset@v1
+        uses: lovasoa/upload-release-asset@851d9cc
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: dezoomify-rs
-          asset_name: Dezoomify-rs for Linux
+          asset_name: dezoomify-rs-linux
+          asset_label: Dezoomify-rs for Linux
           asset_content_type: application/octet-stream
