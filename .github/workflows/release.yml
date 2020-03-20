@@ -52,35 +52,35 @@ jobs:
           prerelease: false
 
       - uses: actions/download-artifact@v1
-        with: { name: dezoomify-rs windows-latest, path: dezoomify-rs-windows.exe }
+        with: { name: dezoomify-rs windows-latest }
       - name: Upload Windows binary
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: dezoomify-rs-windows.exe
+          asset_path: dezoomify-rs.exe
           asset_name: Dezoomify-rs for Windows
           asset_content_type: application/vnd.microsoft.portable-executable
 
       - uses: actions/download-artifact@v1
-        with: { name: dezoomify-rs macos-latest, path: dezoomify-rs-macos }
+        with: { name: dezoomify-rs macos-latest }
       - name: Upload MacOs binary
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: dezoomify-rs-macos
+          asset_path: dezoomify-rs
           asset_name: Dezoomify-rs for MacOS
 
       - uses: actions/download-artifact@v1
-        with: { name: dezoomify-rs ubuntu-latest, path: dezoomify-rs-linux }
+        with: { name: dezoomify-rs ubuntu-latest }
       - name: Upload Linux binary
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: dezoomify-rs-linux
+          asset_path: dezoomify-rs
           asset_name: Dezoomify-rs for Linux
