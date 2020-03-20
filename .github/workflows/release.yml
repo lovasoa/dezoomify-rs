@@ -52,7 +52,7 @@ jobs:
           prerelease: false
 
       - uses: actions/download-artifact@v1
-        with: { name: dezoomify-rs windows-latest }
+        with: { name: dezoomify-rs windows-latest, path: . }
       - name: Upload Windows binary
         uses: actions/upload-release-asset@v1
         env:
@@ -64,7 +64,7 @@ jobs:
           asset_content_type: application/vnd.microsoft.portable-executable
 
       - uses: actions/download-artifact@v1
-        with: { name: dezoomify-rs macos-latest }
+        with: { name: dezoomify-rs macos-latest, path: . }
       - name: Upload MacOs binary
         uses: actions/upload-release-asset@v1
         env:
@@ -75,7 +75,7 @@ jobs:
           asset_name: Dezoomify-rs for MacOS
 
       - uses: actions/download-artifact@v1
-        with: { name: dezoomify-rs ubuntu-latest }
+        with: { name: dezoomify-rs ubuntu-latest, path: . }
       - name: Upload Linux binary
         uses: actions/upload-release-asset@v1
         env:
