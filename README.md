@@ -169,3 +169,14 @@ ARGS:
 ## Documentation
   - For documentation specific to this tool, see the [dezoomify-rs wiki](https://github.com/lovasoa/dezoomify-rs/wiki). Do not hesitate to contribute to it by creating new pages or modifying existing ones.
   - For general purpose documentation about zoomable images, the [dezoomify wiki](https://github.com/lovasoa/dezoomify/wiki) may be useful.
+
+## Batch mode
+
+dezoomify-rs does not yet have the ability to download multiple images at once itself.
+However, since it is a commandline application. You can use it within a [for loop](https://ss64.com/nt/for.html) in a [batch script](https://en.wikibooks.org/wiki/Windows_Batch_Scripting) in Windows or a [bash script](https://en.wikibooks.org/wiki/Bash_Shell_Scripting) in Linux, MacOS (or windows with [wsl](https://docs.microsoft.com/en-us/windows/wsl/about)).
+
+For instance, in bash, you could create a file called `urls.txt` containing all the urls you want to dezoomify, and then use [xargs](https://en.wikipedia.org/wiki/Xargs) together with dezoomify-rs : 
+
+```sh
+xargs -d '\n' -n 1 ./dezoomify-rs < ./urls.txt
+```
