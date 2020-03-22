@@ -24,9 +24,9 @@ pub struct ImageInfo {
 }
 
 // Image qualities, from least favorite to favorite
-static QUALITY_ORDER: [&'static str; 5] = ["bitonal", "gray", "color", "default", "native"];
+static QUALITY_ORDER: [&str; 5] = ["bitonal", "gray", "color", "default", "native"];
 // Image formats, from least favorite to favorite
-static FORMAT_ORDER: [&'static str; 7] = ["gif", "bmp", "tif", "png", "jpg", "jpeg", "webp"];
+static FORMAT_ORDER: [&str; 7] = ["gif", "bmp", "tif", "png", "jpg", "jpeg", "webp"];
 
 
 impl ImageInfo {
