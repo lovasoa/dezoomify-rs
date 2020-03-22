@@ -8,7 +8,14 @@ pub struct ImageInfo {
     pub id: Option<String>,
     pub width: u32,
     pub height: u32,
-    pub tiles: Option<Vec<TileInfo>>,
+
+    // Used in IIIF version 2 :
+    tiles: Option<Vec<TileInfo>>,
+
+    // Used in IIIF version 1 :
+    scale_factors: Option<Vec<u32>>,
+    tile_width: Option<u32>,
+    tile_height: Option<u32>,
 }
 
 impl ImageInfo {
@@ -18,8 +25,31 @@ impl ImageInfo {
             y: self.height,
         }
     }
+
+    pub fn tiles(&self) -> Vec<TileInfo> {
+        self.tiles.as_ref()
+            .and_then(|v|
+                if v.is_empty() {
+                    None
+                } else {
+                    Some(v.to_vec())
+                })
+            .unwrap_or_else(|| {
+                let mut info = TileInfo::default();
+                if let Some(width) = self.tile_width {
+                    info.width = width
+                }
+                if let Some(height) = self.tile_height {
+                    info.height = Some(height)
+                }
+                if let Some(scale_factors) = &self.scale_factors {
+                    info.scale_factors = scale_factors.clone()
+                }
+                vec![info]
+            })
+    }
 }
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Clone)]
 pub struct TileInfo {
     pub width: u32,
     pub height: Option<u32>,

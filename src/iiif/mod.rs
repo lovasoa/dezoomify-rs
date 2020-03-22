@@ -37,8 +37,7 @@ impl Dezoomer for IIIF {
 fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
     let image_info: ImageInfo = serde_json::from_slice(raw_info)?;
     let img = Arc::new(image_info);
-    let default_tiles = vec![Default::default()];
-    let tiles = img.tiles.as_ref().unwrap_or(&default_tiles);
+    let tiles = img.tiles();
     let base_url = &Arc::new(url.replace("/info.json", ""));
     let levels = tiles
         .iter()
