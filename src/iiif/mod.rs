@@ -93,7 +93,7 @@ impl TilesRect for IIIFZoomLevel {
             tile_h = tile_size.y,
             rotation = 0,
             quality = self.page_info.best_quality(),
-            format = "jpg"
+            format = self.page_info.best_format()
         )
     }
 }
@@ -178,7 +178,8 @@ fn test_qualities() {
         "width": 5156,
         "height": 3816,
         "profile": "http://library.stanford.edu/iiif/image-api/1.1/compliance.html#level2",
-        "qualities": [ "native", "color", "bitonal", "gray" ],
+        "qualities": [ "native", "color", "bitonal", "gray", "zorglub" ],
+        "formats" : [ "png", "zorglub" ],
         "scale_factors": [ 10 ]
     }"#;
     let mut levels = zoom_levels("test.com", data).unwrap();
@@ -190,6 +191,6 @@ fn test_qualities() {
         .map(|t| t.url)
         .collect();
     assert_eq!(tiles, vec![
-        "https://images.britishart.yale.edu/iiif/fd470c3e-ead0-4878-ac97-d63295753f82/0,0,5156,3816/515,381/0/native.jpg",
+        "https://images.britishart.yale.edu/iiif/fd470c3e-ead0-4878-ac97-d63295753f82/0,0,5156,3816/515,381/0/native.png",
     ])
 }

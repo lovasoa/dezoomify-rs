@@ -11,6 +11,9 @@ pub struct ImageInfo {
 
     qualities: Option<Vec<String>>,
 
+    #[serde(alias = "preferredFormats")]
+    formats: Option<Vec<String>>,
+
     // Used in IIIF version 2 :
     tiles: Option<Vec<TileInfo>>,
 
@@ -20,8 +23,11 @@ pub struct ImageInfo {
     tile_height: Option<u32>,
 }
 
-// Image qualities, from favorite to least favorite
-static QUALITY_ORDER: [&'static str; 5] = ["default", "native", "color", "gray", "bitonal"];
+// Image qualities, from least favorite to favorite
+static QUALITY_ORDER: [&'static str; 5] = ["bitonal", "gray", "color", "default", "native"];
+// Image formats, from least favorite to favorite
+static FORMAT_ORDER: [&'static str; 7] = ["gif", "bmp", "tif", "png", "jpg", "jpeg", "webp"];
+
 
 impl ImageInfo {
     pub fn size(&self) -> Vec2d {
@@ -33,9 +39,16 @@ impl ImageInfo {
 
     pub fn best_quality(&self) -> &str {
         self.qualities.iter().flat_map(|v| v.iter())
-            .min_by_key(|s| QUALITY_ORDER.iter().position(|x| x == s))
+            .max_by_key(|&s| QUALITY_ORDER.iter().position(|&x| x == s))
             .map(|s| s.as_str())
-            .unwrap_or(QUALITY_ORDER[0])
+            .unwrap_or("default")
+    }
+
+    pub fn best_format(&self) -> &str {
+        self.formats.iter().flat_map(|v| v.iter())
+            .max_by_key(|&s| FORMAT_ORDER.iter().position(|&x| x == s))
+            .map(|s| s.as_str())
+            .unwrap_or("jpg")
     }
 
     pub fn tiles(&self) -> Vec<TileInfo> {
