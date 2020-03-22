@@ -9,6 +9,8 @@ pub struct ImageInfo {
     pub width: u32,
     pub height: u32,
 
+    qualities: Option<Vec<String>>,
+
     // Used in IIIF version 2 :
     tiles: Option<Vec<TileInfo>>,
 
@@ -18,12 +20,22 @@ pub struct ImageInfo {
     tile_height: Option<u32>,
 }
 
+// Image qualities, from favorite to least favorite
+static QUALITY_ORDER: [&'static str; 5] = ["default", "native", "color", "gray", "bitonal"];
+
 impl ImageInfo {
     pub fn size(&self) -> Vec2d {
         Vec2d {
             x: self.width,
             y: self.height,
         }
+    }
+
+    pub fn best_quality(&self) -> &str {
+        self.qualities.iter().flat_map(|v| v.iter())
+            .min_by_key(|s| QUALITY_ORDER.iter().position(|x| x == s))
+            .map(|s| s.as_str())
+            .unwrap_or(QUALITY_ORDER[0])
     }
 
     pub fn tiles(&self) -> Vec<TileInfo> {
