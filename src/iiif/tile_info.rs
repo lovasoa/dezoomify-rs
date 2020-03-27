@@ -8,8 +8,26 @@ pub struct ImageInfo {
     pub id: Option<String>,
     pub width: u32,
     pub height: u32,
-    pub tiles: Option<Vec<TileInfo>>,
+
+    qualities: Option<Vec<String>>,
+
+    #[serde(alias = "preferredFormats")]
+    formats: Option<Vec<String>>,
+
+    // Used in IIIF version 2 :
+    tiles: Option<Vec<TileInfo>>,
+
+    // Used in IIIF version 1 :
+    scale_factors: Option<Vec<u32>>,
+    tile_width: Option<u32>,
+    tile_height: Option<u32>,
 }
+
+// Image qualities, from least favorite to favorite
+static QUALITY_ORDER: [&str; 5] = ["bitonal", "gray", "color", "default", "native"];
+// Image formats, from least favorite to favorite
+static FORMAT_ORDER: [&str; 7] = ["gif", "bmp", "tif", "png", "jpg", "jpeg", "webp"];
+
 
 impl ImageInfo {
     pub fn size(&self) -> Vec2d {
@@ -18,8 +36,45 @@ impl ImageInfo {
             y: self.height,
         }
     }
+
+    pub fn best_quality(&self) -> &str {
+        self.qualities.iter().flat_map(|v| v.iter())
+            .max_by_key(|&s| QUALITY_ORDER.iter().position(|&x| x == s))
+            .map(|s| s.as_str())
+            .unwrap_or("default")
+    }
+
+    pub fn best_format(&self) -> &str {
+        self.formats.iter().flat_map(|v| v.iter())
+            .max_by_key(|&s| FORMAT_ORDER.iter().position(|&x| x == s))
+            .map(|s| s.as_str())
+            .unwrap_or("jpg")
+    }
+
+    pub fn tiles(&self) -> Vec<TileInfo> {
+        self.tiles.as_ref()
+            .and_then(|v|
+                if v.is_empty() {
+                    None
+                } else {
+                    Some(v.to_vec())
+                })
+            .unwrap_or_else(|| {
+                let mut info = TileInfo::default();
+                if let Some(width) = self.tile_width {
+                    info.width = width
+                }
+                if let Some(height) = self.tile_height {
+                    info.height = Some(height)
+                }
+                if let Some(scale_factors) = &self.scale_factors {
+                    info.scale_factors = scale_factors.clone()
+                }
+                vec![info]
+            })
+    }
 }
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Clone)]
 pub struct TileInfo {
     pub width: u32,
     pub height: Option<u32>,

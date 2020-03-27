@@ -37,8 +37,7 @@ impl Dezoomer for IIIF {
 fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
     let image_info: ImageInfo = serde_json::from_slice(raw_info)?;
     let img = Arc::new(image_info);
-    let default_tiles = vec![Default::default()];
-    let tiles = img.tiles.as_ref().unwrap_or(&default_tiles);
+    let tiles = img.tiles();
     let base_url = &Arc::new(url.replace("/info.json", ""));
     let levels = tiles
         .iter()
@@ -93,8 +92,8 @@ impl TilesRect for IIIFZoomLevel {
             tile_w = tile_size.x,
             tile_h = tile_size.y,
             rotation = 0,
-            quality = "default",
-            format = "jpg"
+            quality = self.page_info.best_quality(),
+            format = self.page_info.best_format()
         )
     }
 }
@@ -167,4 +166,31 @@ fn test_missing_id() {
             "http://test.com/512,0,88,350/88,350/0/default.jpg"
         ]
     )
+}
+
+#[test]
+fn test_qualities() {
+    let data = br#"{
+        "@context": "http://library.stanford.edu/iiif/image-api/1.1/context.json",
+        "@id": "https://images.britishart.yale.edu/iiif/fd470c3e-ead0-4878-ac97-d63295753f82",
+        "tile_height": 1024,
+        "tile_width": 1024,
+        "width": 5156,
+        "height": 3816,
+        "profile": "http://library.stanford.edu/iiif/image-api/1.1/compliance.html#level2",
+        "qualities": [ "native", "color", "bitonal", "gray", "zorglub" ],
+        "formats" : [ "png", "zorglub" ],
+        "scale_factors": [ 10 ]
+    }"#;
+    let mut levels = zoom_levels("test.com", data).unwrap();
+    let level = &mut levels[0];
+    assert_eq!(level.size_hint(), Some(Vec2d { x: 515, y: 381 }));
+    let tiles: Vec<String> = level
+        .next_tiles(None)
+        .into_iter()
+        .map(|t| t.url)
+        .collect();
+    assert_eq!(tiles, vec![
+        "https://images.britishart.yale.edu/iiif/fd470c3e-ead0-4878-ac97-d63295753f82/0,0,5156,3816/515,381/0/native.png",
+    ])
 }
