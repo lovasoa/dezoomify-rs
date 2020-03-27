@@ -249,7 +249,7 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
         successful_tiles += successes;
         zoom_level_iter.set_fetch_result(TileFetchResult { count, successes, tile_size });
     }
-    let final_msg = if successful_tiles == total_tiles {
+    let final_msg: String = if successful_tiles == total_tiles {
         "Downloaded all tiles.".into()
     } else if successful_tiles > 0 {
         format!(
