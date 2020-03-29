@@ -7,19 +7,17 @@ use std::time::Duration;
 use futures::stream::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
-
 use reqwest::{Client, header};
 use structopt::StructOpt;
-use output::get_outname;
 
 use arguments::Arguments;
 use canvas::{Canvas, Tile};
-use dezoomer::{ZoomLevelIter, PostProcessFn, TileFetchResult, ZoomLevel};
-
+use dezoomer::{PostProcessFn, TileFetchResult, ZoomLevel, ZoomLevelIter};
 use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 use dezoomer::TileReference;
-pub use vec2d::Vec2d;
 pub use errors::ZoomError;
+use output::get_outname;
+pub use vec2d::Vec2d;
 
 mod arguments;
 mod canvas;
@@ -221,30 +219,23 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
         successful_tiles += successes;
         zoom_level_iter.set_fetch_result(TileFetchResult { count, successes, tile_size });
     }
-    let final_msg: String = if successful_tiles == total_tiles {
-        "Downloaded all tiles.".into()
-    } else if successful_tiles > 0 {
-        format!(
-            "Successfully downloaded {} tiles out of {}",
-            successful_tiles, total_tiles
-        )
-    } else {
-        return Err(ZoomError::NoTile);
-    };
-    progress.finish_with_message(&final_msg);
+
+    progress.finish_with_message("Finished tile download");
+    if successful_tiles == 0 { return Err(ZoomError::NoTile); }
 
     let canvas = canvas.lock().unwrap();
     let outname = get_outname(args.outfile, &zoom_level.title());
-
-    println!("Saving the image to {}...", outname.as_path().to_string_lossy());
-    canvas.image().save(outname.as_path())?;
-    println!(
-        "Saved the image to {}",
-        fs::canonicalize(outname.as_path())
-            .unwrap_or(outname)
-            .to_string_lossy()
-    );
-    Ok(())
+    println!("Saving the image to {}...", outname.to_string_lossy());
+    let save_as = fs::canonicalize(outname.as_path()).unwrap_or(outname);
+    canvas.image().save(save_as.as_path())?;
+    let saved_as = save_as.to_string_lossy();
+    println!("Saved the image to {}", &saved_as);
+    if successful_tiles < total_tiles {
+        let saved_as = saved_as.to_string();
+        Err(ZoomError::PartialDownload { successful_tiles, total_tiles, saved_as })
+    } else {
+        Ok(())
+    }
 }
 
 async fn download_tile(
