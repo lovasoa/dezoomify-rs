@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::BufRead;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -11,6 +10,7 @@ use itertools::Itertools;
 
 use reqwest::{Client, header};
 use structopt::StructOpt;
+use output::get_outname;
 
 use arguments::Arguments;
 use canvas::{Canvas, Tile};
@@ -20,13 +20,13 @@ use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 use dezoomer::TileReference;
 pub use vec2d::Vec2d;
 pub use errors::ZoomError;
-use std::ffi::OsString;
 
 mod arguments;
 mod canvas;
 mod dezoomer;
 mod vec2d;
 mod errors;
+mod output;
 
 mod auto;
 mod custom_yaml;
@@ -58,34 +58,6 @@ async fn main() {
         std::process::exit(1);
     } else {
         println!("Done!");
-    }
-}
-
-fn get_outname(outfile: Option<PathBuf>, zoom_name: &Option<String>) -> PathBuf {
-    if let Some(path) = outfile {
-        if path.extension().is_none() {
-            path.with_extension("jpg")
-        } else {
-            path
-        }
-    } else {
-        let mut path = PathBuf::from(if let Some(name) = zoom_name {
-            format!("{}.jpg", name.replace(&['(', ')', ',', '\"', '.', ';', ':', '\''][..], ""))
-        } else {
-            String::from("dezoomified.jpg")
-        });
-
-        // append a suffix (_1,_2,..) to `outname` if  the file already exists
-        let filename = path.file_stem().map(OsString::from).unwrap_or_default();
-        let ext = path.extension().map(OsString::from).unwrap_or_default();
-        for i in 1.. {
-            if !path.exists() { break; }
-            let mut name = OsString::from(&filename);
-            name.push(&format!("_{}.", i));
-            name.push(&ext);
-            path.set_file_name(name);
-        }
-        path
     }
 }
 
