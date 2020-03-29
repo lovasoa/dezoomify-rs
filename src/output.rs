@@ -60,6 +60,7 @@ mod tests {
             "? [Question Mark] Australian WWI Poster",
             "The Rocky Mountains, Lander's Peak",
             "\"Is It So Nominated in the Bond?\" (Scene from \"The Merchant of Venice\")",
+            "", // test empty name
         ];
         for filename in filenames { assert_filename_ok(filename)?; }
         Ok(())
