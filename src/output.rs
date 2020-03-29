@@ -1,6 +1,8 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+use sanitize_filename_reader_friendly::sanitize;
+
 pub fn get_outname(outfile: Option<PathBuf>, zoom_name: &Option<String>) -> PathBuf {
     if let Some(path) = outfile {
         if path.extension().is_none() {
@@ -10,7 +12,7 @@ pub fn get_outname(outfile: Option<PathBuf>, zoom_name: &Option<String>) -> Path
         }
     } else {
         let mut path = PathBuf::from(if let Some(name) = zoom_name {
-            format!("{}.jpg", name.replace(&['(', ')', ',', '\"', '.', ';', ':', '\''][..], ""))
+            format!("{}.jpg", sanitize(name))
         } else {
             String::from("dezoomified.jpg")
         });
