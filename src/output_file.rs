@@ -1,7 +1,15 @@
 use std::ffi::OsString;
+use std::fs::OpenOptions;
 use std::path::PathBuf;
 
 use sanitize_filename_reader_friendly::sanitize;
+
+use crate::ZoomError;
+
+pub fn reserve_output_file(path: &PathBuf) -> Result<(), ZoomError> {
+    OpenOptions::new().write(true).create_new(true).open(path)?;
+    Ok(())
+}
 
 pub fn get_outname(outfile: Option<PathBuf>, zoom_name: &Option<String>) -> PathBuf {
     if let Some(path) = outfile {

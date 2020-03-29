@@ -16,15 +16,17 @@ use dezoomer::{PostProcessFn, TileFetchResult, ZoomLevel, ZoomLevelIter};
 use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 use dezoomer::TileReference;
 pub use errors::ZoomError;
-use output::get_outname;
+use output_file::get_outname;
 pub use vec2d::Vec2d;
+
+use crate::output_file::reserve_output_file;
 
 mod arguments;
 mod canvas;
 mod dezoomer;
 mod vec2d;
 mod errors;
-mod output;
+mod output_file;
 
 mod auto;
 mod custom_yaml;
@@ -164,6 +166,9 @@ async fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
 }
 
 async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
+    if let Some(path) = &args.outfile {
+        reserve_output_file(path)?;
+    }
     let mut zoom_level = find_zoomlevel(&args).await?;
     println!("Dezooming {}", zoom_level.name());
 
