@@ -30,7 +30,7 @@ The following dezoomers are currently available:
  - [**deepzoom**](#DeepZoom) supports Microsoft's *DZI* format (Deep Zoom Image),
  that is often used with the seadragon viewer.
  - [**IIIF**](#IIIF) supports the widely used International Image Interoperability Framework format.
- - [**Zoomify PFF**](#Zoomify PFF) supports the old zoomify single-file image format.
+ - [**Zoomify PFF**](#zoomify-pff) supports the old zoomify single-file image format.
  - [**generic**](#Generic) For when you know the format of the tile URLs.
  - [**custom**](#Custom-yaml) for advanced users.
     It allows you to specify a custom tile URL format.
