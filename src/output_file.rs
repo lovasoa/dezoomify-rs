@@ -11,12 +11,12 @@ pub fn reserve_output_file(path: &PathBuf) -> Result<(), ZoomError> {
     Ok(())
 }
 
-pub fn get_outname(outfile: Option<PathBuf>, zoom_name: &Option<String>) -> PathBuf {
+pub fn get_outname(outfile: &Option<PathBuf>, zoom_name: &Option<String>) -> PathBuf {
     if let Some(path) = outfile {
         if path.extension().is_none() {
             path.with_extension("jpg")
         } else {
-            path
+            path.into()
         }
     } else {
         let mut path = PathBuf::from(if let Some(name) = zoom_name {
@@ -55,7 +55,7 @@ mod tests {
     }
 
     fn assert_filename_ok(filename: &str) -> Result<(), Box<dyn Error>> {
-        let outname = get_outname(None, &Some(filename.to_string()));
+        let outname = get_outname(&None, &Some(filename.to_string()));
         assert_eq!(false, outname.exists()); // get_outname cannot overwrite an existing file
         File::create(&outname)?; // It should be possible to create a file with that name
         remove_file(&outname)?;

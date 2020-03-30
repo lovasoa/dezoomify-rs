@@ -52,12 +52,23 @@ pub fn default_headers() -> HashMap<String, String> {
 
 #[tokio::main]
 async fn main() {
+    let has_args = std::env::args_os().count() > 1;
+    let mut has_errors = false;
     let conf: Arguments = Arguments::from_args();
-    if let Err(err) = dezoomify(conf).await {
-        eprintln!("{}", err);
+    loop {
+        if let Err(err) = dezoomify(&conf).await {
+            eprintln!("{}", err);
+            has_errors = true;
+        } else {
+            println!("Done!");
+        }
+        if has_args {
+            // Command-line invocation
+            break;
+        }
+    }
+    if has_errors {
         std::process::exit(1);
-    } else {
-        println!("Done!");
     }
 }
 
@@ -165,7 +176,7 @@ async fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
     choose_level(zoom_levels, args)
 }
 
-async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
+async fn dezoomify(args: &Arguments) -> Result<(), ZoomError> {
     if let Some(path) = &args.outfile {
         reserve_output_file(path)?;
     }
@@ -193,7 +204,7 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
 
         progress.set_message("Requesting the tiles...");
 
-        let Arguments { retries, retry_delay, .. } = args;
+        let &Arguments { retries, retry_delay, .. } = args;
         let mut stream = futures::stream::iter(&tile_refs)
             .map(|tile_ref: &TileReference|
                 download_tile(post_process_fn, tile_ref, &http_client, retries, retry_delay))
@@ -229,7 +240,7 @@ async fn dezoomify(args: Arguments) -> Result<(), ZoomError> {
     if successful_tiles == 0 { return Err(ZoomError::NoTile); }
 
     let canvas = canvas.lock().unwrap();
-    let outname = get_outname(args.outfile, &zoom_level.title());
+    let outname = get_outname(&args.outfile, &zoom_level.title());
     println!("Saving the image to {}...", outname.to_string_lossy());
     let save_as = fs::canonicalize(outname.as_path()).unwrap_or(outname);
     canvas.image().save(save_as.as_path())?;
