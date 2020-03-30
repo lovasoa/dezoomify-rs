@@ -3,6 +3,7 @@ use std::fs;
 use std::io::BufRead;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use colored::*;
 
 use futures::stream::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -57,10 +58,10 @@ async fn main() {
     let conf: Arguments = Arguments::from_args();
     loop {
         if let Err(err) = dezoomify(&conf).await {
-            eprintln!("{}", err);
+            eprintln!("❌ {} {}", "ERROR".red(), err);
             has_errors = true;
         } else {
-            println!("Done!");
+            println!("{}", "✅ Done!".green());
         }
         if has_args {
             // Command-line invocation
