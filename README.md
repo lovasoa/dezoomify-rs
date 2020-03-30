@@ -24,12 +24,13 @@ and it often gives to other choice than *PNG*.
 
 dezoomify-rs supports several zoomable image formats, each backed by a dedicated *dezoomer*.
 The following dezoomers are currently available:
+ - [**Google Arts & Culture**](#google-arts-culture) supports downloading images from
+    [artsandculture.google.com](https://artsandculture.google.com/);
  - [**zoomify**](#zoomify) supports the popular zoomable image format *Zoomify*.
  - [**deepzoom**](#DeepZoom) supports Microsoft's *DZI* format (Deep Zoom Image),
  that is often used with the seadragon viewer.
  - [**IIIF**](#IIIF) supports the widely used International Image Interoperability Framework format.
- - [**Google Arts & Culture**](#google-arts-culture) supports downloading images from
-    [artsandculture.google.com](https://artsandculture.google.com/);
+ - [**Zoomify PFF**](#Zoomify PFF) supports the old zoomify single-file image format.
  - [**generic**](#Generic) For when you know the format of the tile URLs.
  - [**custom**](#Custom-yaml) for advanced users.
     It allows you to specify a custom tile URL format.
