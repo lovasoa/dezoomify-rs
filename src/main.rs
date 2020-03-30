@@ -3,8 +3,8 @@ use std::fs;
 use std::io::BufRead;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use colored::*;
 
+use colour::{green_ln, red_ln};
 use futures::stream::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
@@ -58,10 +58,10 @@ async fn main() {
     let conf: Arguments = Arguments::from_args();
     loop {
         if let Err(err) = dezoomify(&conf).await {
-            eprintln!("❌ {} {}", "ERROR".red(), err);
+            red_ln!("ERROR {}", err);
             has_errors = true;
         } else {
-            println!("{}", "✅ Done!".green());
+            green_ln!("Done!");
         }
         if has_args {
             // Command-line invocation
