@@ -11,7 +11,7 @@ use regex::Regex;
 #[structopt(author, about)]
 pub struct Arguments {
     /// Input URL or local file name
-    input_uri: Option<String>,
+    pub input_uri: Option<String>,
 
     /// File to which the resulting image should be saved
     #[structopt(parse(from_os_str))]
@@ -23,7 +23,7 @@ pub struct Arguments {
 
     /// If several zoom levels are available, then select the largest one
     #[structopt(short, long)]
-    largest: bool,
+    pub largest: bool,
 
     /// If several zoom levels are available, then select the one with the largest width that
     /// is inferior to max-width.
@@ -62,7 +62,7 @@ pub struct Arguments {
     parse(try_from_str = parse_header),
     number_of_values = 1
     )]
-    headers: Vec<(String, String)>,
+    pub headers: Vec<(String, String)>,
 
     /// Maximum number of idle connections per host allowed at the same time
     #[structopt(long, default_value = "32")]

@@ -9,7 +9,7 @@ description = "Allows you to download zoomable images"
 [dependencies]
 image = "0.23"
 reqwest = { version = "0.10", features = ["gzip"] }
-tokio = { version = "0.2", features = ["rt-threaded", "rt-core", "macros", "rt-util", "time"] }
+tokio = { version = "0.2", features = ["rt-threaded", "rt-core", "macros", "rt-util", "time", "fs"] }
 futures = "0.3"
 custom_error = "1.7"
 structopt = "0.3"
