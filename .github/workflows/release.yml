@@ -66,26 +66,28 @@ jobs:
 
       - uses: actions/download-artifact@v1
         with: { name: dezoomify-rs macos-latest, path: . }
+      - run: chmod +x dezoomify-rs && tar --create --file dezoomify-rs-macos.tgz --gzip dezoomify-rs README-MACOS.txt
       - name: Upload MacOs binary
         uses: lovasoa/upload-release-asset@851d9cc
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: dezoomify-rs
-          asset_name: dezoomify-rs
+          asset_path: dezoomify-rs-macos.tgz
+          asset_name: dezoomify-rs-macos.tgz
           asset_label: Dezoomify-rs for MacOS
           asset_content_type: application/octet-stream
 
       - uses: actions/download-artifact@v1
         with: { name: dezoomify-rs ubuntu-latest, path: . }
+      - run: chmod +x dezoomify-rs && tar --create --file dezoomify-rs-linux.tgz --gzip dezoomify-rs
       - name: Upload Linux binary
         uses: lovasoa/upload-release-asset@851d9cc
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: dezoomify-rs
-          asset_name: dezoomify-rs-linux
+          asset_path: dezoomify-rs-linux.tgz
+          asset_name: dezoomify-rs-linux.tgz
           asset_label: Dezoomify-rs for Linux
           asset_content_type: application/octet-stream
