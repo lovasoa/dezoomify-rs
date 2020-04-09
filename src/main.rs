@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fs;
 use std::io::BufRead;
 use std::sync::{Arc, Mutex};
@@ -8,7 +7,7 @@ use colour::{green_ln, red_ln};
 use futures::stream::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
-use reqwest::{Client, header};
+use reqwest::Client;
 use structopt::StructOpt;
 use human_panic::setup_panic;
 
@@ -17,6 +16,7 @@ use canvas::{Canvas, Tile};
 use dezoomer::{PostProcessFn, TileFetchResult, ZoomLevel, ZoomLevelIter};
 use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 use dezoomer::TileReference;
+use network::{fetch_uri, client};
 pub use errors::ZoomError;
 use output_file::get_outname;
 pub use vec2d::Vec2d;
@@ -29,6 +29,7 @@ mod dezoomer;
 mod vec2d;
 mod errors;
 mod output_file;
+mod network;
 
 mod auto;
 mod custom_yaml;
@@ -46,10 +47,6 @@ fn stdin_line() -> String {
         .next()
         .expect("Invalid input")
         .expect("Unable to read from stdin")
-}
-
-pub fn default_headers() -> HashMap<String, String> {
-    serde_yaml::from_str(include_str!("default_headers.yaml")).unwrap()
 }
 
 #[tokio::main]
@@ -72,20 +69,6 @@ async fn main() {
     }
     if has_errors {
         std::process::exit(1);
-    }
-}
-
-// TODO: return Bytes
-async fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
-    if uri.starts_with("http://") || uri.starts_with("https://") {
-        println!("Downloading {}...", uri);
-        let response = http.get(uri).send().await?.error_for_status()?;
-        let mut contents = Vec::new();
-        contents.extend(response.bytes().await?);
-        Ok(contents)
-    } else {
-        println!("Opening {}...", uri);
-        Ok(fs::read(uri)?)
     }
 }
 
@@ -280,22 +263,4 @@ async fn download_tile(
         uri: tile_reference.url.clone(),
         cause: e.into(),
     })
-}
-
-fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
-    headers: I,
-    args: &Arguments,
-) -> Result<reqwest::Client, ZoomError> {
-    let header_map: Result<header::HeaderMap, ZoomError> = default_headers()
-        .iter()
-        .chain(headers.map(|(k, v)| (k, v)))
-        .map(|(name, value)| Ok((name.parse()?, value.parse()?)))
-        .collect();
-    let client = reqwest::Client::builder()
-        .default_headers(header_map?)
-        .max_idle_per_host(args.max_idle_per_host)
-        .danger_accept_invalid_certs(args.accept_invalid_certs)
-        .timeout(args.timeout)
-        .build()?;
-    Ok(client)
 }
