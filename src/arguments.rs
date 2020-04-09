@@ -65,7 +65,7 @@ pub struct Arguments {
     headers: Vec<(String, String)>,
 
     /// Maximum number of idle connections per host allowed at the same time
-    #[structopt(long, default_value = "64")]
+    #[structopt(long, default_value = "32")]
     pub max_idle_per_host: usize,
 
     /// Whether to accept connecting to insecure HTTPS servers
@@ -73,13 +73,34 @@ pub struct Arguments {
     pub accept_invalid_certs: bool,
 
     /// Maximum time between the beginning of a request and the end of a response before
-    ///the request should be interrupted and considered considered failed
+    ///the request should be interrupted and considered failed
     #[structopt(long, default_value = "30s", parse(try_from_str = parse_duration))]
     pub timeout: Duration,
 
     /// Time after which we should give up when trying to connect to a server
     #[structopt(long = "connect-timeout", default_value = "6s", parse(try_from_str = parse_duration))]
     pub connect_timeout: Duration,
+}
+
+impl Default for Arguments {
+    fn default() -> Self {
+        Arguments {
+            input_uri: None,
+            outfile: None,
+            dezoomer: "auto".to_string(),
+            largest: false,
+            max_width: None,
+            max_height: None,
+            parallelism: 16,
+            retries: 1,
+            retry_delay: Duration::from_secs(2),
+            headers: vec![],
+            max_idle_per_host: 32,
+            accept_invalid_certs: false,
+            timeout: Duration::from_secs(30),
+            connect_timeout: Duration::from_secs(6),
+        }
+    }
 }
 
 impl Arguments {
