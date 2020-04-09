@@ -3,6 +3,7 @@ use image::{GenericImage, GenericImageView, ImageBuffer, Pixel};
 use crate::dezoomer::*;
 use crate::{Vec2d, errors};
 use crate::ZoomError;
+use crate::network::fetch_uri;
 use errors::BufferToImageError;
 
 type SubPix = u8;
@@ -111,19 +112,17 @@ impl Tile {
         tile_reference: &TileReference,
         client: &reqwest::Client,
     ) -> Result<Tile, ZoomError> {
-        let data = client.get(&tile_reference.url).send().await?.error_for_status()?;
-        let bytes = data.bytes().await?;
-
+        let bytes = fetch_uri(&tile_reference.url, client).await?;
         let tile_reference = tile_reference.clone();
 
         let tile: Result<Tile, BufferToImageError> = tokio::spawn(async move {
             tokio::task::block_in_place(move || {
                 let transformed_bytes =
                     if let PostProcessFn::Fn(post_process) = post_process_fn {
-                        post_process(&tile_reference, Vec::from(&*bytes))
+                        post_process(&tile_reference, bytes)
                             .map_err(|e|
                                 BufferToImageError::PostProcessing { e }
-                            )?.into()
+                            )?
                     } else {
                         bytes
                     };

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use crate::default_headers;
+use crate::network::default_headers;
 use crate::dezoomer::*;
 use crate::TileReference;
 
