@@ -10,6 +10,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
 use reqwest::{Client, header};
 use structopt::StructOpt;
+use human_panic::setup_panic;
 
 use arguments::Arguments;
 use canvas::{Canvas, Tile};
@@ -53,6 +54,7 @@ pub fn default_headers() -> HashMap<String, String> {
 
 #[tokio::main]
 async fn main() {
+    setup_panic!();
     let has_args = std::env::args_os().count() > 1;
     let mut has_errors = false;
     let conf: Arguments = Arguments::from_args();
