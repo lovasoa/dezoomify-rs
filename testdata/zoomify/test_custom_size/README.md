@@ -1,0 +1,1 @@
+See: https://github.com/lovasoa/dezoomify/issues/81
