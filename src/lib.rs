@@ -157,7 +157,7 @@ pub async fn dezoomify(args: &Arguments) -> Result<(), ZoomError> {
     progress.set_message("Computing the URLs of the image tiles...");
 
     let mut zoom_level_iter = ZoomLevelIter::new(&mut zoom_level);
-    while let Some(tile_refs) = zoom_level_iter.next() {
+    while let Some(tile_refs) = zoom_level_iter.next_tile_references() {
         let count = tile_refs.len() as u64;
         total_tiles += count;
         progress.set_length(total_tiles);

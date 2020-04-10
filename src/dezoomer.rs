@@ -120,7 +120,7 @@ impl<'a> ZoomLevelIter<'a> {
     pub fn new(zoom_level: &'a mut ZoomLevel) -> Self {
         ZoomLevelIter { zoom_level, previous: None, waiting_results: false }
     }
-    pub fn next(&mut self) -> Option<Vec<TileReference>> {
+    pub fn next_tile_references(&mut self) -> Option<Vec<TileReference>> {
         assert!(!self.waiting_results);
         self.waiting_results = true;
         let tiles = self.zoom_level.next_tiles(self.previous);
@@ -264,7 +264,7 @@ mod tests {
         let mut lvl: ZoomLevel = Box::new(FakeLvl {});
         let mut all_tiles = vec![];
         let mut zoom_level_iter = ZoomLevelIter::new(&mut lvl);
-        while let Some(tiles) = zoom_level_iter.next() {
+        while let Some(tiles) = zoom_level_iter.next_tile_references() {
             all_tiles.extend(tiles);
             zoom_level_iter.set_fetch_result(TileFetchResult {
                 count: 0,

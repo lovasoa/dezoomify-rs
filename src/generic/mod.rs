@@ -124,7 +124,7 @@ fn test_generic_dezoomer() {
     let mut all_tiles = vec![];
 
     let mut zoom_level_iter = crate::dezoomer::ZoomLevelIter::new(&mut lvl);
-    while let Some(tiles) = zoom_level_iter.next() {
+    while let Some(tiles) = zoom_level_iter.next_tile_references() {
         let count = tiles.len() as u64;
 
         let successes: Vec<_> = tiles
