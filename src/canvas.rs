@@ -5,6 +5,7 @@ use crate::{Vec2d, errors};
 use crate::ZoomError;
 use crate::network::fetch_uri;
 use errors::BufferToImageError;
+use log::{debug, info, warn};
 
 type SubPix = u8;
 type Pix = image::Rgba<SubPix>;
@@ -17,6 +18,7 @@ const fn byte_size(area: Vec2d) -> usize {
 }
 
 fn grow_buffer(buffer: CanvasBuffer, size: Vec2d) -> CanvasBuffer {
+    info!("Growing canvas from {:?} to {}", buffer.dimensions(), size);
     let old_width = buffer.width() as usize;
     let old_height = buffer.height() as usize;
     let new_width = size.x as usize;
@@ -47,7 +49,10 @@ pub struct Canvas {
 
 impl Canvas {
     pub fn new(size_hint: Option<Vec2d>) -> Self {
-        let size = size_hint.unwrap_or(Vec2d { x: 1, y: 1 });
+        let size = size_hint.unwrap_or_else(|| {
+            warn!("The initial size of the canvas is unknown.");
+            Vec2d { x: 1, y: 1 }
+        });
         let image = empty_buffer(size);
         let is_size_exact = size_hint.is_some();
         Canvas {
@@ -69,6 +74,7 @@ impl Canvas {
 
         let Vec2d { x, y } = tile.position();
 
+        debug!("Copying tile data from {:?}", tile);
         self.image.copy_from(&sub_tile, x, y).map_err(|_err| {
             let tile_size = tile.size();
             let size = self.size();
@@ -137,6 +143,17 @@ impl Tile {
     }
     pub fn position(&self) -> Vec2d {
         self.position
+    }
+}
+
+impl std::fmt::Debug for Tile {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("Tile")
+            .field("x", &self.position.x)
+            .field("y", &self.position.y)
+            .field("width", &self.image.width())
+            .field("height", &self.image.height())
+            .finish()
     }
 }
 

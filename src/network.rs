@@ -1,6 +1,6 @@
 use crate::ZoomError;
 use crate::arguments::Arguments;
-
+use log::debug;
 use tokio::fs;
 use std::collections::HashMap;
 
@@ -12,12 +12,17 @@ use reqwest::{Client, header};
 // TODO: return Bytes
 pub async fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
     if uri.starts_with("http://") || uri.starts_with("https://") {
+        debug!("Loading url: '{}'", uri);
         let response = http.get(uri).send().await?.error_for_status()?;
         let mut contents = Vec::new();
         contents.extend(response.bytes().await?);
+        debug!("Loaded url: '{}'", uri);
         Ok(contents)
     } else {
-        Ok(fs::read(uri).await?)
+        debug!("Loading file: '{}'", uri);
+        let result = fs::read(uri).await?;
+        debug!("Loaded file: '{}'", uri);
+        Ok(result)
     }
 }
 

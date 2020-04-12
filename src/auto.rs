@@ -1,4 +1,5 @@
 use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
+use log::{info, debug};
 
 pub fn all_dezoomers(include_generic: bool) -> Vec<Box<dyn Dezoomer>> {
     let mut dezoomers: Vec<Box<dyn Dezoomer>> = vec![
@@ -47,10 +48,12 @@ impl Dezoomer for AutoDezoomer {
                     true
                 }
                 Err(e @ DezoomerError::NeedsData { .. }) => {
+                    debug!("{} requested more data: {}", dezoomer.name(), e);
                     needs_uri = Some(e);
                     true
                 }
                 Err(e) => {
+                    debug!("{} cannot process this image: {}", dezoomer.name(), e);
                     errs.push((dezoomer.name(), e));
                     false
                 }
@@ -62,6 +65,7 @@ impl Dezoomer for AutoDezoomer {
             }
         }
         if successes.is_empty() {
+            info!("No dezoomer can dezoom {:?}", data.uri);
             Err(needs_uri.unwrap_or_else(|| DezoomerError::wrap(AutoDezoomerError(errs))))
         } else {
             Ok(successes)

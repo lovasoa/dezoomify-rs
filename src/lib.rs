@@ -7,6 +7,7 @@ use futures::stream::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
 use reqwest::Client;
+use log::{info, warn, debug};
 
 pub use arguments::Arguments;
 use canvas::{Canvas, Tile};
@@ -131,8 +132,9 @@ async fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
     let mut dezoomer = args.find_dezoomer()?;
     let uri = args.choose_input_uri();
     let http_client = client(args.headers(), args)?;
-    println!("Trying to locate a zoomable image...");
+    info!("Trying to locate a zoomable image...");
     let zoom_levels: Vec<ZoomLevel> = list_tiles(dezoomer.as_mut(), &http_client, &uri).await?;
+    info!("Found {} zoom levels", zoom_levels.len());
     choose_level(zoom_levels, args)
 }
 
@@ -141,11 +143,12 @@ pub async fn dezoomify(args: &Arguments) -> Result<(), ZoomError> {
         reserve_output_file(path)?;
     }
     let mut zoom_level = find_zoomlevel(&args).await?;
-    println!("Dezooming {}", zoom_level.name());
+    info!("Dezooming {}", zoom_level.name());
 
     let level_headers = zoom_level.http_headers();
     let http_client = client(level_headers.iter().chain(args.headers()), &args)?;
 
+    info!("Creating canvas");
     let canvas = Arc::new(Mutex::new(Canvas::new(zoom_level.size_hint())));
 
     let progress = progress_bar(0);
@@ -174,6 +177,7 @@ pub async fn dezoomify(args: &Arguments) -> Result<(), ZoomError> {
         let mut tile_size = None;
 
         while let Some(tile_result) = stream.next().await {
+            debug!("Received tile result: {:?}", tile_result);
             progress.inc(1);
             match tile_result {
                 Ok(tile) => {
@@ -230,6 +234,7 @@ async fn download_tile(
     for _ in 0..retries {
         res = Tile::download(post_process_fn, tile_reference, client).await;
         if res.is_ok() { break; }
+        warn!("Failed to load '{}'. Retrying in {:?}", tile_reference.url, wait_time);
         tokio::time::delay_for(wait_time).await;
         wait_time *= 2;
     }

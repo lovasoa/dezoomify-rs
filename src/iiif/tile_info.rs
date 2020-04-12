@@ -1,6 +1,7 @@
 use serde::Deserialize;
 
 use crate::Vec2d;
+use log::info;
 
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct ImageInfo {
@@ -41,14 +42,20 @@ impl ImageInfo {
         self.qualities.iter().flat_map(|v| v.iter())
             .max_by_key(|&s| QUALITY_ORDER.iter().position(|&x| x == s))
             .map(|s| s.as_str())
-            .unwrap_or("default")
+            .unwrap_or_else(|| {
+                info!("No image quality specified. Using 'default'.");
+                "default"
+            })
     }
 
     pub fn best_format(&self) -> &str {
         self.formats.iter().flat_map(|v| v.iter())
             .max_by_key(|&s| FORMAT_ORDER.iter().position(|&x| x == s))
             .map(|s| s.as_str())
-            .unwrap_or("jpg")
+            .unwrap_or_else(|| {
+                info!("No image format specified. Using 'jpg'.");
+                "jpg"
+            })
     }
 
     pub fn tiles(&self) -> Vec<TileInfo> {

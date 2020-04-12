@@ -1,5 +1,6 @@
 use serde::Deserialize;
 
+use log::{info, warn};
 use crate::dezoomer::Vec2d;
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -48,7 +49,12 @@ impl ImageProperties {
             width /= 2.;
             height /= 2.;
         }
-        if tiles_before.iter().sum::<u32>() != self.num_tiles {
+        let computed_tile_count = tiles_before.iter().sum::<u32>();
+        if computed_tile_count != self.num_tiles {
+            info!("The computed number of tiles ({}) does not match \
+            the number of tiles specified in ImageProperties.xml ({}). \
+            Trying the second computation method..."
+                  , computed_tile_count, self.num_tiles);
             level_tiles.clear();
             tiles_before.clear();
             let mut size = self.size();
@@ -62,6 +68,14 @@ impl ImageProperties {
                 if size.x % 2 != 0 { size.x += 1 }
                 if size.y % 2 != 0 { size.y += 1 }
                 level_size_ratio = level_size_ratio * Vec2d { x: 2, y: 2 };
+            }
+        }
+        if log::log_enabled!(log::Level::Warn) {
+            let computed_tile_count = tiles_before.iter().sum::<u32>();
+            if computed_tile_count != self.num_tiles {
+                warn!("The computed number of tiles ({}) does not match \
+                        the number of tiles specified in ImageProperties.xml ({})"
+                      , computed_tile_count, self.num_tiles);
             }
         }
         level_tiles.reverse();

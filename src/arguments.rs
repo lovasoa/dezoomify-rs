@@ -80,6 +80,10 @@ pub struct Arguments {
     /// Time after which we should give up when trying to connect to a server
     #[structopt(long = "connect-timeout", default_value = "6s", parse(try_from_str = parse_duration))]
     pub connect_timeout: Duration,
+
+    /// Level of logging verbosity. Set it to "debug" to get all logging messages.
+    #[structopt(long, default_value="warn")]
+    pub logging: String,
 }
 
 impl Default for Arguments {
@@ -99,6 +103,7 @@ impl Default for Arguments {
             accept_invalid_certs: false,
             timeout: Duration::from_secs(30),
             connect_timeout: Duration::from_secs(6),
+            logging: "warn".to_string(),
         }
     }
 }

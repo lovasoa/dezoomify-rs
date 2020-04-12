@@ -3,6 +3,7 @@ use std::fs::OpenOptions;
 use std::path::PathBuf;
 
 use sanitize_filename_reader_friendly::sanitize;
+use log::info;
 
 use crate::ZoomError;
 
@@ -30,6 +31,7 @@ pub fn get_outname(outfile: &Option<PathBuf>, zoom_name: &Option<String>) -> Pat
         let ext = path.extension().map(OsString::from).unwrap_or_default();
         for i in 1.. {
             if !path.exists() { break; }
+            info!("File {:?} already exists. Trying another file name...", &path);
             let mut name = OsString::from(&filename);
             name.push(&format!("_{}.", i));
             name.push(&ext);
