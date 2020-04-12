@@ -139,11 +139,14 @@ OPTIONS:
             Sets an HTTP header to use on requests. This option can be repeated in order to set multiple headers. You
             can use `-H "Referer: URL"` where URL is the URL of the website's viewer page in order to let the site think
             you come from the legitimate viewer
+        --logging <logging>
+            Level of logging verbosity. Set it to "debug" to get all logging messages [default: warn]
+
     -h, --max-height <max-height>
             If several zoom levels are available, then select the one with the largest height that is inferior to max-
             height
         --max-idle-per-host <max-idle-per-host>
-            Maximum number of idle connections per host allowed at the same time [default: 64]
+            Maximum number of idle connections per host allowed at the same time [default: 32]
 
     -w, --max-width <max-width>
             If several zoom levels are available, then select the one with the largest width that is inferior to max-
@@ -160,11 +163,11 @@ OPTIONS:
 
         --timeout <timeout>
             Maximum time between the beginning of a request and the end of a response before the request should be
-            interrupted and considered considered failed [default: 30s]
+            interrupted and considered failed [default: 30s]
 
 ARGS:
     <input-uri>    Input URL or local file name
-    <outfile>      File to which the resulting image should be saved [default: dezoomified.jpg]
+    <outfile>      File to which the resulting image should be saved
 ```
 
 ## Documentation
