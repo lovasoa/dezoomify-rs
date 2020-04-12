@@ -56,9 +56,13 @@ impl TileProvider for ZoomLevel {
                         .map(|x| self.tile_ref_at(x, 0))
                         .collect()
                 } else { // We had at least one failed tile, the line is over
-                    let max_x = current_x - 1;
-                    self.stage = Stage::NextLines { max_x, current_y: 1 };
-                    (0..=max_x).map(|x| self.tile_ref_at(x, 1)).collect()
+                    if current_x == 0 { // Not a single can be downloaded in the first line
+                        vec![]
+                    } else {
+                        let max_x = current_x - 1;
+                        self.stage = Stage::NextLines { max_x, current_y: 1 };
+                        (0..=max_x).map(|x| self.tile_ref_at(x, 1)).collect()
+                    }
                 }
             }
 
