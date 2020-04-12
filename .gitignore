@@ -3,4 +3,5 @@
 dezoomify-rs.iml
 .idea/
 /dezoomified.jpg
+/dezoomified_*.jpg
 .DS_Store
