@@ -5,6 +5,7 @@ use crate::dezoomer::{
     ZoomLevels,
 };
 use crate::Vec2d;
+use log::warn;
 
 enum Stage {
     FirstLine { current_x: u32 },
@@ -57,6 +58,7 @@ impl TileProvider for ZoomLevel {
                         .collect()
                 } else { // We had at least one failed tile, the line is over
                     if current_x == 0 { // Not a single can be downloaded in the first line
+                        warn!("The generic dezoomer was not able to access the tile at x=0, y=0");
                         vec![]
                     } else {
                         let max_x = current_x - 1;
