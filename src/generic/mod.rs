@@ -82,7 +82,6 @@ impl TileProvider for ZoomLevel {
                 vec![]
             }
         } else {
-            self.done.insert((self.last_tile.0, self.last_tile.1));
             vec![self.tile_ref_at(self.last_tile.0, self.last_tile.1)]
         }
     }
