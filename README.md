@@ -108,6 +108,14 @@ the following:
 http://example.com/my_image/image-{{X}}-{{Y}}.jpg
 ```
 
+If the numbers have leading zeroes in the URL
+(such as `image-01-00.jpg` instead of `image-1-0.jpg`),
+then you can specify them in the url template as follows:
+
+```
+http://example.com/my_image/image-{{X:02}}-{{Y:02}}.jpg
+```
+
 ### Custom yaml
 
 The custom dezoomer can be used when you know the form of the individual tile URLs,
