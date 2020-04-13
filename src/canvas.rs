@@ -14,7 +14,7 @@ type CanvasBuffer = ImageBuffer<Pix, Vec<SubPix>>;
 const PIXEL_SIZE: usize = std::mem::size_of::<Pix>();
 
 const fn byte_size(area: Vec2d) -> usize {
-    (area.x * area.y) as usize * PIXEL_SIZE
+    (area.x as usize * area.y as usize) * PIXEL_SIZE
 }
 
 fn grow_buffer(buffer: CanvasBuffer, size: Vec2d) -> CanvasBuffer {
