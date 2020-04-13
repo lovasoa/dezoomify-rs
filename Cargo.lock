@@ -436,7 +436,6 @@ dependencies = [
  "serde_yaml",
  "sha-1",
  "structopt",
- "tempfile",
  "tokio",
 ]
 
