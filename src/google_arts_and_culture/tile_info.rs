@@ -85,7 +85,6 @@ mod tests {
                 <pyramid_level num_tiles_x="11" num_tiles_y="8" inverse_scale="1" empty_pels_x="196" empty_pels_y="16"/>
              </TileInfo>
          "#).unwrap();
-        dbg!(&infos);
         assert_eq!(infos.tile_width, 512);
         assert_eq!(infos.pyramid_level[4].num_tiles_x, 11);
     }
