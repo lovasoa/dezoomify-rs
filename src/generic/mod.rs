@@ -7,8 +7,20 @@ use crate::dezoomer::{
     ZoomLevels,
 };
 use crate::Vec2d;
+
 use std::collections::HashSet;
 
+use lazy_static::lazy_static;
+use regex::Regex;
+
+lazy_static! {
+    static ref TEMPLATE_RE: Regex = Regex::new(r"(?xi)
+    \{\{
+        (?P<dimension>x|y)
+        (?::0(?P<zeroes>\d+))?
+     \}\}
+    ").unwrap();
+}
 
 struct ZoomLevel {
     url_template: String,
@@ -20,9 +32,22 @@ struct ZoomLevel {
 
 impl ZoomLevel {
     fn tile_url_at(&self, x: u32, y: u32) -> String {
-        self.url_template
-            .replace("{{X}}", &x.to_string())
-            .replace("{{Y}}", &y.to_string())
+        TEMPLATE_RE.replace_all(&self.url_template, |caps: &regex::Captures| {
+            let dimension = caps.name("dimension")
+                .expect("missing dimension")
+                .as_str()
+                .chars().next().expect("empty dim")
+                .to_ascii_lowercase();
+            let num = match dimension {
+                'x' => x,
+                'y' => y,
+                _ => unreachable!("The dimension is either x or y")
+            };
+            let padding: usize = caps.name("zeroes")
+                .and_then(|m| m.as_str().parse().ok())
+                .unwrap_or(0);
+            format!("{num:0padding$}", num = num, padding = padding)
+        }).to_string()
     }
     fn tile_ref_at(&self, x: u32, y: u32) -> TileReference {
         let tile_size = self.tile_size.unwrap_or(Vec2d { x: 0, y: 0 });
@@ -81,7 +106,7 @@ impl Dezoomer for GenericDezoomer {
     }
 
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
-        self.assert(data.uri.contains("{{X}}"))?;
+        self.assert(TEMPLATE_RE.is_match(&data.uri))?;
         let dezoomer = ZoomLevel {
             url_template: data.uri.clone(),
             dichotomy: Default::default(),
@@ -158,4 +183,18 @@ fn test_generic_dezoomer() {
     for tile in expected.iter() {
         assert!(all_tiles.contains(tile), "missing tile {:?} in {:?}", tile, all_tiles);
     }
+}
+
+#[test]
+fn test_url_templating() {
+    let url_template = "http://x.com/{{x:05}}_{{y}}".to_string();
+    let lvl: ZoomLevel = ZoomLevel {
+        url_template,
+        dichotomy: Default::default(),
+        last_tile: (0, 0),
+        tile_size: None,
+        done: Default::default(),
+    };
+    assert_eq!(lvl.tile_url_at(10, 11), "http://x.com/00010_11");
+    assert_eq!(lvl.tile_url_at(123, 1), "http://x.com/00123_1");
 }
