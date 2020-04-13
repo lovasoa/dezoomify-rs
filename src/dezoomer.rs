@@ -192,11 +192,11 @@ impl<T: TilesRect> TileProvider for T {
         )
     }
 
+    fn title(&self) -> Option<String> { TilesRect::title(self) }
+
     fn size_hint(&self) -> Option<Vec2d> {
         Some(self.size())
     }
-
-    fn title(&self) -> Option<String> { TilesRect::title(self) }
 
     fn http_headers(&self) -> HashMap<String, String> {
         let mut headers = HashMap::new();

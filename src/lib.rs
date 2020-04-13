@@ -160,9 +160,11 @@ pub async fn dezoomify(args: &Arguments) -> Result<(), ZoomError> {
     progress.set_message("Computing the URLs of the image tiles...");
 
     let mut zoom_level_iter = ZoomLevelIter::new(&mut zoom_level);
+    let mut last_count = 0;
+    let mut last_successes = 0;
     while let Some(tile_refs) = zoom_level_iter.next_tile_references() {
-        let count = tile_refs.len() as u64;
-        total_tiles += count;
+        last_count = tile_refs.len() as u64;
+        total_tiles += last_count;
         progress.set_length(total_tiles);
 
         progress.set_message("Requesting the tiles...");
@@ -173,7 +175,7 @@ pub async fn dezoomify(args: &Arguments) -> Result<(), ZoomError> {
                 download_tile(post_process_fn, tile_ref, &http_client, retries, retry_delay))
             .buffer_unordered(args.parallelism);
 
-        let mut successes = 0;
+        last_successes = 0;
         let mut tile_size = None;
 
         while let Some(tile_result) = stream.next().await {
@@ -189,15 +191,19 @@ pub async fn dezoomify(args: &Arguments) -> Result<(), ZoomError> {
                             display_err(canvas.lock().unwrap().add_tile(&tile));
                         })
                     }).await?;
-                    successes += 1;
+                    last_successes += 1;
                 }
                 Err(e) => {
                     progress.set_message(&e.to_string());
                 }
             }
         }
-        successful_tiles += successes;
-        zoom_level_iter.set_fetch_result(TileFetchResult { count, successes, tile_size });
+        successful_tiles += last_successes;
+        zoom_level_iter.set_fetch_result(TileFetchResult {
+            count: last_count,
+            successes: last_successes,
+            tile_size,
+        });
     }
 
     progress.finish_with_message("Finished tile download");
@@ -210,7 +216,7 @@ pub async fn dezoomify(args: &Arguments) -> Result<(), ZoomError> {
     canvas.image().save(save_as.as_path())?;
     let saved_as = save_as.to_string_lossy();
     println!("Saved the image to {}", &saved_as);
-    if successful_tiles < total_tiles {
+    if last_successes < last_count {
         let saved_as = saved_as.to_string();
         Err(ZoomError::PartialDownload { successful_tiles, total_tiles, saved_as })
     } else {

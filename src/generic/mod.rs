@@ -1,3 +1,5 @@
+mod dichotomy_2d;
+
 use crate::dezoomer::{
     single_level,
     Dezoomer, DezoomerError, DezoomerInput,
@@ -5,17 +7,15 @@ use crate::dezoomer::{
     ZoomLevels,
 };
 use crate::Vec2d;
-use log::warn;
+use std::collections::HashSet;
 
-enum Stage {
-    FirstLine { current_x: u32 },
-    NextLines { max_x: u32, current_y: u32 },
-}
 
 struct ZoomLevel {
     url_template: String,
-    stage: Stage,
+    dichotomy: dichotomy_2d::Dichotomy2d,
+    last_tile: (u32, u32),
     tile_size: Option<Vec2d>,
+    done: HashSet<(u32, u32)>,
 }
 
 impl ZoomLevel {
@@ -36,52 +36,31 @@ impl ZoomLevel {
 
 impl TileProvider for ZoomLevel {
     fn next_tiles(&mut self, previous: Option<TileFetchResult>) -> Vec<TileReference> {
-        match (previous, &self.stage) {
-            // First request
-            (None, _) => vec![self.tile_ref_at(0, 0)],
-
-            // Advance in the first line
-            (
-                Some(TileFetchResult { tile_size, successes, count, .. }),
-                &Stage::FirstLine { current_x }
-            ) => {
-                if current_x == 0 { self.tile_size = tile_size; }
-                let current_x = current_x + successes as u32;
-                if successes == count { // The first line is not over
-                    self.stage = Stage::FirstLine { current_x };
-                    // We don't want to make too many useless requests,
-                    // and we don't want to request tiles one by one either in order to be fast.
-                    // At each step, we estimate the total number of tiles in the line as
-                    // max(current number of tiles, 4) * 2
-                    (current_x..current_x.max(4) * 2)
-                        .map(|x| self.tile_ref_at(x, 0))
-                        .collect()
-                } else { // We had at least one failed tile, the line is over
-                    if current_x == 0 { // Not a single can be downloaded in the first line
-                        warn!("The generic dezoomer was not able to access the tile at x=0, y=0");
-                        vec![]
-                    } else {
-                        let max_x = current_x - 1;
-                        self.stage = Stage::NextLines { max_x, current_y: 1 };
-                        (0..=max_x).map(|x| self.tile_ref_at(x, 1)).collect()
+        if let Some(p) = previous {
+            self.tile_size = self.tile_size.or(p.tile_size);
+            if let Some((x, y)) = self.dichotomy.next(p.is_success()) {
+                self.last_tile = (x, y);
+                self.done.insert((x, y));
+                vec![self.tile_ref_at(x, y)]
+            } else if !self.done.is_empty() {
+                let mut res = vec![];
+                for y in 0..=self.last_tile.1 {
+                    for x in 0..=self.last_tile.0 {
+                        if !self.done.contains(&(x, y)) {
+                            res.push(self.tile_ref_at(x, y));
+                        }
                     }
                 }
+                self.done.clear();
+                res
+            } else {
+                vec![]
             }
-
-            // Advance to next line
-            (Some(ref res), &Stage::NextLines { current_y, max_x }) if res.is_success() => {
-                let current_y = current_y + 1;
-                self.stage = Stage::NextLines { max_x, current_y };
-                (0..=max_x)
-                    .map(|x| self.tile_ref_at(x, current_y))
-                    .collect()
-            }
-
-            // End of image
-            (Some(_), Stage::NextLines { .. }) => vec![],
+        } else {
+            self.done.insert((self.last_tile.0, self.last_tile.1));
+            vec![self.tile_ref_at(self.last_tile.0, self.last_tile.1)]
         }
     }
-
     fn name(&self) -> String {
         format!("Generic image with template {}", self.url_template)
     }
@@ -105,7 +84,9 @@ impl Dezoomer for GenericDezoomer {
         self.assert(data.uri.contains("{{X}}"))?;
         let dezoomer = ZoomLevel {
             url_template: data.uri.clone(),
-            stage: Stage::FirstLine { current_x: 0 },
+            dichotomy: Default::default(),
+            last_tile: (1, 1),
+            done: HashSet::new(),
             tile_size: None,
         };
         single_level(dezoomer)
@@ -130,6 +111,7 @@ fn test_generic_dezoomer() {
     let mut all_tiles = vec![];
 
     let mut zoom_level_iter = crate::dezoomer::ZoomLevelIter::new(&mut lvl);
+    let mut tries = 0;
     while let Some(tiles) = zoom_level_iter.next_tile_references() {
         let count = tiles.len() as u64;
 
@@ -143,35 +125,37 @@ fn test_generic_dezoomer() {
             tile_size: Some(Vec2d { x: 4, y: 5 }),
         });
         all_tiles.extend(successes);
+        tries += 1;
+        assert!(tries <= 10);
     };
 
-    assert_eq!(
-        all_tiles,
-        vec![
-            TileReference {
-                url: "0,0".into(),
-                position: Vec2d { x: 0, y: 0 }
-            },
-            TileReference {
-                url: "1,0".into(),
-                position: Vec2d { x: 4, y: 0 }
-            },
-            TileReference {
-                url: "2,0".into(),
-                position: Vec2d { x: 8, y: 0 }
-            },
-            TileReference {
-                url: "0,1".into(),
-                position: Vec2d { x: 0, y: 5 }
-            },
-            TileReference {
-                url: "1,1".into(),
-                position: Vec2d { x: 4, y: 5 }
-            },
-            TileReference {
-                url: "2,1".into(),
-                position: Vec2d { x: 8, y: 5 }
-            },
-        ]
-    )
+    let expected = &[
+        TileReference {
+            url: "0,0".into(),
+            position: Vec2d { x: 0, y: 0 },
+        },
+        TileReference {
+            url: "1,0".into(),
+            position: Vec2d { x: 4, y: 0 },
+        },
+        TileReference {
+            url: "2,0".into(),
+            position: Vec2d { x: 8, y: 0 },
+        },
+        TileReference {
+            url: "0,1".into(),
+            position: Vec2d { x: 0, y: 5 },
+        },
+        TileReference {
+            url: "1,1".into(),
+            position: Vec2d { x: 4, y: 5 },
+        },
+        TileReference {
+            url: "2,1".into(),
+            position: Vec2d { x: 8, y: 5 },
+        },
+    ];
+    for tile in expected.iter() {
+        assert!(all_tiles.contains(tile), "missing tile {:?} in {:?}", tile, all_tiles);
+    }
 }
