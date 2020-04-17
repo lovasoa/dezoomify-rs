@@ -34,7 +34,10 @@ impl DezoomerInput {
     }
 }
 
+/// A single image with a given width and height
 pub type ZoomLevel = Box<dyn TileProvider + Sync>;
+
+/// A collection of multiple resolutions at which an image is available
 pub type ZoomLevels = Vec<ZoomLevel>;
 
 pub trait IntoZoomLevels {
@@ -51,8 +54,12 @@ where
     }
 }
 
+/// A trait that should be implemented by every zoomable image dezoomer
 pub trait Dezoomer {
+    /// The name of the image format. Used for dezoomer selection
     fn name(&self) -> &'static str;
+
+    /// List of the various sizes at which an image is available
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError>;
     fn assert(&self, c: bool) -> Result<(), DezoomerError> {
         if c {
@@ -91,19 +98,31 @@ pub enum PostProcessFn {
     None,
 }
 
+/// A single tiled image
 pub trait TileProvider: Debug {
+    /// Provide a list of image tiles. Should be called repetitively until it returns
+    /// an empty list. Each new call takes the results of the previous tile fetch as a parameter.
     fn next_tiles(&mut self, previous: Option<TileFetchResult>) -> Vec<TileReference>;
+
+    /// A function that takes the downloaded tile bytes and decodes them
     fn post_process_fn(&self) -> PostProcessFn {
         PostProcessFn::None
     }
 
+    /// The name of the format
     fn name(&self) -> String {
         format!("{:?}", self)
     }
+
+    /// The title of the image
     fn title(&self) -> Option<String> { None }
+
+    /// The width and height of the image. Can be unknown when dezooming starts
     fn size_hint(&self) -> Option<Vec2d> {
         None
     }
+
+    /// A collection of http headers to use when requesting the tiles
     fn http_headers(&self) -> HashMap<String, String> {
         HashMap::new()
     }

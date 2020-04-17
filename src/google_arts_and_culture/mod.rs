@@ -9,6 +9,8 @@ mod decryption;
 mod tile_info;
 mod url;
 
+/// A dezoomer for google arts and culture.
+/// It takes an url to an artwork page as input.
 #[derive(Default)]
 pub struct GAPDezoomer {
     page_info: Option<Arc<PageInfo>>,

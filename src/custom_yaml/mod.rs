@@ -9,6 +9,25 @@ use crate::TileReference;
 mod tile_set;
 mod variable;
 
+/// A dezoomer that takes a yaml file indicating the tile layout
+#[derive(Default)]
+pub struct CustomDezoomer;
+
+impl Dezoomer for CustomDezoomer {
+    fn name(&self) -> &'static str {
+        "custom"
+    }
+
+    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
+        self.assert(data.uri.ends_with("tiles.yaml"))?;
+        let contents = data.with_contents()?.contents;
+        let dezoomer: CustomYamlTiles =
+            serde_yaml::from_slice(&contents).map_err(DezoomerError::wrap)?;
+        single_level(dezoomer)
+    }
+}
+
+
 #[derive(Deserialize)]
 struct CustomYamlTiles {
     #[serde(flatten)]
@@ -36,23 +55,6 @@ impl TileProvider for CustomYamlTiles {
 
     fn http_headers(&self) -> HashMap<String, String> {
         self.headers.clone()
-    }
-}
-
-#[derive(Default)]
-pub struct CustomDezoomer;
-
-impl Dezoomer for CustomDezoomer {
-    fn name(&self) -> &'static str {
-        "custom"
-    }
-
-    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
-        self.assert(data.uri.ends_with("tiles.yaml"))?;
-        let contents = data.with_contents()?.contents;
-        let dezoomer: CustomYamlTiles =
-            serde_yaml::from_slice(&contents).map_err(DezoomerError::wrap)?;
-        single_level(dezoomer)
     }
 }
 

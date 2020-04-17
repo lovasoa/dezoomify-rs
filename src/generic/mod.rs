@@ -13,6 +13,30 @@ use std::collections::HashSet;
 use lazy_static::lazy_static;
 use regex::Regex;
 
+/// A dezoomer that takes an image tile URL template like
+/// `http://example.com/image_{{X}}_{{Y}}.jpg`
+/// and automatically figures out the dimensions of the image.
+#[derive(Default)]
+pub struct GenericDezoomer;
+
+impl Dezoomer for GenericDezoomer {
+    fn name(&self) -> &'static str {
+        "generic"
+    }
+
+    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
+        self.assert(TEMPLATE_RE.is_match(&data.uri))?;
+        let dezoomer = ZoomLevel {
+            url_template: data.uri.clone(),
+            dichotomy: Default::default(),
+            last_tile: (1, 1),
+            done: HashSet::new(),
+            tile_size: None,
+        };
+        single_level(dezoomer)
+    }
+}
+
 lazy_static! {
     static ref TEMPLATE_RE: Regex = Regex::new(r"(?xi)
     \{\{
@@ -96,26 +120,6 @@ impl std::fmt::Debug for ZoomLevel {
     }
 }
 
-#[derive(Default)]
-pub struct GenericDezoomer;
-
-impl Dezoomer for GenericDezoomer {
-    fn name(&self) -> &'static str {
-        "generic"
-    }
-
-    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
-        self.assert(TEMPLATE_RE.is_match(&data.uri))?;
-        let dezoomer = ZoomLevel {
-            url_template: data.uri.clone(),
-            dichotomy: Default::default(),
-            last_tile: (1, 1),
-            done: HashSet::new(),
-            tile_size: None,
-        };
-        single_level(dezoomer)
-    }
-}
 
 #[test]
 fn test_generic_dezoomer() {

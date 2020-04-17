@@ -1,10 +1,13 @@
 [package]
 name = "dezoomify-rs"
-version = "1.8.8"
-authors = ["Ophir LOJKINE"]
+version = "1.8.9"
+authors = ["lovasoa"]
 edition = "2018"
 license-file = "LICENSE"
-description = "Allows you to download zoomable images"
+description = "Allows downloading zoomable images. Supports several different formats such as zoomify, iiif, and deep zoom images."
+documentation = "https://docs.rs/dezoomify-rs"
+repository = "https://github.com/lovasoa/dezoomify-rs"
+keywords = ["image", "download"]
 
 [dependencies]
 image = "0.23"

@@ -13,6 +13,8 @@ use std::sync::Arc;
 
 mod image_properties;
 
+/// Dezoomer for Zoomify PFF.
+/// Takes an URL to a pff file
 pub enum PFF {
     Init,
     WithHeader(HeaderInfo),
