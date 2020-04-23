@@ -2,7 +2,6 @@ use dezoomify_rs::{Arguments, dezoomify};
 use colour::{green_ln, red_ln};
 use human_panic::setup_panic;
 use structopt::StructOpt;
-use env_logger;
 
 #[tokio::main]
 async fn main() {
