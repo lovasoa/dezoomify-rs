@@ -6,24 +6,26 @@ use std::time::Duration;
 use futures::stream::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
+use log::{debug, info, warn};
 use reqwest::Client;
-use log::{info, warn, debug};
 
 pub use arguments::Arguments;
-use canvas::{Canvas, Tile};
+use canvas::Canvas;
 use dezoomer::{PostProcessFn, TileFetchResult, ZoomLevel, ZoomLevelIter};
 use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 use dezoomer::TileReference;
-use network::{fetch_uri, client};
 pub use errors::ZoomError;
+use network::{client, fetch_uri};
 use output_file::get_outname;
+use tile::Tile;
 pub use vec2d::Vec2d;
 
 use crate::output_file::reserve_output_file;
 
 mod arguments;
-mod canvas;
+mod encoder;
 pub mod dezoomer;
+pub mod tile;
 mod vec2d;
 mod errors;
 mod output_file;

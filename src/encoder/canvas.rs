@@ -1,11 +1,12 @@
 use image::{GenericImage, GenericImageView, ImageBuffer, Pixel};
 
 use crate::dezoomer::*;
-use crate::{Vec2d, errors};
+use crate::Vec2d;
 use crate::ZoomError;
-use crate::network::fetch_uri;
-use errors::BufferToImageError;
 use log::{debug, info, warn};
+use crate::tile::{image_size, Tile};
+use crate::encoder::Encoder;
+use std::path::Path;
 
 type SubPix = u8;
 type Pix = image::Rgba<SubPix>;
@@ -96,64 +97,17 @@ impl Canvas {
     }
 }
 
-pub fn image_size<T: GenericImageView>(image: &T) -> Vec2d {
-    let (x, y) = image.dimensions();
-    Vec2d { x, y }
-}
-
-pub struct Tile {
-    image: image::DynamicImage,
-    position: Vec2d,
-}
-
-impl Tile {
-    pub fn size(&self) -> Vec2d {
-        image_size(&self.image)
+impl Encoder for Canvas{
+    fn new(destination: &Path, size: Vec2d) -> Result<Self, ZoomError> {
+        unimplemented!()
     }
-    pub fn bottom_right(&self) -> Vec2d {
-        self.size() + self.position
-    }
-    pub async fn download(
-        post_process_fn: PostProcessFn,
-        tile_reference: &TileReference,
-        client: &reqwest::Client,
-    ) -> Result<Tile, ZoomError> {
-        let bytes = fetch_uri(&tile_reference.url, client).await?;
-        let tile_reference = tile_reference.clone();
 
-        let tile: Result<Tile, BufferToImageError> = tokio::spawn(async move {
-            tokio::task::block_in_place(move || {
-                let transformed_bytes =
-                    if let PostProcessFn::Fn(post_process) = post_process_fn {
-                        post_process(&tile_reference, bytes)
-                            .map_err(|e|
-                                BufferToImageError::PostProcessing { e }
-                            )?
-                    } else {
-                        bytes
-                    };
-
-                Ok(Tile {
-                    image: image::load_from_memory(&transformed_bytes)?,
-                    position: tile_reference.position,
-                })
-            })
-        }).await?;
-        Ok(tile?)
+    fn add_tile(self: &mut Self, tile: &Tile) -> Result<(), ZoomError> {
+        unimplemented!()
     }
-    pub fn position(&self) -> Vec2d {
-        self.position
-    }
-}
 
-impl std::fmt::Debug for Tile {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        f.debug_struct("Tile")
-            .field("x", &self.position.x)
-            .field("y", &self.position.y)
-            .field("width", &self.image.width())
-            .field("height", &self.image.height())
-            .finish()
+    fn finalize(self: &mut Self) -> Result<(), ZoomError> {
+        unimplemented!()
     }
 }
 
