@@ -1,7 +1,8 @@
-use dezoomify_rs::{Arguments, dezoomify};
 use colour::{green_ln, red_ln};
 use human_panic::setup_panic;
 use structopt::StructOpt;
+
+use dezoomify_rs::{Arguments, dezoomify};
 
 #[tokio::main]
 async fn main() {
@@ -12,11 +13,19 @@ async fn main() {
     init_log(&args);
 
     loop {
-        if let Err(err) = dezoomify(&args).await {
-            red_ln!("ERROR {}", err);
-            has_errors = true;
-        } else {
-            green_ln!("Done!");
+        match dezoomify(&args).await {
+            Err(err) => {
+                red_ln!("ERROR {}", err);
+                has_errors = true;
+            }
+            Ok(saved_as) => {
+                green_ln!("Image successfully saved to '{}' (current working directory: {})",
+                         saved_as.to_string_lossy(),
+                         std::env::current_dir()
+                             .map(|p| p.to_string_lossy().to_string())
+                             .unwrap_or_else(|_e| "unknown".into())
+                );
+            }
         }
         if has_args {
             // Command-line invocation

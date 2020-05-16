@@ -21,6 +21,7 @@ pub use vec2d::Vec2d;
 
 use crate::encoder::{canvas::Canvas, Encoder, TileBuffer};
 use crate::output_file::reserve_output_file;
+use std::path::PathBuf;
 
 mod arguments;
 mod encoder;
@@ -140,15 +141,15 @@ async fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
     choose_level(zoom_levels, args)
 }
 
-pub async fn dezoomify(args: &Arguments) -> Result<(), ZoomError> {
+pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
     let zoom_level = find_zoomlevel(&args).await?;
     let outname = get_outname(&args.outfile, &zoom_level.title());
-    info!("Downloading the image to {}...", outname.to_string_lossy());
-    let save_as = fs::canonicalize(outname.as_path()).unwrap_or(outname);
+    let save_as = fs::canonicalize(outname.as_path()).unwrap_or_else(|_e| outname.clone());
     reserve_output_file(&save_as)?;
-    let tile_buffer: TileBuffer<Canvas> = TileBuffer::new(save_as)?;
+    let tile_buffer: TileBuffer<Canvas> = TileBuffer::new(save_as.clone())?;
     info!("Dezooming {}", zoom_level.name());
-    dezoomify_level(args, zoom_level, tile_buffer).await
+    dezoomify_level(args, zoom_level, tile_buffer).await?;
+    Ok(save_as)
 }
 
 pub async fn dezoomify_level<E: Encoder>(
