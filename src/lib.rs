@@ -10,7 +10,6 @@ use log::{debug, info, warn};
 use reqwest::Client;
 
 pub use arguments::Arguments;
-use canvas::Canvas;
 use dezoomer::{PostProcessFn, TileFetchResult, ZoomLevel, ZoomLevelIter};
 use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 use dezoomer::TileReference;
@@ -20,6 +19,7 @@ use output_file::get_outname;
 use tile::Tile;
 pub use vec2d::Vec2d;
 
+use crate::encoder::{canvas::Canvas, Encoder, TileBuffer};
 use crate::output_file::reserve_output_file;
 
 mod arguments;
@@ -141,17 +141,26 @@ async fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
 }
 
 pub async fn dezoomify(args: &Arguments) -> Result<(), ZoomError> {
-    if let Some(path) = &args.outfile {
-        reserve_output_file(path)?;
-    }
-    let mut zoom_level = find_zoomlevel(&args).await?;
+    let zoom_level = find_zoomlevel(&args).await?;
+    let outname = get_outname(&args.outfile, &zoom_level.title());
+    info!("Downloading the image to {}...", outname.to_string_lossy());
+    let save_as = fs::canonicalize(outname.as_path()).unwrap_or(outname);
+    reserve_output_file(&save_as)?;
+    let tile_buffer: TileBuffer<Canvas> = TileBuffer::new(save_as)?;
     info!("Dezooming {}", zoom_level.name());
+    dezoomify_level(args, zoom_level, tile_buffer).await
+}
 
+pub async fn dezoomify_level<E: Encoder>(
+    args: &Arguments,
+    mut zoom_level: ZoomLevel,
+    tile_buffer: TileBuffer<E>,
+) -> Result<(), ZoomError> {
     let level_headers = zoom_level.http_headers();
     let http_client = client(level_headers.iter().chain(args.headers()), &args)?;
 
     info!("Creating canvas");
-    let canvas = Arc::new(Mutex::new(Canvas::new(zoom_level.size_hint())));
+    let canvas = Arc::new(Mutex::new(tile_buffer));
 
     let progress = progress_bar(0);
     let mut total_tiles = 0u64;
@@ -180,6 +189,10 @@ pub async fn dezoomify(args: &Arguments) -> Result<(), ZoomError> {
         last_successes = 0;
         let mut tile_size = None;
 
+        if let Some(size) = zoom_level_iter.size_hint() {
+            canvas.lock().unwrap().set_size(size)?;
+        }
+
         while let Some(tile_result) = stream.next().await {
             debug!("Received tile result: {:?}", tile_result);
             progress.inc(1);
@@ -190,7 +203,7 @@ pub async fn dezoomify(args: &Arguments) -> Result<(), ZoomError> {
                     let canvas = Arc::clone(&canvas);
                     tokio::spawn(async move {
                         tokio::task::block_in_place(move || {
-                            display_err(canvas.lock().unwrap().add_tile(&tile));
+                            display_err(canvas.lock().unwrap().add_tile(tile));
                         })
                     }).await?;
                     last_successes += 1;
@@ -208,19 +221,14 @@ pub async fn dezoomify(args: &Arguments) -> Result<(), ZoomError> {
         });
     }
 
+    progress.set_message("Downloaded all tiles. Finalizing the image file.");
+    canvas.lock().unwrap().finalize()?;
+
     progress.finish_with_message("Finished tile download");
     if successful_tiles == 0 { return Err(ZoomError::NoTile); }
 
-    let canvas = canvas.lock().unwrap();
-    let outname = get_outname(&args.outfile, &zoom_level.title());
-    println!("Saving the image to {}...", outname.to_string_lossy());
-    let save_as = fs::canonicalize(outname.as_path()).unwrap_or(outname);
-    canvas.image().save(save_as.as_path())?;
-    let saved_as = save_as.to_string_lossy();
-    println!("Saved the image to {}", &saved_as);
     if last_successes < last_count {
-        let saved_as = saved_as.to_string();
-        Err(ZoomError::PartialDownload { successful_tiles, total_tiles, saved_as })
+        Err(ZoomError::PartialDownload { successful_tiles, total_tiles })
     } else {
         Ok(())
     }
@@ -250,4 +258,8 @@ async fn download_tile(
         uri: tile_reference.url.clone(),
         cause: e.into(),
     })
+}
+
+pub fn max_size_in_rect(position: Vec2d, tile_size: Vec2d, canvas_size: Vec2d) -> Vec2d {
+    (position + tile_size).min(canvas_size) - position
 }

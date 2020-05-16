@@ -1,17 +1,18 @@
-mod dichotomy_2d;
+use std::collections::HashSet;
+
+use regex::Regex;
+
+use lazy_static::lazy_static;
 
 use crate::dezoomer::{
-    single_level,
-    Dezoomer, DezoomerError, DezoomerInput,
+    Dezoomer,
+    DezoomerError, DezoomerInput, single_level,
     TileFetchResult, TileProvider, TileReference,
     ZoomLevels,
 };
 use crate::Vec2d;
 
-use std::collections::HashSet;
-
-use lazy_static::lazy_static;
-use regex::Regex;
+mod dichotomy_2d;
 
 /// A dezoomer that takes an image tile URL template like
 /// `http://example.com/image_{{X}}_{{Y}}.jpg`
@@ -32,6 +33,7 @@ impl Dezoomer for GenericDezoomer {
             last_tile: (1, 1),
             done: HashSet::new(),
             tile_size: None,
+            image_size: None,
         };
         single_level(dezoomer)
     }
@@ -51,6 +53,7 @@ struct ZoomLevel {
     dichotomy: dichotomy_2d::Dichotomy2d,
     last_tile: (u32, u32),
     tile_size: Option<Vec2d>,
+    image_size: Option<Vec2d>,
     done: HashSet<(u32, u32)>,
 }
 
@@ -93,8 +96,13 @@ impl TileProvider for ZoomLevel {
                 vec![self.tile_ref_at(x, y)]
             } else if !self.done.is_empty() {
                 let mut res = vec![];
-                for y in 0..=self.last_tile.1 {
-                    for x in 0..=self.last_tile.0 {
+                let last_tile_pos = Vec2d {
+                    x: self.last_tile.0,
+                    y: self.last_tile.1,
+                };
+                self.image_size = self.tile_size.map(|s| s * last_tile_pos + s);
+                for y in 0..=last_tile_pos.y {
+                    for x in 0..=last_tile_pos.x {
                         if !self.done.contains(&(x, y)) {
                             res.push(self.tile_ref_at(x, y));
                         }
@@ -111,6 +119,9 @@ impl TileProvider for ZoomLevel {
     }
     fn name(&self) -> String {
         format!("Generic image with template {}", self.url_template)
+    }
+    fn size_hint(&self) -> Option<Vec2d> {
+        self.image_size
     }
 }
 
@@ -196,6 +207,7 @@ fn test_url_templating() {
         dichotomy: Default::default(),
         last_tile: (0, 0),
         tile_size: None,
+        image_size: None,
         done: Default::default(),
     };
     assert_eq!(lvl.tile_url_at(10, 11), "http://x.com/00010_11");

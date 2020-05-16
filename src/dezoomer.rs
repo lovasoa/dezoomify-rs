@@ -4,9 +4,9 @@ use std::error::Error;
 use std::fmt::Debug;
 use std::str::FromStr;
 
-pub use super::Vec2d;
 pub use crate::errors::DezoomerError;
 
+pub use super::Vec2d;
 use super::ZoomError;
 
 pub struct DezoomerInput {
@@ -150,6 +150,9 @@ impl<'a> ZoomLevelIter<'a> {
         self.waiting_results = false;
         self.previous = Some(result)
     }
+    pub fn size_hint(&self) -> Option<Vec2d> {
+        self.zoom_level.size_hint()
+    }
 }
 
 /// Shortcut to return a single zoom level from a dezoomer
@@ -223,10 +226,6 @@ impl<T: TilesRect> TileProvider for T {
         headers.insert("Referer".into(), self.tile_url(Vec2d::default()));
         headers
     }
-}
-
-pub fn max_size_in_rect(position: Vec2d, tile_size: Vec2d, canvas_size: Vec2d) -> Vec2d {
-    (position + tile_size).min(canvas_size) - position
 }
 
 #[derive(Debug, PartialEq, Clone)]
