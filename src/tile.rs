@@ -10,6 +10,7 @@ pub fn image_size<T: GenericImageView>(image: &T) -> Vec2d {
     Vec2d { x, y }
 }
 
+#[derive(Clone)]
 pub struct Tile {
     pub image: image::DynamicImage,
     pub position: Vec2d,

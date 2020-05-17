@@ -29,6 +29,7 @@ custom_error! {
     InvalidHeaderValue{source: header::InvalidHeaderValue} = "Invalid header value: {source}",
     AsyncError{source: tokio::task::JoinError} = "Unable get the result from a thread: {source}",
     BufferToImage{source: BufferToImageError} = "{}",
+    PngError{source: png::EncodingError} = "PNG encoding error: {}",
 }
 
 custom_error! {

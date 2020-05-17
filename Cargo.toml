@@ -12,6 +12,7 @@ keywords = ["image", "download"]
 
 [dependencies]
 image = "0.23"
+png = "0.16"
 reqwest = { version = "0.10", features = ["gzip"] }
 tokio = { version = "0.2", features = ["rt-threaded", "rt-core", "macros", "rt-util", "time", "fs"] }
 futures = "0.3"

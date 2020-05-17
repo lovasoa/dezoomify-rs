@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::BufRead;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -19,9 +20,8 @@ use output_file::get_outname;
 use tile::Tile;
 pub use vec2d::Vec2d;
 
-use crate::encoder::{canvas::Canvas, Encoder, TileBuffer};
+use crate::encoder::TileBuffer;
 use crate::output_file::reserve_output_file;
-use std::path::PathBuf;
 
 mod arguments;
 mod encoder;
@@ -146,16 +146,16 @@ pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
     let outname = get_outname(&args.outfile, &zoom_level.title());
     let save_as = fs::canonicalize(outname.as_path()).unwrap_or_else(|_e| outname.clone());
     reserve_output_file(&save_as)?;
-    let tile_buffer: TileBuffer<Canvas> = TileBuffer::new(save_as.clone())?;
+    let tile_buffer: TileBuffer = TileBuffer::new(save_as.clone())?;
     info!("Dezooming {}", zoom_level.name());
     dezoomify_level(args, zoom_level, tile_buffer).await?;
     Ok(save_as)
 }
 
-pub async fn dezoomify_level<E: Encoder>(
+pub async fn dezoomify_level(
     args: &Arguments,
     mut zoom_level: ZoomLevel,
-    tile_buffer: TileBuffer<E>,
+    tile_buffer: TileBuffer,
 ) -> Result<(), ZoomError> {
     let level_headers = zoom_level.http_headers();
     let http_client = client(level_headers.iter().chain(args.headers()), &args)?;

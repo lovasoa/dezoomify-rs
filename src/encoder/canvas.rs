@@ -24,14 +24,16 @@ pub struct Canvas {
 }
 
 
-impl Encoder for Canvas {
-    fn new(destination: PathBuf, size: Vec2d) -> Result<Self, ZoomError> {
+impl Canvas {
+    pub fn new(destination: PathBuf, size: Vec2d) -> Result<Self, ZoomError> {
         Ok(Canvas {
             image: empty_buffer(size),
             destination,
         })
     }
+}
 
+impl Encoder for Canvas {
     fn add_tile(self: &mut Self, tile: Tile) -> Result<(), ZoomError> {
         let Vec2d { x: xmax, y: ymax } = max_size_in_rect(tile.position, tile.size(), self.size());
         let sub_tile = tile.image.view(0, 0, xmax, ymax);

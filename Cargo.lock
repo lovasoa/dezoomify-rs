@@ -412,6 +412,7 @@ dependencies = [
  "itertools",
  "lazy_static",
  "log",
+ "png",
  "regex",
  "reqwest",
  "sanitize-filename-reader-friendly",
