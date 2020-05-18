@@ -128,14 +128,14 @@ impl Arguments {
     }
     pub fn best_size<I: Iterator<Item = Vec2d>>(&self, sizes: I) -> Option<Vec2d> {
         if self.largest {
-            sizes.max_by_key(|s| s.x * s.y)
+            sizes.max_by_key(|s| s.area())
         } else if self.max_width.is_some() || self.max_height.is_some() {
             sizes
                 .filter(|s| {
                     self.max_width.map(|w| s.x <= w).unwrap_or(true)
                         && self.max_height.map(|h| s.y <= h).unwrap_or(true)
                 })
-                .max_by_key(|s| s.x * s.y)
+                .max_by_key(|s| s.area())
         } else {
             None
         }
