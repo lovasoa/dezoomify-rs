@@ -18,7 +18,6 @@ impl PngEncoder {
         let mut encoder = png::Encoder::new(file, size.x, size.y);
         encoder.set_color(png::ColorType::RGB);
         encoder.set_depth(png::BitDepth::Eight);
-        encoder.set_compression(png::Compression::Best);
         let writer = encoder.write_header()?.into_stream_writer();
         let pixel_streamer = Some(PixelStreamer::new(writer, size));
         Ok(PngEncoder { pixel_streamer, size })

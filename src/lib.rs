@@ -1,7 +1,6 @@
 use std::fs;
 use std::io::BufRead;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::stream::StreamExt;
@@ -20,7 +19,7 @@ use output_file::get_outname;
 use tile::Tile;
 pub use vec2d::Vec2d;
 
-use crate::encoder::TileBuffer;
+use crate::encoder::tile_buffer::TileBuffer;
 use crate::output_file::reserve_output_file;
 
 mod arguments;
@@ -146,7 +145,7 @@ pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
     let outname = get_outname(&args.outfile, &zoom_level.title());
     let save_as = fs::canonicalize(outname.as_path()).unwrap_or_else(|_e| outname.clone());
     reserve_output_file(&save_as)?;
-    let tile_buffer: TileBuffer = TileBuffer::new(save_as.clone())?;
+    let tile_buffer: TileBuffer = TileBuffer::new(save_as.clone()).await?;
     info!("Dezooming {}", zoom_level.name());
     dezoomify_level(args, zoom_level, tile_buffer).await?;
     Ok(save_as)
@@ -161,7 +160,7 @@ pub async fn dezoomify_level(
     let http_client = client(level_headers.iter().chain(args.headers()), &args)?;
 
     info!("Creating canvas");
-    let canvas = Arc::new(Mutex::new(tile_buffer));
+    let mut canvas = tile_buffer;
 
     let progress = progress_bar(0);
     let mut total_tiles = 0u64;
@@ -191,7 +190,7 @@ pub async fn dezoomify_level(
         let mut tile_size = None;
 
         if let Some(size) = zoom_level_iter.size_hint() {
-            canvas.lock().unwrap().set_size(size)?;
+            canvas.set_size(size).await?;
         }
 
         while let Some(tile_result) = stream.next().await {
@@ -201,12 +200,7 @@ pub async fn dezoomify_level(
                 Ok(tile) => {
                     progress.set_message(&format!("Downloaded tile at {}", tile.position()));
                     tile_size.replace(tile.size());
-                    let canvas = Arc::clone(&canvas);
-                    tokio::spawn(async move {
-                        tokio::task::block_in_place(move || {
-                            display_err(canvas.lock().unwrap().add_tile(tile));
-                        })
-                    }).await?;
+                    display_err(canvas.add_tile(tile).await);
                     last_successes += 1;
                 }
                 Err(e) => {
@@ -223,7 +217,7 @@ pub async fn dezoomify_level(
     }
 
     progress.set_message("Downloaded all tiles. Finalizing the image file.");
-    canvas.lock().unwrap().finalize()?;
+    canvas.finalize().await?;
 
     progress.finish_with_message("Finished tile download");
     if successful_tiles == 0 { return Err(ZoomError::NoTile); }
