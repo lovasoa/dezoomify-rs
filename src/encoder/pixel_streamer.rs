@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
-use std::io::Write;
+use std::io::{self, Write};
 
 use image::{Pixel, Rgb};
 
-use crate::{Vec2d, ZoomError};
+use crate::Vec2d;
 use crate::tile::Tile;
 
 /// A structure to which you write tiles, not necessarily in order,
@@ -26,7 +26,7 @@ impl<W: Write> PixelStreamer<W> {
         }
     }
 
-    pub fn add_tile(&mut self, tile: Tile) -> Result<(), ZoomError> {
+    pub fn add_tile(&mut self, tile: Tile) -> io::Result<()> {
         let rgb_image = tile.image.to_rgb();
         for (y, row) in rgb_image.enumerate_rows() {
             let position = tile.position + Vec2d { x: 0, y };
@@ -40,7 +40,7 @@ impl<W: Write> PixelStreamer<W> {
         self.advance(false)
     }
 
-    fn advance(&mut self, finalize: bool) -> Result<(), ZoomError> {
+    fn advance(&mut self, finalize: bool) -> io::Result<()> {
         while let Some(&start) = self.strips.keys().next() {
             if start <= self.current_index {
                 let values = self.strips.remove(&start).expect("The key should exist");
@@ -64,7 +64,7 @@ impl<W: Write> PixelStreamer<W> {
         Ok(())
     }
 
-    pub fn finalize(&mut self) -> Result<(), ZoomError> {
+    pub fn finalize(&mut self) -> io::Result<()> {
         self.advance(true)?;
         let image_size = (self.size.x as usize) * (self.size.y as usize) *
             usize::from(Rgb::<u8>::CHANNEL_COUNT);

@@ -12,9 +12,9 @@ pub mod tile_buffer;
 
 pub trait Encoder: Send + 'static {
     /// Add a tile to the image
-    fn add_tile(self: &mut Self, tile: Tile) -> Result<(), ZoomError>;
+    fn add_tile(self: &mut Self, tile: Tile) -> std::io::Result<()>;
     /// To be called when no more tile will be added
-    fn finalize(self: &mut Self) -> Result<(), ZoomError>;
+    fn finalize(self: &mut Self) -> std::io::Result<()>;
     /// Size of the image being encoded
     fn size(&self) -> Vec2d;
 }

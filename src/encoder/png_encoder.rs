@@ -1,5 +1,6 @@
 use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
+use std::io;
 
 use crate::{Vec2d, ZoomError};
 use crate::tile::Tile;
@@ -18,6 +19,7 @@ impl PngEncoder {
         let mut encoder = png::Encoder::new(file, size.x, size.y);
         encoder.set_color(png::ColorType::RGB);
         encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::Default);
         let writer = encoder.write_header()?.into_stream_writer();
         let pixel_streamer = Some(PixelStreamer::new(writer, size));
         Ok(PngEncoder { pixel_streamer, size })
@@ -25,14 +27,14 @@ impl PngEncoder {
 }
 
 impl Encoder for PngEncoder {
-    fn add_tile(&mut self, tile: Tile) -> Result<(), ZoomError> {
+    fn add_tile(&mut self, tile: Tile) -> io::Result<()> {
         self.pixel_streamer
             .as_mut()
             .expect("tried to add a tile in a finalized image")
             .add_tile(tile)
     }
 
-    fn finalize(self: &mut Self) -> Result<(), ZoomError> {
+    fn finalize(self: &mut Self) -> io::Result<()> {
         let mut pixel_streamer = self.pixel_streamer
             .take().expect("Tried to finalize an image twice");
         pixel_streamer.finalize()?;

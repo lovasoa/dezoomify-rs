@@ -1,6 +1,7 @@
 /**
 Used to receive tiles asynchronously and provide them to the encoder
 */
+use log::debug;
 use tokio::sync::mpsc;
 use crate::{Vec2d, ZoomError};
 use std::path::PathBuf;
@@ -10,8 +11,11 @@ use crate::encoder::{encoder_for_name, Encoder};
 
 /// Data structure used to store tiles until the final image size is known
 pub enum TileBuffer {
-    Buffer { destination: PathBuf, buffer: Vec<Tile> },
-    Sender(mpsc::Sender<TileBufferMsg>),
+    Buffering { destination: PathBuf, buffer: Vec<Tile> },
+    Writing {
+        tile_sender: mpsc::Sender<TileBufferMsg>,
+        error_receiver: mpsc::Receiver<std::io::Error>,
+    },
 }
 
 impl TileBuffer {
@@ -19,34 +23,36 @@ impl TileBuffer {
     /// Errors out if the encoder cannot create files with the given extension
     /// or at the given size
     pub async fn new(destination: PathBuf) -> Result<Self, ZoomError> {
-        Ok(TileBuffer::Buffer {
+        Ok(TileBuffer::Buffering {
             destination,
             buffer: vec![],
         })
     }
 
     pub async fn set_size(&mut self, size: Vec2d) -> Result<(), ZoomError> {
-        let sender = match self {
-            TileBuffer::Buffer { buffer, destination } => {
+        let next_state = match self {
+            TileBuffer::Buffering { buffer, destination } => {
+                debug!("Creating a tile writer for an image of size {}", size);
                 let mut e = encoder_for_name(destination.clone(), size)?;
+                debug!("Adding buffered tiles: {:?}", buffer);
                 for tile in buffer.drain(..) { e.add_tile(tile)?; }
-                let sender = buffer_tiles(e).await;
-                sender
+                buffer_tiles(e).await
             }
-            TileBuffer::Sender(..) => unreachable!("The size of the image can be set only once")
+            TileBuffer::Writing { .. } => unreachable!("The size of the image can be set only once")
         };
-        std::mem::replace(self, TileBuffer::Sender(sender));
+        std::mem::replace(self, next_state);
         Ok(())
     }
 
     /// Add a tile to the image
     pub async fn add_tile(&mut self, tile: Tile) -> Result<(), ZoomError> {
         match self {
-            TileBuffer::Buffer { buffer, .. } => {
+            TileBuffer::Buffering { buffer, .. } => {
                 buffer.push(tile)
             }
-            TileBuffer::Sender(s) => {
-                s.send(TileBufferMsg::AddTile(tile)).await?;
+            TileBuffer::Writing { tile_sender, error_receiver } => {
+                if let Ok(e) = error_receiver.try_recv() { return Err(e.into()) }
+                tile_sender.send(TileBufferMsg::AddTile(tile)).await?;
             }
         }
         Ok(())
@@ -54,18 +60,20 @@ impl TileBuffer {
 
     /// To be called when no more tile will be added
     pub async fn finalize(&mut self) -> Result<(), ZoomError> {
-        if let TileBuffer::Buffer { buffer, .. } = self {
+        if let TileBuffer::Buffering { buffer, .. } = self {
             let size = buffer.iter().map(|t| t.position + t.size()).fold(
                 Vec2d { x: 0, y: 0 },
                 Vec2d::max,
             );
             self.set_size(size).await?;
         }
-        let sender = match self {
-            TileBuffer::Buffer { .. } => unreachable!("Just set the size"),
-            TileBuffer::Sender(s) => s
+        let (tile_sender, error_receiver) = match self {
+            TileBuffer::Buffering { .. } => unreachable!("Just set the size"),
+            TileBuffer::Writing { tile_sender, error_receiver } => (tile_sender, error_receiver)
         };
-        sender.send(TileBufferMsg::Close).await?;
+        tile_sender.send(TileBufferMsg::Close).await?;
+        debug!("Waiting for the image encoding task to finish");
+        if let Some(err) = error_receiver.recv().await { return Err(err.into()) }
         Ok(())
     }
 }
@@ -76,18 +84,28 @@ pub enum TileBufferMsg {
     Close,
 }
 
-async fn buffer_tiles(mut encoder: Box<dyn Encoder>) -> mpsc::Sender<TileBufferMsg> {
-    let (sender, mut receiver) = mpsc::channel(128);
+async fn buffer_tiles(mut encoder: Box<dyn Encoder>) -> TileBuffer {
+    let (tile_sender, mut tile_receiver) = mpsc::channel(1024);
+    let (mut error_sender, error_receiver) = mpsc::channel(1);
     tokio::spawn(async move {
-        while let Some(msg) = receiver.recv().await {
+        while let Some(msg) = tile_receiver.recv().await {
             match msg {
                 TileBufferMsg::AddTile(tile) => {
-                    encoder.add_tile(tile).expect("Failed to add tile");
+                    debug!("Sending tile to encoder: {:?}", tile);
+                    if let Err(err) = encoder.add_tile(tile) {
+                        error_sender.send(err).await.expect("could not send error");
+                    }
                 }
                 TileBufferMsg::Close => { break; }
             }
         }
-        encoder.finalize().expect("Unable to finalize the image")
+        debug!("Finalizing the encoder");
+        if let Err(err) = encoder.finalize() {
+            error_sender.send(err).await.expect("could not send error");
+        }
     });
-    sender
+    TileBuffer::Writing {
+        tile_sender,
+        error_receiver,
+    }
 }
