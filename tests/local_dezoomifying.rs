@@ -3,35 +3,41 @@ use std::default::Default;
 use image::{self, DynamicImage, GenericImageView};
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Dezoom a file locally
+#[ignore] // Ignore this test by default because it's slow in debug mode
 #[tokio::test(threaded_scheduler)]
-async fn custom_size_local_zoomify_tiles() -> Result<(), ZoomError> {
+pub async fn custom_size_local_zoomify_tiles() {
     test_image(
         "testdata/zoomify/test_custom_size/ImageProperties.xml",
         "testdata/zoomify/test_custom_size/expected_result.jpg",
-    ).await
+    ).await.unwrap()
 }
 
 #[tokio::test(threaded_scheduler)]
-async fn local_generic_tiles() -> Result<(), ZoomError> {
+pub async fn local_generic_tiles() {
     test_image(
         "testdata/generic/map_{{X}}_{{Y}}.jpg",
         "testdata/generic/map_expected.jpg",
-    ).await
+    ).await.unwrap()
 }
 
-async fn test_image(input: &str, expected: &str) -> Result<(), ZoomError> {
+pub async fn dezoom_image<'a>(input: &str, expected: &'a str) -> Result<TmpFile<'a>, ZoomError> {
     let mut args: Arguments = Default::default();
     args.input_uri = Some(input.into());
     args.largest = true;
     args.retries = 0;
+    args.logging = "error".into();
 
-    let tmp_file = TmpFile(input);
+    let tmp_file = TmpFile(expected);
     args.outfile = Some(tmp_file.to_path_buf());
-    eprintln!("dezooming with args: {:?}", &args);
     dezoomify(&args).await.expect("Dezooming failed");
+    Ok(tmp_file)
+}
+
+pub async fn test_image(input: &str, expected: &str) -> Result<(), ZoomError> {
+    let tmp_file = dezoom_image(input, expected).await?;
     let actual = image::open(tmp_file.to_path_buf())?;
     let expected = image::open(expected)?;
     assert_images_equal(actual, expected);
@@ -49,12 +55,14 @@ fn assert_images_equal(a: DynamicImage, b: DynamicImage) {
     }
 }
 
-struct TmpFile<'a>(&'a str);
+pub struct TmpFile<'a>(&'a str);
 
 impl<'a> TmpFile<'a> {
     fn to_path_buf(&'a self) -> PathBuf {
         let mut out_file = std::env::temp_dir();
-        out_file.push(format!("dezoomify-out-{}.jpg", hash(self.0)));
+        out_file.push(format!("dezoomify-out-{}", hash(self.0)));
+        let orig_path: &Path = self.0.as_ref();
+        out_file.set_extension(orig_path.extension().expect("missing extension"));
         out_file
     }
 }

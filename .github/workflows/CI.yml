@@ -52,6 +52,11 @@ jobs:
         with: { command: test }
         env:
           RUST_BACKTRACE: 1
+      - name: bench
+        uses: actions-rs/cargo@v1
+        with: { command: bench }
+        env:
+          RUST_BACKTRACE: 1
       - run: rustup component add clippy
       - name: clippy
         uses: actions-rs/cargo@v1
