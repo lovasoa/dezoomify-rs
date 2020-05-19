@@ -12,11 +12,11 @@ jobs:
         os: [macos-latest, windows-latest, ubuntu-latest]
         include:
           - os: windows-latest
-            binary_path: target/debug/dezoomify-rs.exe
+            binary_path: target/release/dezoomify-rs.exe
           - os: macos-latest
-            binary_path: target/debug/dezoomify-rs
+            binary_path: target/release/dezoomify-rs
           - os: ubuntu-latest
-            binary_path: target/debug/dezoomify-rs
+            binary_path: target/release/dezoomify-rs
     steps:
       - uses: actions/checkout@v2
       - name: Cache cargo registry
@@ -38,7 +38,9 @@ jobs:
         with: {toolchain: stable, override: true}
       - name: build
         uses: actions-rs/cargo@v1
-        with: { command: build, args: --release }
+        with:
+          command: build
+          args: --release
       - uses: actions/upload-artifact@v1
         with:
           name: dezoomify-rs ${{ matrix.os }}
