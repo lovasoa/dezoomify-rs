@@ -63,6 +63,7 @@ async fn list_tiles(
             Ok(levels) => return Ok(levels),
             Err(DezoomerError::NeedsData { uri }) => {
                 let contents = fetch_uri(&uri, http).await?;
+                debug!("Downloaded metadata file {}: '{}'", uri, String::from_utf8_lossy(&contents));
                 i.uri = uri;
                 i.contents = Some(contents);
             }

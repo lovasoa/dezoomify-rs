@@ -64,10 +64,12 @@ fn test_dzi() {
 }
 
 #[test]
-fn test_dzi_with_doctype() {
+#[ignore]
+fn test_dzi_with_leading_space() {
     // See https://github.com/lovasoa/dezoomify-rs/issues/45
+    // Trying to parse a file with a byte order mark
     let dzi: DziFile = serde_xml_rs::from_str(
-        r#"<?xml version="1.0" encoding="utf-8"?>
+        r#" ﻿<?xml version="1.0" encoding="utf-8"?>
         <Image TileSize="256" Overlap="0" Format="jpg" xmlns="http://schemas.microsoft.com/deepzoom/2008">
         <Size Width="6261" Height="6047" />
         </Image>"#,
