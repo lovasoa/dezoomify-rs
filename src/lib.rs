@@ -255,6 +255,7 @@ async fn download_tile(
     })
 }
 
+/// Returns the maximal size a tile can have in order to fit in a canvas of the given size
 pub fn max_size_in_rect(position: Vec2d, tile_size: Vec2d, canvas_size: Vec2d) -> Vec2d {
     (position + tile_size).min(canvas_size) - position
 }

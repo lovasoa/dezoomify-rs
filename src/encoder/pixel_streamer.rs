@@ -2,10 +2,12 @@ use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::io::{self, Write};
 
-use image::{Pixel, Rgb};
+use log::debug;
+use image::{Pixel, Rgb, GenericImageView};
 
 use crate::Vec2d;
 use crate::tile::Tile;
+use crate::encoder::crop_tile;
 
 /// A structure to which you write tiles, not necessarily in order,
 /// and that itself writes RGB pixels to its writer, ordered from top left to bottom right
@@ -27,14 +29,17 @@ impl<W: Write> PixelStreamer<W> {
     }
 
     pub fn add_tile(&mut self, tile: Tile) -> io::Result<()> {
-        let rgb_image = tile.image.to_rgb();
-        for (y, row) in rgb_image.enumerate_rows() {
+        let sub_image = crop_tile(&tile, self.size);
+        for y in 0..sub_image.height() {
             let position = tile.position + Vec2d { x: 0, y };
             let pixel_index = (position.y as usize) * (self.size.x as usize) + (position.x as usize);
-            let key = pixel_index * usize::from(Rgb::<u8>::CHANNEL_COUNT);
-            let value = row
-                .flat_map(|(_x, _y, pixel)| pixel.channels().iter().copied())
-                .collect();
+            let stride = usize::from(Rgb::<u8>::CHANNEL_COUNT);
+            let key = pixel_index * stride;
+            let mut value: Vec<u8> = Vec::with_capacity(stride * sub_image.width() as usize);
+            for x in 0..sub_image.width() {
+                value.extend(sub_image.get_pixel(x, y).to_rgb().channels());
+            }
+            debug!("Creating a new strip at position {} with length {}", key, value.len());
             self.strips.insert(key, value);
         }
         self.advance(false)
@@ -48,6 +53,7 @@ impl<W: Write> PixelStreamer<W> {
                 // The strip may have already been written, in which case we just ignore it
                 if start_strip_idx < values.len() {
                     let to_write = &values[start_strip_idx..];
+                    debug!("Writing a strip at position {} with length {}", self.current_index, to_write.len());
                     self.writer.write_all(to_write)?;
                     self.current_index += to_write.len();
                 }
@@ -71,6 +77,7 @@ impl<W: Write> PixelStreamer<W> {
         if self.current_index < image_size {
             let remaining = image_size - self.current_index;
             let blank = vec![0; remaining];
+            debug!("Filling incomplete image with {} bytes", blank.len());
             self.writer.write_all(&blank)?;
         }
         self.writer.flush()?;
@@ -213,6 +220,22 @@ mod tests {
             /* pixel 0,0 */ 100, 100, 100, /* pixel 1,0 */ 200, 200, 200,
             /* pixel 0,1 */ 200, 200, 200, /* pixel 1,1 */ 99, 99, 99,
             0, 0, 0, 0, 0, 0
+        ]
+        );
+    }
+
+    #[test]
+    fn test_pixel_streamer_tile_too_large() {
+        let mut out = vec![];
+        // Creating a 1x3 image and adding a 2x2 tile at position (0,2)
+        // Since the tile doesn't fit, it must be cropped
+        let mut streamer = PixelStreamer::new(&mut out, Vec2d { x: 1, y: 3 });
+        streamer.add_tile(tiles(2)).unwrap();
+        streamer.finalize().unwrap();
+        assert_eq!(&out, &[ // No tile, the image is completely black
+            0, 0, 0,
+            0, 0, 0,
+            100, 100, 100,
         ]
         );
     }
