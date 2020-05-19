@@ -244,10 +244,14 @@ async fn download_tile(
     let mut wait_time = retry_delay + Duration::from_secs_f64(idx * retry_delay.as_secs_f64() / n as f64);
     for _ in 0..retries {
         res = Tile::download(post_process_fn, tile_reference, client).await;
-        if res.is_ok() { break; }
-        warn!("Failed to load '{}'. Retrying in {:?}", tile_reference.url, wait_time);
-        tokio::time::delay_for(wait_time).await;
-        wait_time *= 2;
+        match &res {
+            Ok(_) => { break; },
+            Err(e) => {
+                warn!("{}. Retrying tile download in {:?}.", e, wait_time);
+                tokio::time::delay_for(wait_time).await;
+                wait_time *= 2;
+            }
+        }
     }
     res.map_err(|e| ZoomError::TileDownloadError {
         uri: tile_reference.url.clone(),
