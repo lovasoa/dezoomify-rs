@@ -1,0 +1,45 @@
+name: Master optimized builds
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+        include:
+          - os: windows-latest
+            binary_path: target/debug/dezoomify-rs.exe
+          - os: macos-latest
+            binary_path: target/debug/dezoomify-rs
+          - os: ubuntu-latest
+            binary_path: target/debug/dezoomify-rs
+    steps:
+      - uses: actions/checkout@v2
+      - name: Cache cargo registry
+        uses: actions/cache@v1
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry
+      - name: Cache cargo index
+        uses: actions/cache@v1
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index
+      - name: Cache cargo build
+        uses: actions/cache@v1
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target
+      - uses: actions-rs/toolchain@v1
+        with: {toolchain: stable, override: true}
+      - name: build
+        uses: actions-rs/cargo@v1
+        with: { command: build, args: --release }
+      - uses: actions/upload-artifact@v1
+        with:
+          name: dezoomify-rs ${{ matrix.os }}
+          path: ${{ matrix.binary_path }}
