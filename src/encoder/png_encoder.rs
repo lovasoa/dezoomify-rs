@@ -20,7 +20,8 @@ impl PngEncoder {
         encoder.set_color(png::ColorType::RGB);
         encoder.set_depth(png::BitDepth::Eight);
         encoder.set_compression(png::Compression::Fast);
-        let writer = encoder.write_header()?.into_stream_writer();
+        let writer = encoder.write_header()?
+            .into_stream_writer_with_size(128 * 1024);
         let pixel_streamer = Some(PixelStreamer::new(writer, size));
         Ok(PngEncoder { pixel_streamer, size })
     }
