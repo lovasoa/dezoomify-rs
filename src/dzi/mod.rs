@@ -36,7 +36,7 @@ impl From<DziError> for DezoomerError {
     }
 }
 
-const BOM: &'static [u8] = &[0xEF, 0xBB, 0xBF]; // UTF8 byte order mark
+const BOM: &[u8] = &[0xEF, 0xBB, 0xBF]; // UTF8 byte order mark
 
 fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, DziError> {
 

@@ -145,7 +145,7 @@ async fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
 
 pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
     let zoom_level = find_zoomlevel(&args).await?;
-    let outname = get_outname(&args.outfile, &zoom_level.title());
+    let outname = get_outname(&args.outfile, &zoom_level.title(), zoom_level.size_hint());
     let save_as = fs::canonicalize(outname.as_path()).unwrap_or_else(|_e| outname.clone());
     reserve_output_file(&save_as)?;
     let tile_buffer: TileBuffer = TileBuffer::new(save_as.clone()).await?;
