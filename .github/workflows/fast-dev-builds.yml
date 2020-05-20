@@ -45,3 +45,64 @@ jobs:
         with:
           name: dezoomify-rs ${{ matrix.os }}
           path: ${{ matrix.binary_path }}
+  create_release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@master
+      - name: get commit message
+        run: echo ::set-env name=commitmsg::$(git tag --format='%(subject)' -l | tail -n 1)
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Build ${{ github.ref }}
+          body: This is a development build of dezoomify-rs.
+          draft: true
+          prerelease: true
+
+      - uses: actions/download-artifact@v1
+        with: { name: dezoomify-rs windows-latest, path: . }
+      - name: Upload Windows binary
+        uses: lovasoa/upload-release-asset@851d9cc
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: dezoomify-rs.exe
+          asset_name: dezoomify-rs.exe
+          asset_label: Dezoomify-rs for Windows
+          asset_content_type: application/vnd.microsoft.portable-executable
+
+      - uses: actions/download-artifact@v1
+        with: { name: dezoomify-rs macos-latest, path: . }
+      - run: chmod +x dezoomify-rs && tar --create --file dezoomify-rs-macos.tgz --gzip dezoomify-rs README-MACOS.txt
+      - name: Upload MacOs binary
+        uses: lovasoa/upload-release-asset@851d9cc
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: dezoomify-rs-macos.tgz
+          asset_name: dezoomify-rs-macos.tgz
+          asset_label: Dezoomify-rs for MacOS
+          asset_content_type: application/octet-stream
+
+      - uses: actions/download-artifact@v1
+        with: { name: dezoomify-rs ubuntu-latest, path: . }
+      - run: chmod +x dezoomify-rs && tar --create --file dezoomify-rs-linux.tgz --gzip dezoomify-rs
+      - name: Upload Linux binary
+        uses: lovasoa/upload-release-asset@851d9cc
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: dezoomify-rs-linux.tgz
+          asset_name: dezoomify-rs-linux.tgz
+          asset_label: Dezoomify-rs for Linux
+          asset_content_type: application/octet-stream
