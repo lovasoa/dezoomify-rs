@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, fmt};
 use std::io::BufRead;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -21,6 +21,8 @@ pub use vec2d::Vec2d;
 
 use crate::encoder::tile_buffer::TileBuffer;
 use crate::output_file::reserve_output_file;
+use std::error::Error;
+use serde::export::Formatter;
 
 mod arguments;
 mod encoder;
@@ -182,8 +184,8 @@ pub async fn dezoomify_level(
         progress.set_message("Requesting the tiles...");
 
         let &Arguments { retries, retry_delay, .. } = args;
-        let mut stream = futures::stream::iter(&tile_refs)
-            .map(|tile_ref: &TileReference|
+        let mut stream = futures::stream::iter(tile_refs)
+            .map(|tile_ref: TileReference|
                 download_tile(post_process_fn, tile_ref, &http_client, retries, retry_delay))
             .buffer_unordered(args.parallelism);
 
@@ -197,17 +199,26 @@ pub async fn dezoomify_level(
         while let Some(tile_result) = stream.next().await {
             debug!("Received tile result: {:?}", tile_result);
             progress.inc(1);
-            match tile_result {
+            let tile = match tile_result {
                 Ok(tile) => {
                     progress.set_message(&format!("Downloaded tile at {}", tile.position()));
                     tile_size.replace(tile.size());
-                    display_err(canvas.add_tile(tile).await);
                     last_successes += 1;
+                    Some(tile)
                 }
-                Err(e) => {
-                    progress.set_message(&e.to_string());
+                Err(err) => {
+                    // If a tile download fails, we replace it with an empty tile
+                    progress.set_message(&err.to_string());
+                    let position = err.tile_reference.position;
+                    tile_size.and_then(|tile_size| {
+                        zoom_level_iter.size_hint().map(|canvas_size| {
+                            let size = max_size_in_rect(position, tile_size, canvas_size);
+                            Tile::empty(position, size)
+                        })
+                    })
                 }
-            }
+            };
+            if let Some(tile) = tile { display_err(canvas.add_tile(tile).await); }
         }
         successful_tiles += last_successes;
         zoom_level_iter.set_fetch_result(TileFetchResult {
@@ -232,19 +243,19 @@ pub async fn dezoomify_level(
 
 async fn download_tile(
     post_process_fn: PostProcessFn,
-    tile_reference: &TileReference,
+    tile_reference: TileReference,
     client: &reqwest::Client,
     retries: usize,
     retry_delay: Duration,
-) -> Result<Tile, ZoomError> {
-    let mut res = Tile::download(post_process_fn, tile_reference, client).await;
+) -> Result<Tile, TileDownloadError> {
+    let mut res = Tile::download(post_process_fn, &tile_reference, client).await;
     // The initial delay after which a failed request is retried depends on the position of the tile
     // in order to avoid sending repeated "bursts" of requests to a server that is struggling
     let n = 100;
     let idx: f64 = ((tile_reference.position.x + tile_reference.position.y) % n).into();
     let mut wait_time = retry_delay + Duration::from_secs_f64(idx * retry_delay.as_secs_f64() / n as f64);
     for _ in 0..retries {
-        res = Tile::download(post_process_fn, tile_reference, client).await;
+        res = Tile::download(post_process_fn, &tile_reference, client).await;
         match &res {
             Ok(_) => { break; },
             Err(e) => {
@@ -254,11 +265,22 @@ async fn download_tile(
             }
         }
     }
-    res.map_err(|e| ZoomError::TileDownloadError {
-        uri: tile_reference.url.clone(),
-        cause: e.into(),
-    })
+    res.map_err(|cause| TileDownloadError { tile_reference, cause })
 }
+
+#[derive(Debug)]
+struct TileDownloadError {
+    tile_reference: TileReference,
+    cause: ZoomError,
+}
+
+impl fmt::Display for TileDownloadError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Unable to download tile '{}'. Cause: {}", self.tile_reference.url, self.cause)
+    }
+}
+
+impl Error for TileDownloadError {}
 
 /// Returns the maximal size a tile can have in order to fit in a canvas of the given size
 pub fn max_size_in_rect(position: Vec2d, tile_size: Vec2d, canvas_size: Vec2d) -> Vec2d {

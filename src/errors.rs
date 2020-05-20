@@ -15,7 +15,6 @@ custom_error! {
         "Only {successful_tiles} tiles out of {total_tiles} could be downloaded. \
         The resulting image was still created.",
     Image{source: image::ImageError} = "invalid image error: {source}",
-    TileDownloadError{uri: String, cause: Box<ZoomError>} = "error with tile {uri}: {cause}",
     PostProcessing{source: Box<dyn Error>} = "unable to process the downloaded tile: {source}",
     Io{source: std::io::Error} = "Input/Output error: {source}",
     Yaml{source: serde_yaml::Error} = "Invalid YAML configuration file: {source}",

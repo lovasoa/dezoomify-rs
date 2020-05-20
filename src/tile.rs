@@ -1,4 +1,4 @@
-use image::GenericImageView;
+use image::{GenericImageView, DynamicImage};
 
 use crate::{Vec2d, ZoomError};
 use crate::dezoomer::{PostProcessFn, TileReference};
@@ -50,6 +50,9 @@ impl Tile {
             })
         }).await?;
         Ok(tile?)
+    }
+    pub fn empty(position: Vec2d, size: Vec2d) -> Tile {
+        Tile { image: DynamicImage::new_rgba8(size.x, size.y), position }
     }
     pub fn position(&self) -> Vec2d {
         self.position
