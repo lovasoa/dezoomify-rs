@@ -52,8 +52,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@master
-      - name: get commit message
-        run: echo ::set-env name=commitmsg::$(git tag --format='%(subject)' -l | tail -n 1)
       - name: Create Release
         id: create_release
         uses: actions/create-release@latest
@@ -63,7 +61,7 @@ jobs:
           tag_name: ${{ github.ref }}
           release_name: Build ${{ github.ref }}
           body: This is a development build of dezoomify-rs.
-          draft: true
+          draft: false
           prerelease: true
 
       - uses: actions/download-artifact@v1
