@@ -62,19 +62,3 @@ fn test_dzi() {
     assert_eq!(dzi.get_tile_size(), Vec2d { x: 256, y: 256 });
     assert_eq!(dzi.max_level(), 13);
 }
-
-#[test]
-#[ignore]
-fn test_dzi_with_leading_space() {
-    // See https://github.com/lovasoa/dezoomify-rs/issues/45
-    // Trying to parse a file with a byte order mark
-    let dzi: DziFile = serde_xml_rs::from_str(
-        r#" ﻿<?xml version="1.0" encoding="utf-8"?>
-        <Image TileSize="256" Overlap="0" Format="jpg" xmlns="http://schemas.microsoft.com/deepzoom/2008">
-        <Size Width="6261" Height="6047" />
-        </Image>"#,
-    ).unwrap();
-    assert_eq!(dzi.get_size().unwrap(), Vec2d { x: 6261, y: 6047 });
-    assert_eq!(dzi.get_tile_size(), Vec2d { x: 256, y: 256 });
-    assert_eq!(dzi.max_level(), 13);
-}
