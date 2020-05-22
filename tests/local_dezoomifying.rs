@@ -36,6 +36,8 @@ pub async fn dezoom_image<'a>(input: &str, expected: &'a str) -> Result<TmpFile<
     Ok(tmp_file)
 }
 
+// Unused in benchmarks
+#[allow(dead_code)]
 pub async fn test_image(input: &str, expected: &str) -> Result<(), ZoomError> {
     let tmp_file = dezoom_image(input, expected).await?;
     let actual = image::open(tmp_file.to_path_buf())?;
