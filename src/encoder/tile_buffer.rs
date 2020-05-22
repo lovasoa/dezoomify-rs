@@ -92,7 +92,8 @@ async fn buffer_tiles(mut encoder: Box<dyn Encoder>) -> TileBuffer {
             match msg {
                 TileBufferMsg::AddTile(tile) => {
                     debug!("Sending tile to encoder: {:?}", tile);
-                    if let Err(err) = encoder.add_tile(tile) {
+                    let result = tokio::task::block_in_place(|| encoder.add_tile(tile));
+                    if let Err(err) = result {
                         error_sender.send(err).await.expect("could not send error");
                     }
                 }
