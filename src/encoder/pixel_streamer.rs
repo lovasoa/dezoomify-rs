@@ -48,8 +48,9 @@ impl<W: Write> PixelStreamer<W> {
                 // The strip may have already been written, in which case we just ignore it
                 if start_strip_idx < strip_size {
                     strip.write_pixels(self.size, start_strip_idx, &mut self.writer)?;
-                    debug!("Wrote a strip at position {} of size {}", self.current_index, strip_size);
-                    self.current_index += strip_size;
+                    debug!("Wrote a strip at position {} of size {}, skipping {} pixels",
+                           self.current_index, strip_size, start_strip_idx);
+                    self.current_index += strip_size - start_strip_idx;
                 }
             } else if finalize {
                 // We are finalizing the image and missing data for a part of it
@@ -130,6 +131,7 @@ mod tests {
     // |   2   |       | 4
     // +---+---+---+---|
     // Tiles 0 and 2 are 2x2 and tile 1 is 2x4
+    // Additionally, we add a Tile 3 that slightly overlaps tiles 0 and 1, with the same pixels
     use image::{DynamicImage, ImageBuffer};
 
     use super::*;
@@ -146,17 +148,23 @@ mod tests {
             Tile {
                 position: Vec2d { x: 2, y: 0 },
                 image: DynamicImage::ImageRgb8(ImageBuffer::from_raw(2, 4, vec![
-                    /* pixel 0,0 */ 00, 00, 00, /* pixel 1,0 */ 10, 10, 10,
-                    /* pixel 0,1 */ 01, 01, 01, /* pixel 1,1 */ 11, 11, 11,
-                    /* pixel 0,2 */ 02, 02, 02, /* pixel 1,2 */ 12, 12, 12,
-                    /* pixel 0,3 */ 03, 03, 03, /* pixel 1,3 */ 13, 13, 13,
+                    /* pixel 2,0 */ 00, 00, 00, /* pixel 3,0 */ 10, 10, 10,
+                    /* pixel 2,1 */ 01, 01, 01, /* pixel 3,1 */ 11, 11, 11,
+                    /* pixel 2,2 */ 02, 02, 02, /* pixel 3,2 */ 12, 12, 12,
+                    /* pixel 2,3 */ 03, 03, 03, /* pixel 3,3 */ 13, 13, 13,
                 ]).unwrap()),
             },
             Tile {
                 position: Vec2d { x: 0, y: 2 },
                 image: DynamicImage::ImageRgb8(ImageBuffer::from_raw(2, 2, vec![
-                    /* pixel 0,0 */ 100, 100, 100, /* pixel 1,0 */ 200, 200, 200,
-                    /* pixel 0,1 */ 200, 200, 200, /* pixel 1,1 */ 99, 99, 99,
+                    /* pixel 0,2 */ 100, 100, 100, /* pixel 1,2 */ 200, 200, 200,
+                    /* pixel 0,3 */ 200, 200, 200, /* pixel 1,3 */ 99, 99, 99,
+                ]).unwrap()),
+            },
+            Tile {
+                position: Vec2d { x: 1, y: 0 },
+                image: DynamicImage::ImageRgb8(ImageBuffer::from_raw(2, 1, vec![
+                    /* pixel 1,0 */ 4, 5, 6, /* pixel 2,0 */ 00, 00, 00,
                 ]).unwrap()),
             }
         ][i].clone()
@@ -217,6 +225,10 @@ mod tests {
         assert_state_after_tiles(&[0, 1, 0, 2], Vec::from(WHOLE_IMAGE));
         assert_state_after_tiles(&[0, 0, 1, 1, 2, 2], Vec::from(WHOLE_IMAGE));
         assert_state_after_tiles(&[2, 1, 2, 0], Vec::from(WHOLE_IMAGE));
+        assert_state_after_tiles(&[0, 1, 3, 2], Vec::from(WHOLE_IMAGE));
+        assert_state_after_tiles(&[0, 3, 1, 2], Vec::from(WHOLE_IMAGE));
+        assert_state_after_tiles(&[3, 0, 1, 2], Vec::from(WHOLE_IMAGE));
+        assert_state_after_tiles(&[0, 3, 0, 1, 2, 3], Vec::from(WHOLE_IMAGE));
     }
 
     fn assert_state_after_tiles(tile_indices: &[usize], expected: Vec<u8>) {
