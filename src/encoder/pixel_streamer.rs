@@ -53,10 +53,7 @@ impl<W: Write> PixelStreamer<W> {
                 }
             } else if finalize {
                 // We are finalizing the image and missing data for a part of it
-                let missing = usize::try_from(start - self.current_index).unwrap();
-                let blank = vec![0; missing * BYTES_PER_PIXEL];
-                self.writer.write_all(&blank)?;
-                self.current_index += missing;
+                self.fill_blank(start)?;
             } else {
                 break;
             }
@@ -67,13 +64,20 @@ impl<W: Write> PixelStreamer<W> {
     pub fn finalize(&mut self) -> io::Result<()> {
         self.advance(true)?;
         let image_size = (self.size.x as usize) * (self.size.y as usize);
-        if self.current_index < image_size {
-            let remaining = image_size - self.current_index;
-            let blank = vec![0; remaining * BYTES_PER_PIXEL];
-            debug!("Filling incomplete image with {} bytes", blank.len());
-            self.writer.write_all(&blank)?;
-        }
+        self.fill_blank(image_size)?;
         self.writer.flush()?;
+        Ok(())
+    }
+
+    /// Write blank pixels until the given pixel index
+    pub fn fill_blank(&mut self, until: usize) -> io::Result<()> {
+        if until > self.current_index {
+            let remaining = until - self.current_index;
+            debug!("Filling incomplete image with {} pixels", remaining);
+            let blank = vec![0; remaining * BYTES_PER_PIXEL];
+            self.writer.write_all(&blank)?;
+            self.current_index = until;
+        }
         Ok(())
     }
 
