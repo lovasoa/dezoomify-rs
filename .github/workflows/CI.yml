@@ -3,6 +3,7 @@ name: Continuous Integration
 on:
   push:
     branches: [ master ]
+    paths: [ 'src/**.rs', 'Cargo.lock', 'Cargo.toml' ]
   pull_request:
     branches: [ master ]
   schedule:
