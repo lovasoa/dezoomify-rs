@@ -3,6 +3,7 @@ name: Master optimized builds
 on:
   push:
     branches: [ master ]
+    paths: [ 'src/**.rs' ]
 
 jobs:
   build:
