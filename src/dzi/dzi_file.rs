@@ -57,7 +57,7 @@ fn test_dzi() {
             <Size Height="3852" Width="5393"/>
         </Image>"#,
     )
-    .unwrap();
+        .unwrap();
     assert_eq!(dzi.get_size().unwrap(), Vec2d { x: 5393, y: 3852 });
     assert_eq!(dzi.get_tile_size(), Vec2d { x: 256, y: 256 });
     assert_eq!(dzi.max_level(), 13);

@@ -36,8 +36,17 @@ impl From<DziError> for DezoomerError {
     }
 }
 
+const BOM: &[u8] = &[0xEF, 0xBB, 0xBF]; // UTF8 byte order mark
+
 fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, DziError> {
-    let image_properties: DziFile = serde_xml_rs::from_reader(contents)?;
+
+    // Workaround for https://github.com/netvl/xml-rs/issues/155
+    // which the original author seems unwilling to fix
+    let image_properties: DziFile = serde_xml_rs::from_reader(
+        if contents.starts_with(BOM) {
+            &contents[BOM.len()..]
+        } else { contents }
+    )?;
 
     if image_properties.tile_size == 0 {
         return Err(DziError::InvalidTileSize);
@@ -138,4 +147,16 @@ fn test_panorama() {
             "http://x.fr/y/test_files/9/1_0.jpg"
         ]
     );
+}
+
+
+#[test]
+fn test_dzi_with_bom() {
+    // See https://github.com/lovasoa/dezoomify-rs/issues/45
+    // Trying to parse a file with a byte order mark
+    let contents = "\u{feff}<?xml version=\"1.0\" encoding=\"utf-8\"?>
+        <Image TileSize=\"256\" Overlap=\"0\" Format=\"jpg\" xmlns=\"http://schemas.microsoft.com/deepzoom/2008\">
+        <Size Width=\"6261\" Height=\"6047\" />
+        </Image>";
+    load_from_properties("http://test.com/test.xml", contents.as_ref()).unwrap();
 }

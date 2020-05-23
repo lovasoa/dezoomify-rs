@@ -5,26 +5,35 @@ use std::path::PathBuf;
 use sanitize_filename_reader_friendly::sanitize;
 use log::info;
 
-use crate::ZoomError;
+use crate::{ZoomError, Vec2d};
+use std::convert::TryFrom;
 
 pub fn reserve_output_file(path: &PathBuf) -> Result<(), ZoomError> {
     OpenOptions::new().write(true).create_new(true).open(path)?;
     Ok(())
 }
 
-pub fn get_outname(outfile: &Option<PathBuf>, zoom_name: &Option<String>) -> PathBuf {
+pub fn get_outname(outfile: &Option<PathBuf>, zoom_name: &Option<String>, size: Option<Vec2d>) -> PathBuf {
+    // An image can be encoded as JPEG only if both its dimensions can be encoded as u16
+    let fits_in_jpg = size
+        .map(|Vec2d { x, y }| u16::try_from(x.max(y)).is_ok())
+        .unwrap_or(false);
+    let extension = if fits_in_jpg { "jpg" } else { "png" };
     if let Some(path) = outfile {
-        if path.extension().is_none() {
-            path.with_extension("jpg")
-        } else {
+        if let Some(forced_extension) = path.extension() {
+            if !fits_in_jpg && (forced_extension == "jpg" || forced_extension == "jpeg") {
+                log::error!("This file is too large to be saved as JPEG")
+            }
             path.into()
+        } else {
+            path.with_extension(extension)
         }
     } else {
-        let mut path = PathBuf::from(if let Some(name) = zoom_name {
-            format!("{}.jpg", sanitize(name))
-        } else {
-            String::from("dezoomified.jpg")
-        });
+        let base = zoom_name.as_ref()
+            .map(|s| sanitize(s))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "dezoomified".into());
+        let mut path = PathBuf::from(base).with_extension(extension);
 
         // append a suffix (_1,_2,..) to `outname` if  the file already exists
         let filename = path.file_stem().map(OsString::from).unwrap_or_default();
@@ -57,9 +66,10 @@ mod tests {
     }
 
     fn assert_filename_ok(filename: &str) -> Result<(), Box<dyn Error>> {
-        let outname = get_outname(&None, &Some(filename.to_string()));
-        assert_eq!(false, outname.exists()); // get_outname cannot overwrite an existing file
-        File::create(&outname)?; // It should be possible to create a file with that name
+        let outname = get_outname(&None, &Some(filename.to_string()), None);
+        assert_eq!(false, outname.exists(), "get_outname cannot overwrite an existing file");
+        File::create(&outname)
+            .expect(&format!("Could not to create a file named {:?} for input {:?}", outname, filename));
         remove_file(&outname)?;
         Ok(())
     }
@@ -86,5 +96,34 @@ mod tests {
         File::create(&cwd)?;
         assert_filename_ok(name)?;
         Ok(())
+    }
+
+    #[test]
+    fn switch_to_png_for_large_files() {
+        move_to_tmp().unwrap();
+        assert_eq!(
+            get_outname(&None, &Some("hello".to_string()), None),
+            PathBuf::from("hello.png")
+        );
+        assert_eq!(
+            get_outname(&None, &Some("hello".to_string()), Some(Vec2d { x: 1000, y: 1000 })),
+            PathBuf::from("hello.jpg")
+        );
+        assert_eq!(
+            get_outname(&None, &Some(String::new()), None),
+            PathBuf::from("dezoomified.png")
+        );
+        assert_eq!(
+            get_outname(&None, &None, None),
+            PathBuf::from("dezoomified.png")
+        );
+        assert_eq!(
+            get_outname(&None, &None, Some(Vec2d { x: 1000, y: 1000 })),
+            PathBuf::from("dezoomified.jpg")
+        );
+        assert_eq!(
+            get_outname(&Some("test.tiff".into()), &Some("hello".to_string()), Some(Vec2d { x: 1000, y: 1000 })),
+            PathBuf::from("test.tiff")
+        );
     }
 }

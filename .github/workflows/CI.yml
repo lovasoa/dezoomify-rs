@@ -3,6 +3,7 @@ name: Continuous Integration
 on:
   push:
     branches: [ master ]
+    paths: [ 'src/**.rs', 'Cargo.lock', 'Cargo.toml' ]
   pull_request:
     branches: [ master ]
   schedule:
@@ -50,6 +51,11 @@ jobs:
       - name: test
         uses: actions-rs/cargo@v1
         with: { command: test }
+        env:
+          RUST_BACKTRACE: 1
+      - name: bench
+        uses: actions-rs/cargo@v1
+        with: { command: bench }
         env:
           RUST_BACKTRACE: 1
       - run: rustup component add clippy

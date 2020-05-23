@@ -2,6 +2,7 @@ use serde::Deserialize;
 
 use log::{info, warn};
 use crate::dezoomer::Vec2d;
+use std::convert::TryInto;
 
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct ImageProperties {
@@ -61,7 +62,7 @@ impl ImageProperties {
             let mut level_size_ratio = Vec2d { x: 2, y: 2 };
             loop {
                 let size_in_tiles = size.ceil_div(tile_size);
-                tiles_before.push(size_in_tiles.x * size_in_tiles.y);
+                tiles_before.push(size_in_tiles.area().try_into().unwrap());
                 level_tiles.push(ZoomLevelInfo { size, tile_size, tiles_before: 0 });
                 if size.x <= tile_size.x && size.y <= tile_size.y { break }
                 size = self.size() / level_size_ratio;

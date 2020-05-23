@@ -1,0 +1,107 @@
+name: Master optimized builds
+
+on:
+  push:
+    branches: [ master ]
+    paths: [ 'src/**.rs' ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+        include:
+          - os: windows-latest
+            binary_path: target/release/dezoomify-rs.exe
+          - os: macos-latest
+            binary_path: target/release/dezoomify-rs
+          - os: ubuntu-latest
+            binary_path: target/release/dezoomify-rs
+    steps:
+      - uses: actions/checkout@v2
+      - name: Cache cargo registry
+        uses: actions/cache@v1
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry
+      - name: Cache cargo index
+        uses: actions/cache@v1
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index
+      - name: Cache cargo build
+        uses: actions/cache@v1
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target
+      - uses: actions-rs/toolchain@v1
+        with: {toolchain: stable, override: true}
+      - name: build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release
+      - uses: actions/upload-artifact@v1
+        with:
+          name: dezoomify-rs ${{ matrix.os }}
+          path: ${{ matrix.binary_path }}
+  create_release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@master
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: build-${{ github.sha }}
+          release_name: Build ${{ github.sha }}
+          body: This is a development build of dezoomify-rs.
+          draft: false
+          prerelease: true
+
+      - uses: actions/download-artifact@v1
+        with: { name: dezoomify-rs windows-latest, path: . }
+      - name: Upload Windows binary
+        uses: lovasoa/upload-release-asset@851d9cc
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: dezoomify-rs.exe
+          asset_name: dezoomify-rs.exe
+          asset_label: Dezoomify-rs for Windows
+          asset_content_type: application/vnd.microsoft.portable-executable
+
+      - uses: actions/download-artifact@v1
+        with: { name: dezoomify-rs macos-latest, path: . }
+      - run: chmod +x dezoomify-rs && tar --create --file dezoomify-rs-macos.tgz --gzip dezoomify-rs README-MACOS.txt
+      - name: Upload MacOs binary
+        uses: lovasoa/upload-release-asset@851d9cc
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: dezoomify-rs-macos.tgz
+          asset_name: dezoomify-rs-macos.tgz
+          asset_label: Dezoomify-rs for MacOS
+          asset_content_type: application/octet-stream
+
+      - uses: actions/download-artifact@v1
+        with: { name: dezoomify-rs ubuntu-latest, path: . }
+      - run: chmod +x dezoomify-rs && tar --create --file dezoomify-rs-linux.tgz --gzip dezoomify-rs
+      - name: Upload Linux binary
+        uses: lovasoa/upload-release-asset@851d9cc
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: dezoomify-rs-linux.tgz
+          asset_name: dezoomify-rs-linux.tgz
+          asset_label: Dezoomify-rs for Linux
+          asset_content_type: application/octet-stream

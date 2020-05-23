@@ -27,6 +27,10 @@ impl Vec2d {
         let y = self.y / other.y + if self.y % other.y == 0 { 0 } else { 1 };
         Vec2d { x, y }
     }
+
+    pub fn area(self) -> u64 {
+        u64::from(self.x) * u64::from(self.y)
+    }
 }
 
 impl std::fmt::Display for Vec2d {

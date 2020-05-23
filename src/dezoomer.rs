@@ -8,6 +8,8 @@ pub use crate::errors::DezoomerError;
 
 pub use super::Vec2d;
 use super::ZoomError;
+use std::fmt;
+use serde::export::Formatter;
 
 pub struct DezoomerInput {
     pub uri: String,
@@ -253,6 +255,12 @@ impl FromStr for TileReference {
         } else {
             Err(make_error())
         }
+    }
+}
+
+impl fmt::Display for TileReference {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.url)
     }
 }
 

@@ -1,7 +1,8 @@
 use std::error::Error;
 
 use reqwest::{self, header};
-
+use tokio::sync::mpsc::error::SendError;
+use crate::encoder::tile_buffer::TileBufferMsg;
 use custom_error::custom_error;
 
 custom_error! {
@@ -14,7 +15,6 @@ custom_error! {
         "Only {successful_tiles} tiles out of {total_tiles} could be downloaded. \
         The resulting image was still created.",
     Image{source: image::ImageError} = "invalid image error: {source}",
-    TileDownloadError{uri: String, cause: Box<ZoomError>} = "error with tile {uri}: {cause}",
     PostProcessing{source: Box<dyn Error>} = "unable to process the downloaded tile: {source}",
     Io{source: std::io::Error} = "Input/Output error: {source}",
     Yaml{source: serde_yaml::Error} = "Invalid YAML configuration file: {source}",
@@ -29,6 +29,7 @@ custom_error! {
     InvalidHeaderValue{source: header::InvalidHeaderValue} = "Invalid header value: {source}",
     AsyncError{source: tokio::task::JoinError} = "Unable get the result from a thread: {source}",
     BufferToImage{source: BufferToImageError} = "{}",
+    WriteError{source: SendError<TileBufferMsg>} = "Unable to write tile {:?}",
     PngError{source: png::EncodingError} = "PNG encoding error: {}",
 }
 
