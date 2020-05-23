@@ -19,8 +19,7 @@ Other times, a website tries to protect its tiles by refusing access to them whe
 **dezoomify-rs** is a desktop application for Windows, MacOs and linux that does not have the same limitations as the online zoomify.
 dezoomify-rs also lets the user choose between
 [several image formats](https://github.com/image-rs/image#21-supported-image-formats),
-whereas the image format is decided by the browser in *dezoomify*,
-and it often gives to other choice than *PNG*.
+whereas in *dezoomify*, you can only save the image as *PNG*.
 
 dezoomify-rs supports several zoomable image formats, each backed by a dedicated *dezoomer*.
 The following dezoomers are currently available:
