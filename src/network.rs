@@ -38,7 +38,7 @@ pub fn client<'a, I: Iterator<Item=(&'a String, &'a String)>>(
         .collect();
     let client = reqwest::Client::builder()
         .default_headers(header_map?)
-        .max_idle_per_host(args.max_idle_per_host)
+        .pool_max_idle_per_host(args.max_idle_per_host)
         .danger_accept_invalid_certs(args.accept_invalid_certs)
         .timeout(args.timeout)
         .build()?;
