@@ -30,6 +30,7 @@ The following dezoomers are currently available:
  that is often used with the seadragon viewer.
  - [**IIIF**](#IIIF) supports the widely used International Image Interoperability Framework format.
  - [**Zoomify PFF**](#zoomify-pff) supports the old zoomify single-file image format.
+ - [**Krpano**](#krpano) supports the [krpano](https://krpano.com/home/) panorama viewer
  - [**generic**](#Generic) For when you know the format of the tile URLs.
  - [**custom**](#Custom-yaml) for advanced users.
     It allows you to specify a custom tile URL format.
@@ -84,6 +85,13 @@ then the URL to enter is
 is an old zoomable image file format format developed by zoomify.
 You can give a pff meta-information URL (one that contains `requestType=1`)
 to dezoomify-rs and it will download it. 
+
+### Krpano
+
+[Krpano](https://krpano.com/home/) is a zoomable image format often used
+for panoramas, virtual tours, photoshperes, and other 3d zoomable images.
+dezoomify-rs supports downloading individual image planes from such images.
+You need to provide the xml meta-information file for the image.
 
 ### Generic
 
