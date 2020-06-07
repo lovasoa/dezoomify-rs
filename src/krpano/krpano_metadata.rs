@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::sync::Arc;
 
 use serde::{de, Deserialize, Deserializer};
 
@@ -62,7 +63,8 @@ pub struct TemplateString<T>(pub Vec<TemplateStringPart<T>>);
 impl<'de> Deserialize<'de> for TemplateString<TemplateVariable> {
     fn deserialize<D>(deserializer: D) -> Result<Self, <D as Deserializer<'de>>::Error> where
         D: Deserializer<'de> {
-        String::deserialize(deserializer)?.parse().map_err(de::Error::custom)
+        use de::Error;
+        String::deserialize(deserializer)?.parse().map_err(Error::custom)
     }
 }
 
@@ -76,7 +78,7 @@ impl FromStr for TemplateString<TemplateVariable> {
         let mut parts = vec![];
         loop {
             let literal: String = chars.take_while_ref(|&c| c != '%').collect();
-            parts.push(TemplateStringPart::Literal(literal));
+            parts.push(TemplateStringPart::Literal(Arc::new(literal)));
             if chars.next().is_none() { break; }
             let padding = chars.take_while_ref(|&c| c == '0').count() as u32;
             let variable = match chars.next() {
@@ -108,20 +110,20 @@ impl TemplateString<TemplateVariable> {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum TemplateStringPart<T> {
-    Literal(String),
+    Literal(Arc<String>),
     Variable { padding: u32, variable: T },
 }
 
 impl TemplateStringPart<TemplateVariable> {
     fn with_side(&self, side: &'static str) -> TemplateStringPart<XY> {
         match self {
-            TemplateStringPart::Literal(s) => TemplateStringPart::Literal(s.clone()),
+            TemplateStringPart::Literal(s) => TemplateStringPart::Literal(Arc::clone(s)),
             TemplateStringPart::Variable { padding, variable } => {
                 let padding = *padding;
                 match variable {
                     TemplateVariable::X => TemplateStringPart::Variable { padding, variable: XY::X },
                     TemplateVariable::Y => TemplateStringPart::Variable { padding, variable: XY::Y },
-                    TemplateVariable::Side => TemplateStringPart::Literal(side[..1].to_string()),
+                    TemplateVariable::Side => TemplateStringPart::Literal(Arc::new(side[..1].to_string())),
                 }
             }
         }
@@ -141,6 +143,12 @@ mod test {
     use crate::krpano::krpano_metadata::TemplateVariable::{X, Y};
 
     use super::*;
+
+    fn str(s: &str) -> TemplateStringPart<TemplateVariable> { Literal(Arc::new(s.to_string())) }
+
+    fn x(padding: u32) -> TemplateStringPart<TemplateVariable> { Variable { padding, variable: X } }
+
+    fn y(padding: u32) -> TemplateStringPart<TemplateVariable> { Variable { padding, variable: Y } }
 
     #[test]
     fn parse_xml_cylinder() {
@@ -167,13 +175,8 @@ mod test {
                             tiledimageheight: 38234,
                             shape: vec![Shape::Cylinder {
                                 url: TemplateString(vec![
-                                    Literal("monomane.tiles/l7/".to_string()),
-                                    Variable { padding: 0, variable: Y },
-                                    Literal("/l7_".to_string()),
-                                    Variable { padding: 0, variable: Y },
-                                    Literal("_".to_string()),
-                                    Variable { padding: 0, variable: X },
-                                    Literal(".jpg".to_string()),
+                                    str("monomane.tiles/l7/"), y(0), str("/l7_"),
+                                    y(0), str("_"), x(0), str(".jpg"),
                                 ])
                             }],
                         },
@@ -203,11 +206,8 @@ mod test {
                     shape: vec![
                         Left {
                             url: TemplateString(vec![
-                                Literal("https://example.com/".to_string()),
-                                Variable { padding: 3, variable: Y },
-                                Literal("/".to_string()),
-                                Variable { padding: 4, variable: X },
-                                Literal(".jpg".to_string())])
+                                str("https://example.com/"), y(3), str("/"),
+                                x(4), str(".jpg")])
                         }],
                 }],
             }]
