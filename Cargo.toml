@@ -38,6 +38,7 @@ colour = "0.5"
 human-panic = "1"
 log = "0.4"
 env_logger = "0.7"
+url = "2"
 
 [dev-dependencies]
 criterion = "0.3"

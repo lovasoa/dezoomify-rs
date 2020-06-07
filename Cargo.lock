@@ -497,6 +497,7 @@ dependencies = [
  "sha-1",
  "structopt",
  "tokio",
+ "url",
 ]
 
 [[package]]

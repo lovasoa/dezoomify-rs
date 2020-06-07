@@ -41,6 +41,7 @@ pub mod google_arts_and_culture;
 pub mod iiif;
 pub mod pff;
 pub mod zoomify;
+pub mod krpano;
 
 fn stdin_line() -> String {
     std::io::stdin()

@@ -1,10 +1,12 @@
-use crate::ZoomError;
-use crate::arguments::Arguments;
-use log::debug;
-use tokio::fs;
 use std::collections::HashMap;
 
+use log::debug;
 use reqwest::{Client, header};
+use tokio::fs;
+use url::Url;
+
+use crate::arguments::Arguments;
+use crate::ZoomError;
 
 /// Fetch data, either from an URL or a path to a local file.
 /// If uri doesnt start with "http(s)://", it is considered to be a path
@@ -47,4 +49,13 @@ pub fn client<'a, I: Iterator<Item=(&'a String, &'a String)>>(
 
 pub fn default_headers() -> HashMap<String, String> {
     serde_yaml::from_str(include_str!("default_headers.yaml")).unwrap()
+}
+
+pub fn resolve_relative(base: &str, path: &str) -> String {
+    if let Ok(url) = Url::parse(base) {
+        if let Ok(r) = url.join(path){
+            return r.to_string()
+        }
+    }
+    base.rsplit('/').next().unwrap_or_default().to_string() + path
 }
