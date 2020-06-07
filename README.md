@@ -35,6 +35,10 @@ The following dezoomers are currently available:
  - [**custom**](#Custom-yaml) for advanced users.
     It allows you to specify a custom tile URL format.
 
+## Screenshots
+
+![dezoomify-rs screenshot](https://user-images.githubusercontent.com/552629/83974627-1cad7000-a8ef-11ea-865b-e1ea0beacac5.gif)
+
 ## Usage instructions
 
 ### Download *dezoomify-rs*
