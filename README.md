@@ -1,4 +1,4 @@
-# dezoomify-rs
+# [dezoomify-rs](https://lovasoa.github.io/dezoomify-rs/)
 
 [![Continuous Integration](https://github.com/lovasoa/dezoomify-rs/workflows/Continuous%20Integration/badge.svg)](https://github.com/lovasoa/dezoomify-rs/actions)
 

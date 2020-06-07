@@ -89,11 +89,12 @@ impl TilesRect for Level {
                 TemplateStringPart::Literal(s) => { result += s }
                 TemplateStringPart::Variable { padding, variable } => {
                     write!(result, "{value:0padding$}",
-                           value = match variable {
-                               XY::X => x + self.base_index,
-                               XY::Y => y + self.base_index,
+                           value = self.base_index + match variable {
+                               XY::X => x,
+                               XY::Y => y
                            },
-                           padding = *padding as usize).unwrap();
+                           padding = *padding as usize
+                    ).unwrap();
                 }
             }
         }
