@@ -31,6 +31,7 @@ The following dezoomers are currently available:
  - [**IIIF**](#IIIF) supports the widely used International Image Interoperability Framework format.
  - [**Zoomify PFF**](#zoomify-pff) supports the old zoomify single-file image format.
  - [**Krpano**](#krpano) supports the [krpano](https://krpano.com/home/) panorama viewer
+ - [**IIPImage**](#iipimage) supports the [iipimage](https://iipimage.sourceforge.io/) image format
  - [**generic**](#Generic) For when you know the format of the tile URLs.
  - [**custom**](#Custom-yaml) for advanced users.
     It allows you to specify a custom tile URL format.
@@ -96,6 +97,13 @@ to dezoomify-rs and it will download it.
 for panoramas, virtual tours, photoshperes, and other 3d zoomable images.
 dezoomify-rs supports downloading individual image planes from such images.
 You need to provide the xml meta-information file for the image.
+
+### IIPImage
+
+[IIPImage](https://iipimage.sourceforge.io/) is an image web server that implements
+the [Internet Imaging Protocol](https://iipimage.sourceforge.io/IIPv105.pdf).
+Such images are easily recognizable by their tile URLs, which contain `FIF=`.
+You can pass an URL containing `FIF=` to dezoomify-rs to let it download the image. 
 
 ### Generic
 
