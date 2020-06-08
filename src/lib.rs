@@ -42,6 +42,7 @@ pub mod iiif;
 pub mod pff;
 pub mod zoomify;
 pub mod krpano;
+pub mod iipimage;
 
 fn stdin_line() -> String {
     std::io::stdin()

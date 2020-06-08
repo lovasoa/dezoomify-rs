@@ -10,19 +10,22 @@ impl Vec2d {
     pub fn square(size: u32) -> Vec2d {
         Vec2d { x: size, y: size }
     }
-    pub fn max(self, other: Vec2d) -> Vec2d {
+    pub fn max<T: Into<Vec2d>>(self, other: T) -> Vec2d {
+        let other = other.into();
         Vec2d {
             x: self.x.max(other.x),
             y: self.y.max(other.y),
         }
     }
-    pub fn min(self, other: Vec2d) -> Vec2d {
+    pub fn min<T: Into<Vec2d>>(self, other: T) -> Vec2d {
+        let other = other.into();
         Vec2d {
             x: self.x.min(other.x),
             y: self.y.min(other.y),
         }
     }
-    pub fn ceil_div(self, other: Vec2d) -> Vec2d {
+    pub fn ceil_div<T: Into<Vec2d>>(self, other: T) -> Vec2d {
+        let other = other.into();
         let x = self.x / other.x + if self.x % other.x == 0 { 0 } else { 1 };
         let y = self.y / other.y + if self.y % other.y == 0 { 0 } else { 1 };
         Vec2d { x, y }
@@ -31,6 +34,10 @@ impl Vec2d {
     pub fn area(self) -> u64 {
         u64::from(self.x) * u64::from(self.y)
     }
+}
+
+impl From<u32> for Vec2d {
+    fn from(size: u32) -> Self { Vec2d::square(size) }
 }
 
 impl std::fmt::Display for Vec2d {
