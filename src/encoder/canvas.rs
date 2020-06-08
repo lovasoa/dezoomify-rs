@@ -5,7 +5,7 @@ use log::debug;
 
 use crate::Vec2d;
 use crate::encoder::{Encoder, crop_tile};
-use crate::tile::{image_size, Tile};
+use crate::tile::Tile;
 use crate::ZoomError;
 
 type SubPix = u8;
@@ -52,8 +52,6 @@ impl Encoder for Canvas {
         Ok(())
     }
 
-    fn size(&self) -> Vec2d {
-        image_size(&self.image)
-    }
+    fn size(&self) -> Vec2d { self.image.dimensions().into() }
 }
 

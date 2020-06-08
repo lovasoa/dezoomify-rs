@@ -40,6 +40,10 @@ impl From<u32> for Vec2d {
     fn from(size: u32) -> Self { Vec2d::square(size) }
 }
 
+impl From<(u32, u32)> for Vec2d {
+    fn from((x, y): (u32, u32)) -> Self { Vec2d { x, y } }
+}
+
 impl std::fmt::Display for Vec2d {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "x={} y={}", self.x, self.y)

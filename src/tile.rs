@@ -5,11 +5,6 @@ use crate::dezoomer::{PostProcessFn, TileReference};
 use crate::errors::BufferToImageError;
 use crate::network::fetch_uri;
 
-pub fn image_size<T: GenericImageView>(image: &T) -> Vec2d {
-    let (x, y) = image.dimensions();
-    Vec2d { x, y }
-}
-
 #[derive(Clone)]
 pub struct Tile {
     pub image: image::DynamicImage,
@@ -17,9 +12,7 @@ pub struct Tile {
 }
 
 impl Tile {
-    pub fn size(&self) -> Vec2d {
-        image_size(&self.image)
-    }
+    pub fn size(&self) -> Vec2d { self.image.dimensions().into() }
     pub fn bottom_right(&self) -> Vec2d {
         self.size() + self.position
     }
