@@ -4,6 +4,7 @@ use custom_error::custom_error;
 use dzi_file::DziFile;
 
 use crate::dezoomer::*;
+use crate::network::remove_bom;
 
 mod dzi_file;
 
@@ -36,17 +37,11 @@ impl From<DziError> for DezoomerError {
     }
 }
 
-const BOM: &[u8] = &[0xEF, 0xBB, 0xBF]; // UTF8 byte order mark
-
 fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, DziError> {
 
     // Workaround for https://github.com/netvl/xml-rs/issues/155
     // which the original author seems unwilling to fix
-    let image_properties: DziFile = serde_xml_rs::from_reader(
-        if contents.starts_with(BOM) {
-            &contents[BOM.len()..]
-        } else { contents }
-    )?;
+    let image_properties: DziFile = serde_xml_rs::from_reader(remove_bom(contents))?;
 
     if image_properties.tile_size == 0 {
         return Err(DziError::InvalidTileSize);

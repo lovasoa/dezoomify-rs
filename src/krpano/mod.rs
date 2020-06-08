@@ -4,7 +4,8 @@ use custom_error::custom_error;
 
 use crate::dezoomer::*;
 use crate::krpano::krpano_metadata::{KrpanoMetadata, Shape, TemplateString, TemplateStringPart, XY};
-use crate::network::resolve_relative;
+use crate::network::{resolve_relative, remove_bom};
+use itertools::Itertools;
 
 mod krpano_metadata;
 
@@ -37,7 +38,7 @@ impl From<KrpanoError> for DezoomerError {
 
 fn load_from_properties(url: &str, contents: &[u8])
                         -> Result<ZoomLevels, KrpanoError> {
-    let image_properties: KrpanoMetadata = serde_xml_rs::from_reader(contents)?;
+    let image_properties: KrpanoMetadata = serde_xml_rs::from_reader(remove_bom(contents))?;
     let slash_pos = url.rfind('/').unwrap_or(url.len() - 1);
     let base_url = &Arc::new(format!("{}/", &url[0..slash_pos]));
 
@@ -111,7 +112,8 @@ impl TilesRect for Level {
 
 impl std::fmt::Debug for Level {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Krpano {} {}", self.shape_name, self.side_name)
+        let parts = ["Krpano", self.shape_name, self.side_name];
+        write!(f, "{}", parts.iter().filter(|s| !s.is_empty()).join(" "))
     }
 }
 
@@ -129,6 +131,7 @@ fn test() {
     ).unwrap();
     assert_eq!(levels.len(), 6);
     assert_eq!(levels[0].size_hint(), Some(Vec2d { x: 1000, y: 100 }));
+    assert_eq!(format!("{:?}", levels[0]), "Krpano Cube forward");
     assert_eq!(levels[0].next_tiles(None), vec![
         TileReference { url: "http://example.com/f/1/1.jpg".to_string(), position: Vec2d { x: 0, y: 0 } },
         TileReference { url: "http://example.com/f/1/2.jpg".to_string(), position: Vec2d { x: 512, y: 0 } }]);
