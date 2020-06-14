@@ -1,9 +1,12 @@
-use dezoomify_rs::{Arguments, dezoomify, ZoomError};
-use std::default::Default;
-use image::{self, DynamicImage, GenericImageView};
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::default::Default;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+
+use image::{self, DynamicImage, GenericImageView};
+use img_hash::HasherConfig;
+
+use dezoomify_rs::{Arguments, dezoomify, ZoomError};
 
 /// Dezoom a file locally
 #[ignore] // Ignore this test by default because it's slow in debug mode
@@ -19,7 +22,7 @@ pub async fn custom_size_local_zoomify_tiles() {
 pub async fn local_generic_tiles() {
     test_image(
         "testdata/generic/map_{{X}}_{{Y}}.jpg",
-        "testdata/generic/map_expected.jpg",
+        "testdata/generic/map_expected.png",
     ).await.unwrap()
 }
 
@@ -48,13 +51,9 @@ pub async fn test_image(input: &str, expected: &str) -> Result<(), ZoomError> {
 
 fn assert_images_equal(a: DynamicImage, b: DynamicImage) {
     assert_eq!(a.dimensions(), b.dimensions(), "image dimensions should match");
-    for ((x, y, a), (_, _, b)) in a.pixels().zip(b.pixels()) {
-        for (&pa, &pb) in a.0.iter().zip(b.0.iter()) {
-            assert!(pa.max(pb) - pa.min(pb) < 20,
-                    "The pixels differ in ({}, {}): {:?} !~= {:?}", x, y, a, b
-            );
-        }
-    }
+    let hasher = HasherConfig::new().to_hasher();
+    let dist = hasher.hash_image(&a).dist(&hasher.hash_image(&b));
+    assert!(dist < 10, "The distance between the two images is {}", dist);
 }
 
 pub struct TmpFile<'a>(&'a str);

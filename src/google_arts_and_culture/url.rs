@@ -1,9 +1,10 @@
 use std::io::Write;
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, Mac, NewMac};
 use sha1::Sha1;
 
 use super::PageInfo;
+use std::ops::Deref;
 
 type HmacSha1 = Hmac<Sha1>;
 
@@ -16,7 +17,7 @@ pub fn compute_url(page: &PageInfo, x: u32, y: u32, z: usize) -> String {
     sign_path.extend_from_slice(page.token.as_bytes());
 
     let digest = mac_digest(&sign_path);
-    url.push_str(&custom_base64(&digest));
+    url.push_str(&custom_base64(digest.deref()));
     url
 }
 
@@ -24,11 +25,11 @@ fn custom_base64(digest: &[u8]) -> String {
     base64::encode_config(digest, base64::URL_SAFE_NO_PAD).replace('-', "_")
 }
 
-fn mac_digest(b: &[u8]) -> Vec<u8> {
+fn mac_digest(b: &[u8]) -> impl Deref<Target=[u8]> {
     let key = &[123, 43, 78, 35, 222, 44, 197, 197];
     let mut mac = HmacSha1::new_varkey(key).expect("HMac keys can have any length");
-    mac.input(b);
-    mac.result().code().to_vec()
+    mac.update(b);
+    mac.finalize().into_bytes()
 }
 
 #[test]

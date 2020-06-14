@@ -1,6 +1,6 @@
 [package]
 name = "dezoomify-rs"
-version = "2.2.0"
+version = "2.2.1"
 authors = ["lovasoa"]
 edition = "2018"
 license-file = "LICENSE"
@@ -30,8 +30,8 @@ serde_json = "1.0"
 serde_urlencoded = "0.6"
 block-modes = "0.4"
 aes = "0.4"
-hmac = "0.7"
-sha-1 = "0.8"
+hmac = "0.8"
+sha-1 = "0.9"
 base64 = "0.12"
 indicatif = "0.14"
 sanitize-filename-reader-friendly = "0.9"
@@ -43,6 +43,7 @@ url = "2"
 
 [dev-dependencies]
 criterion = "0.3"
+img_hash = "3"
 
 [[bench]]
 name = "local_dezoomifying"
