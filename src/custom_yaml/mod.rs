@@ -47,10 +47,14 @@ impl TileProvider for CustomYamlTiles {
         if previous.is_some() {
             return vec![];
         }
-        self.tile_set
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()
-            .expect("Invalid tiles")
+        let tiles_result:Result<Vec<_>, _> = self.tile_set.into_iter().collect();
+        match tiles_result{
+            Ok(tiles) => tiles,
+            Err(err) => {
+                log::error!("Invalid tiles.yaml file: {}\n", err);
+                vec![]
+            }
+        }
     }
 
     fn http_headers(&self) -> HashMap<String, String> {
