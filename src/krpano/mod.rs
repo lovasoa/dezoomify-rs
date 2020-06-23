@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
+use itertools::Itertools;
+use log::warn;
+
 use custom_error::custom_error;
+use krpano_metadata::{KrpanoMetadata, TemplateString, TemplateStringPart, XY};
 
 use crate::dezoomer::*;
-use crate::krpano::krpano_metadata::{KrpanoMetadata, Shape, TemplateString, TemplateStringPart, XY};
-use crate::network::{resolve_relative, remove_bom};
-use itertools::Itertools;
+use crate::krpano::krpano_metadata::LevelDesc;
+use crate::network::{remove_bom, resolve_relative};
 
 mod krpano_metadata;
 
@@ -43,24 +46,28 @@ fn load_from_properties(url: &str, contents: &[u8])
     let base_url = &Arc::new(format!("{}/", &url[0..slash_pos]));
 
     Ok(image_properties.image.into_iter().flat_map(move |image| {
-        let tile_size = Vec2d { x: image.tilesize, y: image.tilesize };
+        let root_tile_size = image.tilesize.map(Vec2d::square);
         let base_index = image.baseindex;
         image.level.into_iter().flat_map(move |level| {
-            let size = Vec2d { x: level.tiledimagewidth, y: level.tiledimageheight };
-            level.shape.into_iter().flat_map(move |shape: Shape| {
-                let (shape_name, template) = shape.name_and_url();
-                template.all_sides().map(move |(side_name, template)| {
-                    let base_url = Arc::clone(base_url);
-                    Level {
-                        base_url,
-                        base_index,
-                        size,
-                        tile_size,
-                        template,
-                        shape_name,
-                        side_name,
-                    }
-                })
+            level.level_descriptions(None).into_iter().flat_map(move |level_desc| {
+                level_desc
+                    .map_err(|err| warn!("bad krpano level: {}", err))
+                    .into_iter()
+                    .flat_map(move |LevelDesc { name: shape_name, size, tilesize, url }| {
+                        url.all_sides().flat_map(move |(side_name, template)| {
+                            let base_url = Arc::clone(base_url);
+                            tilesize.or(root_tile_size).map(|tile_size|
+                                Level {
+                                    base_url,
+                                    base_index,
+                                    size,
+                                    tile_size,
+                                    template,
+                                    shape_name,
+                                    side_name,
+                                })
+                        })
+                    })
             })
         })
     }).into_zoom_levels())

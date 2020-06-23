@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use serde::{de, Deserialize, Deserializer};
 
+use crate::Vec2d;
+
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct KrpanoMetadata {
     pub image: Vec<KrpanoImage>,
@@ -10,54 +12,121 @@ pub struct KrpanoMetadata {
 
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct KrpanoImage {
-    pub tilesize: u32,
+    pub tilesize: Option<u32>,
     #[serde(default = "default_base_index")]
     pub baseindex: u32,
+    #[serde(rename = "$value")]
     pub level: Vec<KrpanoLevel>,
 }
 
 fn default_base_index() -> u32 { 1 }
 
-#[derive(Debug, Deserialize, PartialEq)]
-pub struct KrpanoLevel {
-    pub tiledimagewidth: u32,
-    pub tiledimageheight: u32,
-    #[serde(rename = "$value")]
-    pub shape: Vec<Shape>,
+pub struct LevelDesc {
+    pub name: &'static str,
+    pub size: Vec2d,
+    pub tilesize: Option<Vec2d>,
+    pub url: TemplateString<TemplateVariable>,
 }
 
+#[derive(Deserialize, PartialEq, Debug)]
+pub struct ShapeDesc {
+    url: TemplateString<TemplateVariable>,
+    multires: Option<String>,
+}
+
+#[derive(Deserialize, PartialEq, Debug)]
+pub struct LevelAttributes {
+    tiledimagewidth: u32,
+    tiledimageheight: u32,
+    #[serde(rename = "$value")]
+    shape: Vec<KrpanoLevel>,
+}
 
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
-pub enum Shape {
-    Cube { url: TemplateString<TemplateVariable> },
-    Cylinder { url: TemplateString<TemplateVariable> },
-    Flat { url: TemplateString<TemplateVariable> },
-    Left { url: TemplateString<TemplateVariable> },
-    Right { url: TemplateString<TemplateVariable> },
-    Front { url: TemplateString<TemplateVariable> },
-    Back { url: TemplateString<TemplateVariable> },
-    Up { url: TemplateString<TemplateVariable> },
-    Down { url: TemplateString<TemplateVariable> },
+pub enum KrpanoLevel {
+    Level(LevelAttributes),
+    Cube(ShapeDesc),
+    Cylinder(ShapeDesc),
+    Flat(ShapeDesc),
+    Left(ShapeDesc),
+    Right(ShapeDesc),
+    Front(ShapeDesc),
+    Back(ShapeDesc),
+    Up(ShapeDesc),
+    Down(ShapeDesc),
 }
 
-impl Shape {
-    pub fn name_and_url(self) -> (&'static str, TemplateString<TemplateVariable>) {
+impl KrpanoLevel {
+    pub fn level_descriptions(self, size: Option<Vec2d>) -> Vec<Result<LevelDesc, &'static str>> {
         match self {
-            Self::Cube { url } => ("Cube", url),
-            Self::Cylinder { url } => ("Cylinder", url),
-            Self::Flat { url } => ("Flat", url),
-            Self::Left { url } => ("Left", url),
-            Self::Right { url } => ("Right", url),
-            Self::Front { url } => ("Front", url),
-            Self::Back { url } => ("Back", url),
-            Self::Up { url } => ("Up", url),
-            Self::Down { url } => ("Down", url),
+            Self::Level(LevelAttributes { tiledimagewidth, tiledimageheight, shape }) => {
+                let size = Vec2d { x: tiledimagewidth, y: tiledimageheight };
+                shape.into_iter().flat_map(|level| level.level_descriptions(Some(size))).collect()
+            },
+            Self::Cube(d) => shape_descriptions("Cube", d, size),
+            Self::Cylinder(d) => shape_descriptions("Cylinder", d, size),
+            Self::Flat(d) => shape_descriptions("Flat", d, size),
+            Self::Left(d) => shape_descriptions("Left", d, size),
+            Self::Right(d) => shape_descriptions("Right", d, size),
+            Self::Front(d) => shape_descriptions("Front", d, size),
+            Self::Back(d) => shape_descriptions("Back", d, size),
+            Self::Up(d) => shape_descriptions("Up", d, size),
+            Self::Down(d) => shape_descriptions("Down", d, size),
         }
     }
 }
 
-#[derive(Debug, PartialEq)]
+fn shape_descriptions(
+    name: &'static str,
+    desc: ShapeDesc,
+    size: Option<Vec2d>,
+) -> Vec<Result<LevelDesc, &'static str>> {
+    let ShapeDesc { multires, url } = desc;
+    if let Some(multires) = multires {
+        parse_multires(&multires).into_iter().map(|result|
+            result.map(|(size, tilesize)| LevelDesc {
+                name,
+                size,
+                tilesize: Some(tilesize),
+                url: url.clone(),
+            })
+        ).collect()
+    } else if let Some(size) = size {
+        vec![Ok(LevelDesc {
+            name,
+            size,
+            tilesize: None,
+            url: url.clone(),
+        })]
+    } else {
+        vec![Err("missing multires attribute")]
+    }
+}
+
+/// Parse a multires string into a vector of (image size, tile_size)
+fn parse_multires(s: &str) -> Vec<Result<(Vec2d, Vec2d), &'static str>> {
+    let mut parts = s.split(',');
+    let maybe_tilesize: Option<u32> = parts.next().and_then(|x| x.parse().ok());
+    let tilesize_x = if let Some(t) = maybe_tilesize { t } else {
+        return vec![Err("missing tilesize")]
+    };
+    parts.map(|dim_str| {
+        let mut dims = dim_str.split('x');
+        let x: u32 = dims
+            .next().ok_or("missing width")?
+            .parse().map_err(|_| "invalid width")?;
+        let y: u32 = dims
+            .next().and_then(|x| x.parse().ok())
+            .unwrap_or(x);
+        let tilesize = dims.next()
+            .and_then(|x| x.parse().ok())
+            .unwrap_or(tilesize_x);
+        Ok((Vec2d { x, y }, Vec2d::square(tilesize)))
+    }).collect()
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct TemplateString<T>(pub Vec<TemplateStringPart<T>>);
 
 impl<'de> Deserialize<'de> for TemplateString<TemplateVariable> {
@@ -130,15 +199,15 @@ impl TemplateStringPart<TemplateVariable> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum TemplateVariable { X, Y, Side }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum XY { X, Y }
 
 #[cfg(test)]
 mod test {
-    use crate::krpano::krpano_metadata::Shape::Left;
+    use crate::krpano::krpano_metadata::KrpanoLevel::Left;
     use crate::krpano::krpano_metadata::TemplateStringPart::{Literal, Variable};
     use crate::krpano::krpano_metadata::TemplateVariable::{X, Y};
 
@@ -168,18 +237,19 @@ mod test {
             image: vec![
                 KrpanoImage {
                     baseindex: 1,
-                    tilesize: 512,
+                    tilesize: Some(512),
                     level: vec![
-                        KrpanoLevel {
+                        KrpanoLevel::Level(LevelAttributes {
                             tiledimagewidth: 31646,
                             tiledimageheight: 38234,
-                            shape: vec![Shape::Cylinder {
+                            shape: vec![KrpanoLevel::Cylinder(ShapeDesc {
                                 url: TemplateString(vec![
                                     str("monomane.tiles/l7/"), y(0), str("/l7_"),
                                     y(0), str("_"), x(0), str(".jpg"),
-                                ])
-                            }],
-                        },
+                                ]),
+                                multires: None,
+                            })],
+                        }),
                     ],
                 }
             ]
@@ -199,18 +269,48 @@ mod test {
         assert_eq!(parsed, KrpanoMetadata {
             image: vec![KrpanoImage {
                 baseindex: 0,
-                tilesize: 512,
-                level: vec![KrpanoLevel {
+                tilesize: Some(512),
+                level: vec![KrpanoLevel::Level(LevelAttributes {
                     tiledimagewidth: 3280,
                     tiledimageheight: 3280,
                     shape: vec![
-                        Left {
+                        Left(ShapeDesc {
                             url: TemplateString(vec![
                                 str("https://example.com/"), y(3), str("/"),
-                                x(4), str(".jpg")])
-                        }],
-                }],
+                                x(4), str(".jpg")]),
+                            multires: None,
+                        })],
+                })],
             }]
         })
+    }
+
+    #[test]
+    fn parse_xml_multires() {
+        let parsed: KrpanoMetadata = serde_xml_rs::from_str(r#"
+        <krpano>
+        <image>
+            <flat url="https://example.com/" multires="512,768x554,1664x1202,3200x2310,6400x4618,12800x9234"/>
+        </image>
+        </krpano>"#).unwrap();
+        assert_eq!(parsed, KrpanoMetadata {
+            image: vec![KrpanoImage {
+                baseindex: 1,
+                tilesize: None,
+                level: vec![KrpanoLevel::Flat(ShapeDesc {
+                    url: TemplateString(vec![str("https://example.com/"), ]),
+                    multires: Some("512,768x554,1664x1202,3200x2310,6400x4618,12800x9234".to_string()),
+                })],
+            }]
+        })
+    }
+
+    #[test]
+    fn multires_parse() {
+        assert_eq!(vec![
+            Ok((Vec2d { x: 6, y: 7 }, Vec2d { x: 3, y: 3 })),
+            Ok((Vec2d { x: 8, y: 8 }, Vec2d { x: 3, y: 3 })),
+            Ok((Vec2d { x: 9, y: 1 }, Vec2d { x: 4, y: 4 })),
+        ], parse_multires("3,6x7,8x8,9x1x4"))
     }
 }
