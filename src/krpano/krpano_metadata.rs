@@ -93,12 +93,8 @@ fn shape_descriptions(
             })
         ).collect()
     } else if let Some(size) = size {
-        vec![Ok(LevelDesc {
-            name,
-            size,
-            tilesize: None,
-            url: url.clone(),
-        })]
+        let tilesize = None;
+        vec![Ok(LevelDesc { name, size, tilesize, url })]
     } else {
         vec![Err("missing multires attribute")]
     }
