@@ -53,8 +53,15 @@ fn load_from_properties(url: &str, contents: &[u8])
                 level_desc
                     .map_err(|err| warn!("bad krpano level: {}", err))
                     .into_iter()
-                    .flat_map(move |LevelDesc { name: shape_name, size, tilesize, url }| {
-                        url.all_sides().flat_map(move |(side_name, template)| {
+                    .flat_map(move |LevelDesc {
+                                        name: shape_name,
+                                        size,
+                                        tilesize,
+                                        url,
+                                        level_index,
+                                    }| {
+                        let level = level_index + base_index as usize;
+                        url.all_sides(level).flat_map(move |(side_name, template)| {
                             let base_url = Arc::clone(base_url);
                             tilesize.or(root_tile_size).map(|tile_size|
                                 Level {
@@ -101,7 +108,7 @@ impl TilesRect for Level {
                                XY::X => x,
                                XY::Y => y
                            },
-                           padding = *padding as usize
+                           padding = *padding
                     ).unwrap();
                 }
             }
@@ -125,7 +132,7 @@ impl std::fmt::Debug for Level {
 }
 
 #[test]
-fn test() {
+fn test_cube() {
     let mut levels = load_from_properties(
         "http://test.com",
         r#"<krpano showerrors="false" logkey="false">
@@ -142,4 +149,22 @@ fn test() {
     assert_eq!(levels[0].next_tiles(None), vec![
         TileReference { url: "http://example.com/f/1/1.jpg".to_string(), position: Vec2d { x: 0, y: 0 } },
         TileReference { url: "http://example.com/f/1/2.jpg".to_string(), position: Vec2d { x: 512, y: 0 } }]);
+}
+
+#[test]
+fn test_flat_multires() {
+    let mut levels = load_from_properties(
+        "http://test.com",
+        r#"<krpano>
+        <image>
+            <flat url="level=%l x=%0x y=%0y" multires="1,2x3,3x4x3"/>
+        </image>
+        </krpano>"#.as_bytes(),
+    ).unwrap();
+    assert_eq!(levels.len(), 2);
+    assert_eq!(levels[1].size_hint(), Some(Vec2d { x: 3, y: 4 }));
+    assert_eq!(format!("{:?}", levels[0]), "Krpano Flat");
+    assert_eq!(levels[1].next_tiles(None), vec![
+        TileReference { url: "level=2 x=01 y=01".to_string(), position: Vec2d { x: 0, y: 0 } },
+        TileReference { url: "level=2 x=01 y=02".to_string(), position: Vec2d { x: 0, y: 3 } }]);
 }

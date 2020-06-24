@@ -26,6 +26,7 @@ pub struct LevelDesc {
     pub size: Vec2d,
     pub tilesize: Option<Vec2d>,
     pub url: TemplateString<TemplateVariable>,
+    pub level_index: usize,
 }
 
 #[derive(Deserialize, PartialEq, Debug)]
@@ -84,17 +85,18 @@ fn shape_descriptions(
 ) -> Vec<Result<LevelDesc, &'static str>> {
     let ShapeDesc { multires, url } = desc;
     if let Some(multires) = multires {
-        parse_multires(&multires).into_iter().map(|result|
+        parse_multires(&multires).into_iter().enumerate().map(|(level_index, result)|
             result.map(|(size, tilesize)| LevelDesc {
                 name,
                 size,
                 tilesize: Some(tilesize),
                 url: url.clone(),
+                level_index,
             })
         ).collect()
     } else if let Some(size) = size {
         let tilesize = None;
-        vec![Ok(LevelDesc { name, size, tilesize, url })]
+        vec![Ok(LevelDesc { name, size, tilesize, url, level_index: 0 })]
     } else {
         vec![Err("missing multires attribute")]
     }
@@ -139,35 +141,42 @@ impl FromStr for TemplateString<TemplateVariable> {
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
         use itertools::Itertools;
+        use TemplateStringPart::*;
+        use TemplateVariable::*;
         let mut chars = input.chars();
         let mut parts = vec![];
         loop {
             let literal: String = chars.take_while_ref(|&c| c != '%').collect();
-            parts.push(TemplateStringPart::Literal(Arc::new(literal)));
+            if !literal.is_empty() {
+                parts.push(Literal(Arc::new(literal)));
+            }
             if chars.next().is_none() { break; }
-            let padding = chars.take_while_ref(|&c| c == '0').count() as u32;
-            let variable = match chars.next() {
-                Some('h') | Some('x') | Some('u') | Some('c') => TemplateVariable::X,
-                Some('v') | Some('y') | Some('r') => TemplateVariable::Y,
-                Some('s') => TemplateVariable::Side,
+            let padding = 1 + chars.take_while_ref(|&c| c == '0').count();
+            parts.push(match chars.next() {
+                Some('h') | Some('x') | Some('u') | Some('c') => Variable { padding, variable: X },
+                Some('v') | Some('y') | Some('r') => Variable { padding, variable: Y },
+                Some('s') => Variable { padding, variable: Side },
+                Some('l') => Variable { padding, variable: LevelIndex },
+                Some('%') => Literal(Arc::new("%".to_string())),
                 Some(x) => return Err(format!("Unknown template variable '{}' in '{}'", x, input)),
                 None => return Err(format!("Invalid templating syntax in '{}'", input))
-            };
-            parts.push(TemplateStringPart::Variable { padding, variable })
+            });
         }
         Ok(TemplateString(parts))
     }
 }
 
 impl TemplateString<TemplateVariable> {
-    pub fn all_sides(self) -> impl Iterator<Item=(&'static str, TemplateString<XY>)> + 'static {
+    pub fn all_sides(self, level: usize) -> impl Iterator<Item=(&'static str, TemplateString<XY>)> + 'static {
         let has_side = self.0.iter().any(|x| match x {
             TemplateStringPart::Variable { variable, .. } => *variable == TemplateVariable::Side,
             _ => false
         });
         let sides = if has_side { &["forward", "back", "left", "right", "up", "down"][..] } else { &[""] };
         sides.iter().map(move |&side| (side, TemplateString(
-            self.0.iter().map(|part| part.with_side(side)).collect()
+            self.0.iter().map(|part| {
+                part.with_side(side, level)
+            }).collect()
         )))
     }
 }
@@ -176,19 +185,25 @@ impl TemplateString<TemplateVariable> {
 #[derive(Debug, PartialEq, Clone)]
 pub enum TemplateStringPart<T> {
     Literal(Arc<String>),
-    Variable { padding: u32, variable: T },
+    Variable { padding: usize, variable: T },
 }
 
 impl TemplateStringPart<TemplateVariable> {
-    fn with_side(&self, side: &'static str) -> TemplateStringPart<XY> {
+    fn with_side(&self, side: &'static str, level: usize) -> TemplateStringPart<XY> {
+        use TemplateStringPart::*;
+        use TemplateVariable::*;
         match self {
-            TemplateStringPart::Literal(s) => TemplateStringPart::Literal(Arc::clone(s)),
-            TemplateStringPart::Variable { padding, variable } => {
+            Literal(s) => Literal(Arc::clone(s)),
+            Variable { padding, variable } => {
                 let padding = *padding;
                 match variable {
-                    TemplateVariable::X => TemplateStringPart::Variable { padding, variable: XY::X },
-                    TemplateVariable::Y => TemplateStringPart::Variable { padding, variable: XY::Y },
-                    TemplateVariable::Side => TemplateStringPart::Literal(Arc::new(side[..1].to_string())),
+                    X => Variable { padding, variable: XY::X },
+                    Y => Variable { padding, variable: XY::Y },
+                    Side => Literal(Arc::new(side[..1].to_string())),
+                    LevelIndex => {
+                        let idx_str = format!("{v:0padding$}", v = level, padding = padding as usize);
+                        Literal(Arc::new(idx_str))
+                    },
                 }
             }
         }
@@ -196,7 +211,7 @@ impl TemplateStringPart<TemplateVariable> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum TemplateVariable { X, Y, Side }
+pub enum TemplateVariable { X, Y, Side, LevelIndex }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum XY { X, Y }
@@ -205,15 +220,17 @@ pub enum XY { X, Y }
 mod test {
     use crate::krpano::krpano_metadata::KrpanoLevel::Left;
     use crate::krpano::krpano_metadata::TemplateStringPart::{Literal, Variable};
-    use crate::krpano::krpano_metadata::TemplateVariable::{X, Y};
+    use crate::krpano::krpano_metadata::TemplateVariable::{LevelIndex, X, Y};
 
     use super::*;
 
     fn str(s: &str) -> TemplateStringPart<TemplateVariable> { Literal(Arc::new(s.to_string())) }
 
-    fn x(padding: u32) -> TemplateStringPart<TemplateVariable> { Variable { padding, variable: X } }
+    fn x(padding: usize) -> TemplateStringPart<TemplateVariable> { Variable { padding, variable: X } }
 
-    fn y(padding: u32) -> TemplateStringPart<TemplateVariable> { Variable { padding, variable: Y } }
+    fn y(padding: usize) -> TemplateStringPart<TemplateVariable> { Variable { padding, variable: Y } }
+
+    fn lvl(padding: usize) -> TemplateStringPart<TemplateVariable> { Variable { padding, variable: LevelIndex } }
 
     #[test]
     fn parse_xml_cylinder() {
@@ -240,8 +257,8 @@ mod test {
                             tiledimageheight: 38234,
                             shape: vec![KrpanoLevel::Cylinder(ShapeDesc {
                                 url: TemplateString(vec![
-                                    str("monomane.tiles/l7/"), y(0), str("/l7_"),
-                                    y(0), str("_"), x(0), str(".jpg"),
+                                    str("monomane.tiles/l7/"), y(1), str("/l7_"),
+                                    y(1), str("_"), x(1), str(".jpg"),
                                 ]),
                                 multires: None,
                             })],
@@ -272,8 +289,8 @@ mod test {
                     shape: vec![
                         Left(ShapeDesc {
                             url: TemplateString(vec![
-                                str("https://example.com/"), y(3), str("/"),
-                                x(4), str(".jpg")]),
+                                str("https://example.com/"), y(4), str("/"),
+                                x(5), str(".jpg")]),
                             multires: None,
                         })],
                 })],
@@ -308,5 +325,15 @@ mod test {
             Ok((Vec2d { x: 8, y: 8 }, Vec2d { x: 3, y: 3 })),
             Ok((Vec2d { x: 9, y: 1 }, Vec2d { x: 4, y: 4 })),
         ], parse_multires("3,6x7,8x8,9x1x4"))
+    }
+
+    #[test]
+    fn test_templatestring() {
+        assert_eq!(
+            Ok(TemplateString(vec![
+                x(3), str("%"), y(2), lvl(1)
+            ])),
+            "%00x%%%0y%l".parse()
+        );
     }
 }
