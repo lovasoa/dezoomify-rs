@@ -85,7 +85,7 @@ fn shape_descriptions(
 ) -> Vec<Result<LevelDesc, &'static str>> {
     let ShapeDesc { multires, url } = desc;
     if let Some(multires) = multires {
-        parse_multires(&multires).into_iter().enumerate().map(|(level_index, result)|
+        parse_multires(&multires).enumerate().map(|(level_index, result)|
             result.map(|(size, tilesize)| LevelDesc {
                 name,
                 size,
@@ -103,25 +103,26 @@ fn shape_descriptions(
 }
 
 /// Parse a multires string into a vector of (image size, tile_size)
-fn parse_multires(s: &str) -> Vec<Result<(Vec2d, Vec2d), &'static str>> {
+fn parse_multires(s: &str) -> impl Iterator<Item=Result<(Vec2d, Vec2d), &'static str>> + '_ {
     let mut parts = s.split(',');
-    let maybe_tilesize: Option<u32> = parts.next().and_then(|x| x.parse().ok());
-    let tilesize_x = if let Some(t) = maybe_tilesize { t } else {
-        return vec![Err("missing tilesize")]
-    };
-    parts.map(|dim_str| {
-        let mut dims = dim_str.split('x');
-        let x: u32 = dims
-            .next().ok_or("missing width")?
-            .parse().map_err(|_| "invalid width")?;
-        let y: u32 = dims
-            .next().and_then(|x| x.parse().ok())
-            .unwrap_or(x);
-        let tilesize = dims.next()
-            .and_then(|x| x.parse().ok())
-            .unwrap_or(tilesize_x);
-        Ok((Vec2d { x, y }, Vec2d::square(tilesize)))
-    }).collect()
+    let tilesize_x: Result<u32, _> = parts.next()
+        .and_then(|x| x.parse().ok())
+        .ok_or("missing tile size");
+    parts.map(move |dim_str| {
+        tilesize_x.and_then(|tilesize_x| {
+            let mut dims = dim_str.split('x');
+            let x: u32 = dims
+                .next().ok_or("missing width")?
+                .parse().map_err(|_| "invalid width")?;
+            let y: u32 = dims
+                .next().and_then(|x| x.parse().ok())
+                .unwrap_or(x);
+            let tilesize = dims.next()
+                .and_then(|x| x.parse().ok())
+                .unwrap_or(tilesize_x);
+            Ok((Vec2d { x, y }, Vec2d::square(tilesize)))
+        })
+    })
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -320,11 +321,12 @@ mod test {
 
     #[test]
     fn multires_parse() {
-        assert_eq!(vec![
+        let expected: Vec<Result<_, &'static str>> = vec![
             Ok((Vec2d { x: 6, y: 7 }, Vec2d { x: 3, y: 3 })),
             Ok((Vec2d { x: 8, y: 8 }, Vec2d { x: 3, y: 3 })),
             Ok((Vec2d { x: 9, y: 1 }, Vec2d { x: 4, y: 4 })),
-        ], parse_multires("3,6x7,8x8,9x1x4"))
+        ];
+        assert_eq!(expected, parse_multires("3,6x7,8x8,9x1x4").collect::<Vec<_>>())
     }
 
     #[test]
