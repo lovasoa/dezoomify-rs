@@ -58,7 +58,7 @@ before being able to launch it. See how to do
 
 Dezoomify-rs supports multiple output image formats.
 The format to use is determined by the name of the output file.
-For instance, `dezoomify-rs http://example.com/ my_image.png` will create a PNG images.
+For instance, `dezoomify-rs http://example.com/ my_image.png` will create a PNG image.
 
 Each image format encoder has a distinct set of features and limitations :
  - **PNG** images are compressed losslessly, which means that the output image quality
