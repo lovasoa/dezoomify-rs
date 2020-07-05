@@ -43,7 +43,15 @@ pub async fn dezoom_image<'a>(input: &str, expected: &'a str) -> Result<TmpFile<
 #[allow(dead_code)]
 pub async fn test_image(input: &str, expected: &str) -> Result<(), ZoomError> {
     let tmp_file = dezoom_image(input, expected).await?;
-    let actual = image::open(tmp_file.to_path_buf())?;
+    let tmp_path = tmp_file.to_path_buf();
+    let actual = match image::open(&tmp_path) {
+        Ok(actual) => actual,
+        Err(e) => {
+            std::fs::copy(&tmp_path, "err.png")?;
+            eprintln!("Unable to open the dezoomified image {:?}; copied it to err.png", &tmp_path);
+            return Err(e.into())
+        }
+    };
     let expected = image::open(expected)?;
     assert_images_equal(actual, expected);
     Ok(())
