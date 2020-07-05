@@ -1,12 +1,12 @@
+use std::convert::TryFrom;
 use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 
-use sanitize_filename_reader_friendly::sanitize;
 use log::info;
+use sanitize_filename_reader_friendly::sanitize;
 
-use crate::{ZoomError, Vec2d};
-use std::convert::TryFrom;
+use crate::{Vec2d, ZoomError};
 
 pub fn reserve_output_file(path: &PathBuf) -> Result<(), ZoomError> {
     OpenOptions::new().write(true).create_new(true).open(path)?;
@@ -16,12 +16,11 @@ pub fn reserve_output_file(path: &PathBuf) -> Result<(), ZoomError> {
 pub fn get_outname(outfile: &Option<PathBuf>, zoom_name: &Option<String>, size: Option<Vec2d>) -> PathBuf {
     // An image can be encoded as JPEG only if both its dimensions can be encoded as u16
     let fits_in_jpg = size
-        .map(|Vec2d { x, y }| u16::try_from(x.max(y)).is_ok())
-        .unwrap_or(false);
-    let extension = if fits_in_jpg { "jpg" } else { "png" };
+        .map(|Vec2d { x, y }| u16::try_from(x.max(y)).is_ok());
+    let extension = if fits_in_jpg == Some(true) { "jpg" } else { "png" };
     if let Some(path) = outfile {
         if let Some(forced_extension) = path.extension() {
-            if !fits_in_jpg && (forced_extension == "jpg" || forced_extension == "jpeg") {
+            if fits_in_jpg == Some(false) && (forced_extension == "jpg" || forced_extension == "jpeg") {
                 log::error!("This file is too large to be saved as JPEG")
             }
             path.into()
