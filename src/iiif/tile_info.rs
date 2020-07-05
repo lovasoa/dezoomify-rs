@@ -1,27 +1,32 @@
-use serde::Deserialize;
+use log::info;
+use serde::{Deserialize, Serialize};
 
 use crate::Vec2d;
-use log::info;
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ImageInfo {
-    #[serde(rename = "@id")]
+    #[serde(rename = "@id", skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub width: u32,
     pub height: u32,
 
-    qualities: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qualities: Option<Vec<String>>,
 
-    #[serde(alias = "preferredFormats")]
-    formats: Option<Vec<String>>,
+    #[serde(alias = "preferredFormats", skip_serializing_if = "Option::is_none")]
+    pub formats: Option<Vec<String>>,
 
     // Used in IIIF version 2 :
-    tiles: Option<Vec<TileInfo>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tiles: Option<Vec<TileInfo>>,
 
     // Used in IIIF version 1 :
-    scale_factors: Option<Vec<u32>>,
-    tile_width: Option<u32>,
-    tile_height: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scale_factors: Option<Vec<u32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tile_width: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tile_height: Option<u32>,
 }
 
 // Image qualities, from least favorite to favorite
@@ -81,9 +86,11 @@ impl ImageInfo {
             })
     }
 }
-#[derive(Debug, Deserialize, PartialEq, Clone)]
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct TileInfo {
     pub width: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
     #[serde(rename = "scaleFactors")]
     pub scale_factors: Vec<u32>,

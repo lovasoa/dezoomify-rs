@@ -1,15 +1,16 @@
 use std::path::PathBuf;
 
+use image::{DynamicImage, GenericImageView, SubImage};
 use log::debug;
 
-use crate::{Vec2d, ZoomError, max_size_in_rect};
+use crate::{max_size_in_rect, Vec2d, ZoomError};
 use crate::tile::Tile;
-use image::{SubImage, DynamicImage, GenericImageView};
 
 pub mod canvas;
 pub mod png_encoder;
 pub mod pixel_streamer;
 pub mod tile_buffer;
+pub mod iiif_encoder;
 
 pub trait Encoder: Send + 'static {
     /// Add a tile to the image
@@ -25,6 +26,9 @@ fn encoder_for_name(destination: PathBuf, size: Vec2d) -> Result<Box<dyn Encoder
     if extension == "png" {
         debug!("Using the streaming png encoder");
         Ok(Box::new(png_encoder::PngEncoder::new(destination, size)?))
+    } else if extension == "iiif" {
+        debug!("Using the iiif tiling encoder");
+        Ok(Box::new(iiif_encoder::IiifEncoder::new(destination, size)?))
     } else {
         debug!("Using the generic canvas implementation {}", &destination.to_string_lossy());
         Ok(Box::new(canvas::Canvas::new(destination, size)?))

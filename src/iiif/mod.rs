@@ -6,7 +6,7 @@ use tile_info::ImageInfo;
 use crate::dezoomer::*;
 use crate::max_size_in_rect;
 
-mod tile_info;
+pub mod tile_info;
 
 /// Dezoomer for the International Image Interoperability Framework.
 /// See https://iiif.io/
