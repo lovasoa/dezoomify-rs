@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Image Viewer</title>
+    <style>
+#viewer {
+  min-height: 300px;
+  height: 95vh;
+}
+    </style>
+</head>
+<body>
+
+<div id="viewer"></div>
+
+<script>
+/*DEZOOMIFY_SEADRAGON*/
+
+OpenSeadragon({
+	id:              "viewer",
+	prefixUrl:       "https://openseadragon.github.io/openseadragon/images/",
+	tileSources: {/*DEZOOMIFY_TILE_SOURCE*/}
+});
+</script>
+
+</body>
+</html>

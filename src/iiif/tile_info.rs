@@ -5,6 +5,14 @@ use crate::Vec2d;
 
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ImageInfo {
+    #[serde(rename = "@context", skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub iiif_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<Profile>,
     #[serde(rename = "@id", skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub width: u32,
@@ -95,6 +103,21 @@ pub struct TileInfo {
     #[serde(rename = "scaleFactors")]
     pub scale_factors: Vec<u32>,
 }
+
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(untagged)]
+pub enum Profile {
+    Reference(String),
+    Info {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        formats: Option<Vec<String>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        qualities: Option<Vec<String>>,
+    },
+    Multiple(Option<Vec<Profile>>),
+}
+
 
 impl Default for TileInfo {
     fn default() -> Self {
