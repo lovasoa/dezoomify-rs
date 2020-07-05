@@ -18,7 +18,7 @@ Other times, a website tries to protect its tiles by refusing access to them whe
 [HTTP headers](https://en.wikipedia.org/wiki/List_of_HTTP_header_fields) are not set to the right values.
 **dezoomify-rs** is a desktop application for Windows, MacOs and linux that does not have the same limitations as the online zoomify.
 dezoomify-rs also lets the user choose between
-[several image formats](https://github.com/image-rs/image#21-supported-image-formats),
+[several image formats](#supported-output-image-formats),
 whereas in *dezoomify*, you can only save the image as *PNG*.
 
 dezoomify-rs supports several zoomable image formats, each backed by a dedicated *dezoomer*.
@@ -53,6 +53,31 @@ On some operating systems, you may have to authorize the application execution
 before being able to launch it. See how to do
 [in MacOS](https://support.apple.com/kb/ph25088?locale=en_US).
 
+
+## Supported output image formats
+
+Dezoomify-rs supports multiple output image formats.
+The format to use is determined by the name of the output file.
+For instance, `dezoomify-rs http://example.com/ my_image.png` will create a PNG images.
+
+Each image format encoder has a distinct set of features and limitations :
+ - **PNG** images are compressed losslessly, which means that the output image quality
+   is (very slightly) better than JPEG, at the expense of much larger file sizes. 
+   The PNG encoder in dezoomify-rs can create very large images;
+   it is not limited by the available memory on your computer.
+   This format is chosen by default when the image is very large,
+   or its size is not known in advance. 
+ - **JPEG** is the most common image format.
+    JPEG images cannot be more than 65,535 pixels wide or high.
+    This format is chosen be default for images that fit within this limit.
+    The JPEG encoder in dezoomify-rs requires the whole image to fit in memory on your computer.
+ - All formats [supported by image-rs](https://github.com/image-rs/image#21-supported-image-formats)
+   are also supported.
+ - There is also experimental support for re-tiling images in the [IIIF](https://iiif.io/) format.
+   If the output path ends with `.iiif`, a folder will be created instead of a single file,
+   with its structure following the IIIF specification.
+   A file called `viewer.html` will be created inside this folder,
+   which you can open in your browser to view the image.
 
 ## Dezoomers
 

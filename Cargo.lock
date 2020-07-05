@@ -478,9 +478,9 @@ checksum = "93a0fc65739ae998afc8d68e64bdac2efd1bc4ffa1a0703d171ef2defae3792f"
 
 [[package]]
 name = "deflate"
-version = "0.8.4"
+version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7e5d2a2273fed52a7f947ee55b092c4057025d7a3e04e5ecdbd25d6c3fb1bd7"
+checksum = "5636dc1e1a96d178b7dd728a07c1e1dd97ad92361e54303c3be3d18b0f3a87e8"
 dependencies = [
  "adler32",
  "byteorder",
@@ -488,7 +488,7 @@ dependencies = [
 
 [[package]]
 name = "dezoomify-rs"
-version = "2.2.2"
+version = "2.3.0-beta"
 dependencies = [
  "aes",
  "base64 0.12.3",
@@ -1001,9 +1001,9 @@ checksum = "dc6f3ad7b9d11a0c00842ff8de1b60ee58661048eb8049ed33c73594f359d7e6"
 
 [[package]]
 name = "jpeg-decoder"
-version = "0.1.19"
+version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b47b4c4e017b01abdc5bcc126d2d1002e5a75bbe3ce73f9f4f311a916363704"
+checksum = "cc797adac5f083b8ff0ca6f6294a999393d76e197c36488e2ef732c4715f6fa3"
 dependencies = [
  "byteorder",
  "rayon",
