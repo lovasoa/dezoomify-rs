@@ -61,7 +61,7 @@ fn assert_images_equal(a: DynamicImage, b: DynamicImage) {
     assert_eq!(a.dimensions(), b.dimensions(), "image dimensions should match");
     let hasher = HasherConfig::new().to_hasher();
     let dist = hasher.hash_image(&a).dist(&hasher.hash_image(&b));
-    assert!(dist < 10, "The distance between the two images is {}", dist);
+    assert!(dist < 3, "The distance between the two images is {}", dist);
 }
 
 pub struct TmpFile<'a>(&'a str);

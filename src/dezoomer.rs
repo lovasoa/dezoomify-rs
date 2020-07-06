@@ -230,7 +230,7 @@ impl<T: TilesRect> TileProvider for T {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct TileReference {
     pub url: String,
     pub position: Vec2d,

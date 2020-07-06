@@ -1,8 +1,7 @@
 use std::collections::HashSet;
 
-use regex::Regex;
-
 use lazy_static::lazy_static;
+use regex::Regex;
 
 use crate::dezoomer::{
     Dezoomer,
@@ -30,7 +29,7 @@ impl Dezoomer for GenericDezoomer {
         let dezoomer = ZoomLevel {
             url_template: data.uri.clone(),
             dichotomy: Default::default(),
-            last_tile: (1, 1),
+            last_tile: (0, 0),
             done: HashSet::new(),
             tile_size: None,
             image_size: None,
@@ -134,6 +133,7 @@ impl std::fmt::Debug for ZoomLevel {
 
 #[test]
 fn test_generic_dezoomer() {
+    use std::collections::HashSet;
     let uri = "{{X}},{{Y}}".to_string();
     let mut lvl = GenericDezoomer {}
         .zoom_levels(&DezoomerInput {
@@ -147,7 +147,7 @@ fn test_generic_dezoomer() {
 
     let existing_tiles = vec!["0,0", "1,0", "2,0", "0,1", "1,1", "2,1"];
 
-    let mut all_tiles = vec![];
+    let mut all_tiles = HashSet::new();
 
     let mut zoom_level_iter = crate::dezoomer::ZoomLevelIter::new(&mut lvl);
     let mut tries = 0;
@@ -168,7 +168,7 @@ fn test_generic_dezoomer() {
         assert!(tries <= 10);
     };
 
-    let expected = &[
+    let expected: HashSet<TileReference> = vec![
         TileReference {
             url: "0,0".into(),
             position: Vec2d { x: 0, y: 0 },
@@ -193,10 +193,8 @@ fn test_generic_dezoomer() {
             url: "2,1".into(),
             position: Vec2d { x: 8, y: 5 },
         },
-    ];
-    for tile in expected.iter() {
-        assert!(all_tiles.contains(tile), "missing tile {:?} in {:?}", tile, all_tiles);
-    }
+    ].into_iter().collect();
+    assert_eq!(all_tiles, expected);
 }
 
 #[test]
