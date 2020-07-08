@@ -47,6 +47,8 @@ pub struct LevelAttributes {
 #[serde(rename_all = "lowercase")]
 pub enum KrpanoLevel {
     Level(LevelAttributes),
+    Mobile(Vec<KrpanoLevel>),
+    Tablet(Vec<KrpanoLevel>),
     Cube(ShapeDesc),
     Cylinder(ShapeDesc),
     Flat(ShapeDesc),
@@ -74,6 +76,7 @@ impl KrpanoLevel {
             Self::Back(d) => shape_descriptions("Back", d, size),
             Self::Up(d) => shape_descriptions("Up", d, size),
             Self::Down(d) => shape_descriptions("Down", d, size),
+            Self::Mobile(_) | Self::Tablet(_) => vec![], // Ignore
         }
     }
 }
@@ -219,7 +222,7 @@ pub enum XY { X, Y }
 
 #[cfg(test)]
 mod test {
-    use crate::krpano::krpano_metadata::KrpanoLevel::Left;
+    use crate::krpano::krpano_metadata::KrpanoLevel::{Left, Mobile, Cube};
     use crate::krpano::krpano_metadata::TemplateStringPart::{Literal, Variable};
     use crate::krpano::krpano_metadata::TemplateVariable::{LevelIndex, X, Y};
 
@@ -315,6 +318,29 @@ mod test {
                     url: TemplateString(vec![str("https://example.com/"), ]),
                     multires: Some("512,768x554,1664x1202,3200x2310,6400x4618,12800x9234".to_string()),
                 })],
+            }]
+        })
+    }
+
+    #[test]
+    fn parse_xml_mobile() {
+        // See https://github.com/lovasoa/dezoomify-rs/issues/58
+        let parsed: KrpanoMetadata = serde_xml_rs::from_str(r#"
+        <krpano>
+        <image>
+            <mobile>
+                <cube url="test.jpg" />
+            </mobile>
+        </image>
+        </krpano>"#).unwrap();
+        assert_eq!(parsed, KrpanoMetadata {
+            image: vec![KrpanoImage {
+                baseindex: 1,
+                tilesize: None,
+                level: vec![Mobile(vec![Cube(ShapeDesc {
+                    url: TemplateString(vec![str("test.jpg")]),
+                    multires: None,
+                })])],
             }]
         })
     }
