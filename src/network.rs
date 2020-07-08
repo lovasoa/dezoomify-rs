@@ -7,6 +7,7 @@ use url::Url;
 
 use crate::arguments::Arguments;
 use crate::ZoomError;
+use std::iter::once;
 
 /// Fetch data, either from an URL or a path to a local file.
 /// If uri doesnt start with "http(s)://", it is considered to be a path
@@ -32,9 +33,12 @@ pub async fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
 pub fn client<'a, I: Iterator<Item=(&'a String, &'a String)>>(
     headers: I,
     args: &Arguments,
+    uri: Option<&str>,
 ) -> Result<reqwest::Client, ZoomError> {
+    let referer = uri.or(args.input_uri.as_deref()).unwrap_or("").to_string();
     let header_map = default_headers()
         .iter()
+        .chain(once((&"Referer".to_string(), &referer)))
         .chain(headers.map(|(k, v)| (k, v)))
         .map(|(name, value)| Ok((name.parse()?, value.parse()?)))
         .collect::<Result<header::HeaderMap, ZoomError>>()?;

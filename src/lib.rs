@@ -138,7 +138,7 @@ fn progress_bar(n: usize) -> ProgressBar {
 async fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
     let mut dezoomer = args.find_dezoomer()?;
     let uri = args.choose_input_uri();
-    let http_client = client(args.headers(), args)?;
+    let http_client = client(args.headers(), args, Some(&uri))?;
     info!("Trying to locate a zoomable image...");
     let zoom_levels: Vec<ZoomLevel> = list_tiles(dezoomer.as_mut(), &http_client, &uri).await?;
     info!("Found {} zoom levels", zoom_levels.len());
@@ -162,7 +162,7 @@ pub async fn dezoomify_level(
     tile_buffer: TileBuffer,
 ) -> Result<(), ZoomError> {
     let level_headers = zoom_level.http_headers();
-    let http_client = client(level_headers.iter().chain(args.headers()), &args)?;
+    let http_client = client(level_headers.iter().chain(args.headers()), &args, None)?;
 
     info!("Creating canvas");
     let mut canvas = tile_buffer;
