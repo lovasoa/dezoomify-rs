@@ -33,13 +33,14 @@ pub fn client<'a, I: Iterator<Item=(&'a String, &'a String)>>(
     headers: I,
     args: &Arguments,
 ) -> Result<reqwest::Client, ZoomError> {
-    let header_map: Result<header::HeaderMap, ZoomError> = default_headers()
+    let header_map = default_headers()
         .iter()
         .chain(headers.map(|(k, v)| (k, v)))
         .map(|(name, value)| Ok((name.parse()?, value.parse()?)))
-        .collect();
+        .collect::<Result<header::HeaderMap, ZoomError>>()?;
+    debug!("Creating an http client with the following headers: {:?}", header_map);
     let client = reqwest::Client::builder()
-        .default_headers(header_map?)
+        .default_headers(header_map)
         .pool_max_idle_per_host(args.max_idle_per_host)
         .danger_accept_invalid_certs(args.accept_invalid_certs)
         .timeout(args.timeout)
