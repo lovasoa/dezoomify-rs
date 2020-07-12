@@ -69,7 +69,7 @@ impl ImageInfo {
         self.qualities.iter().flat_map(|v| v.iter())
             .chain(pinfo.qualities.iter().flat_map(|x| x.iter()))
             .max_by_key(|&s| QUALITY_ORDER.iter().position(|&x| x == s))
-            .map(|s| s.clone())
+            .cloned()
             .unwrap_or_else(|| {
                 info!("No image quality specified. Using 'default'.");
                 "default".into()
@@ -81,7 +81,7 @@ impl ImageInfo {
         self.formats.iter().flat_map(|v| v.iter())
             .chain(pinfo.formats.iter().flat_map(|x| x.iter()))
             .max_by_key(|&s| FORMAT_ORDER.iter().position(|&x| x == s))
-            .map(|s| s.clone())
+            .cloned()
             .unwrap_or_else(|| {
                 info!("No image format specified. Using 'jpg'.");
                 "jpg".into()
