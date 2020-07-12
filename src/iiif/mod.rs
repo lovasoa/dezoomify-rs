@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
 use custom_error::custom_error;
+use serde::export::Formatter;
+
 use tile_info::ImageInfo;
 
 use crate::dezoomer::*;
+use crate::iiif::tile_info::TileSizeFormat;
 use crate::max_size_in_rect;
 
 pub mod tile_info;
@@ -49,6 +52,9 @@ fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
                 x: tile_info.width,
                 y: tile_info.height.unwrap_or(tile_info.width),
             };
+            let quality = Arc::new(img.best_quality());
+            let format = Arc::new(img.best_format());
+            let size_format = img.preferred_size_format();
             let page_info = &img; // Required to allow the move
             tile_info
                 .scale_factors
@@ -58,6 +64,9 @@ fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
                     tile_size,
                     page_info: Arc::clone(page_info),
                     base_url: Arc::clone(base_url),
+                    quality: Arc::clone(&quality),
+                    format: Arc::clone(&format),
+                    size_format,
                 })
         })
         .into_zoom_levels();
@@ -69,6 +78,9 @@ struct IIIFZoomLevel {
     tile_size: Vec2d,
     page_info: Arc<ImageInfo>,
     base_url: Arc<String>,
+    quality: Arc<String>,
+    format: Arc<String>,
+    size_format: TileSizeFormat,
 }
 
 impl TilesRect for IIIFZoomLevel {
@@ -86,18 +98,28 @@ impl TilesRect for IIIFZoomLevel {
         let scaled_tile_size = max_size_in_rect(xy_pos, scaled_tile_size, self.page_info.size());
         let tile_size = scaled_tile_size / self.scale_factor;
         format!(
-            "{base}/{x},{y},{img_w},{img_h}/{tile_w},{tile_h}/{rotation}/{quality}.{format}",
+            "{base}/{x},{y},{img_w},{img_h}/{tile_size}/{rotation}/{quality}.{format}",
             base = self.page_info.id.as_ref().unwrap_or(&self.base_url),
             x = xy_pos.x,
             y = xy_pos.y,
             img_w = scaled_tile_size.x,
             img_h = scaled_tile_size.y,
-            tile_w = tile_size.x,
-            tile_h = tile_size.y,
+            tile_size = TileSizeFormatter { w: tile_size.x, h: tile_size.y, format: self.size_format },
             rotation = 0,
-            quality = self.page_info.best_quality(),
-            format = self.page_info.best_format()
+            quality = self.quality,
+            format = self.format,
         )
+    }
+}
+
+struct TileSizeFormatter { w: u32, h: u32, format: TileSizeFormat }
+
+impl std::fmt::Display for TileSizeFormatter {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self.format {
+            TileSizeFormat::WidthHeight => write!(f, "{},{}", self.w, self.h),
+            TileSizeFormat::Width => write!(f, "{},", self.w),
+        }
     }
 }
 
@@ -180,7 +202,7 @@ fn test_qualities() {
         "tile_width": 1024,
         "width": 5156,
         "height": 3816,
-        "profile": "http://library.stanford.edu/iiif/image-api/1.1/compliance.html#level2",
+        "profile": "http://library.stanford.edu/iiif/image-api/1.1/compliance.html#level0",
         "qualities": [ "native", "color", "bitonal", "gray", "zorglub" ],
         "formats" : [ "png", "zorglub" ],
         "scale_factors": [ 10 ]

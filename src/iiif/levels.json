@@ -1,0 +1,11 @@
+{
+  "http://library.stanford.edu/iiif/image-api/1.1/compliance.html#level0": {"formats": [], "qualities": ["native"], "supports": []},
+  "http://library.stanford.edu/iiif/image-api/1.1/compliance.html#level1": {"formats": ["jpg"], "qualities": ["native"], "supports": ["regionByPct", "regionByPx", "rotationBy90s", "sizeByH", "sizeByPct", "sizeByW"]},
+  "http://library.stanford.edu/iiif/image-api/1.1/compliance.html#level2": {"formats": ["jpg", "png"], "qualities": ["native", "color", "grey", "bitonal"], "supports": ["regionByPct", "regionByPx", "rotationBy90s", "sizeByH", "sizeByPct", "sizeByW", "sizeByWh"]},
+  "http://iiif.io/api/image/2/level0.json": {"formats": ["jpg"], "qualities": ["default"], "supports": ["sizeByWhListed"]},
+  "http://iiif.io/api/image/2/level1.json": {"formats": ["jpg"], "qualities": ["default"], "supports": ["sizeByWhListed", "baseUriRedirect", "cors", "jsonldMediaType", "regionByPx", "sizeByH", "sizeByPct", "sizeByW"]},
+  "http://iiif.io/api/image/2/level2.json": {"formats": ["jpg", "png"], "qualities": ["default", "bitonal"], "supports": ["baseUriRedirect", "cors", "jsonldMediaType", "regionByPct", "regionByPx", "rotationBy90s", "sizeByWhListed", "sizeByConfinedWh", "sizeByDistortedWh", "sizeByForcedWh", "sizeByH", "sizeByPct", "sizeByW", "sizeByWh"]},
+  "http://iiif.io/api/image/3/level0.json": {"extraFormats": ["jpg"], "extraQualities": ["default"], "extraFeatures": []},
+  "http://iiif.io/api/image/3/level1.json": {"extraFormats": ["jpg"], "extraQualities": ["default"], "extraFeatures": ["baseUriRedirect", "cors", "jsonldMediaType", "regionByPx", "regionSquare", "sizeByH", "sizeByW", "sizeByWh"]},
+  "http://iiif.io/api/image/3/level2.json": {"extraFormats": ["jpg", "png"], "extraQualities": ["default"], "extraFeatures": ["baseUriRedirect", "cors", "jsonldMediaType", "regionByPct", "regionByPx", "regionSquare", "rotationBy90s", "sizeByConfinedWh", "sizeByH", "sizeByPct", "sizeByW", "sizeByWh"]}
+}
