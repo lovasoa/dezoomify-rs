@@ -2,7 +2,7 @@
 
 [![Continuous Integration](https://github.com/lovasoa/dezoomify-rs/workflows/Continuous%20Integration/badge.svg)](https://github.com/lovasoa/dezoomify-rs/actions)
 
-**dezoomify-rs** is a tiled image downloader.
+[**dezoomify-rs**](https://lovasoa.github.io/dezoomify-rs/) is a tiled image downloader.
 Some webpages present high-resolution zoomable images without a way to download them.
 These images are often *tiled*: the original large image has been split into smaller individual image files called tiles.
 The only way to download such an image is to download all the tiles separately and then stitch them together.
