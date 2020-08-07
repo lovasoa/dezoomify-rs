@@ -40,7 +40,7 @@ impl TileBuffer {
             }
             TileBuffer::Writing { .. } => unreachable!("The size of the image can be set only once")
         };
-        std::mem::replace(self, next_state);
+        *self = next_state;
         Ok(())
     }
 

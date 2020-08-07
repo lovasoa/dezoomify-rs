@@ -1,15 +1,16 @@
+use std::sync::Arc;
+
+use custom_error::custom_error;
 /// Dezoomer for the zoomify PFF servlet API format
 /// See: https://github.com/lovasoa/pff-extract/wiki/Zoomify-PFF-file-format-documentation
 
 use serde_urlencoded as urlencoded;
 
-use custom_error::custom_error;
-use image_properties::Reply;
 use image_properties::PffHeader;
+use image_properties::Reply;
 
 use crate::dezoomer::*;
-use crate::pff::image_properties::{InitialServletRequestParams, RequestType, TileIndices, ImageInfo, HeaderInfo};
-use std::sync::Arc;
+use crate::pff::image_properties::{HeaderInfo, ImageInfo, InitialServletRequestParams, RequestType, TileIndices};
 
 mod image_properties;
 
@@ -56,7 +57,7 @@ impl Dezoomer for PFF {
                     serde_urlencoded::from_bytes(contents).map_err(PffError::from)?;
                 let header_info = HeaderInfo { base_url, file, header: reply.reply_data };
                 let uri = header_info.tiles_index_url();
-                std::mem::replace(self, PFF::WithHeader(header_info));
+                *self = PFF::WithHeader(header_info);
                 Err(DezoomerError::NeedsData { uri })
             },
             PFF::WithHeader(header_info) => {

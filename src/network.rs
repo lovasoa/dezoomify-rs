@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::iter::once;
 
 use log::debug;
 use reqwest::{Client, header};
@@ -7,7 +8,6 @@ use url::Url;
 
 use crate::arguments::Arguments;
 use crate::ZoomError;
-use std::iter::once;
 
 /// Fetch data, either from an URL or a path to a local file.
 /// If uri doesnt start with "http(s)://", it is considered to be a path
@@ -35,7 +35,7 @@ pub fn client<'a, I: Iterator<Item=(&'a String, &'a String)>>(
     args: &Arguments,
     uri: Option<&str>,
 ) -> Result<reqwest::Client, ZoomError> {
-    let referer = uri.or(args.input_uri.as_deref()).unwrap_or("").to_string();
+    let referer = uri.or_else(|| args.input_uri.as_deref()).unwrap_or("").to_string();
     let header_map = default_headers()
         .iter()
         .chain(once((&"Referer".to_string(), &referer)))

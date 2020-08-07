@@ -70,7 +70,7 @@ impl Dichotomy2d {
             }
         };
         if let Some(next) = next {
-            std::mem::replace(self, next);
+            *self = next;
         }
         res
     }
