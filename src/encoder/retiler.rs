@@ -161,7 +161,12 @@ impl TmpTile {
             io::Error::new(io::ErrorKind::InvalidData, "tile too large for image")
         })?;
 
-        if self.done_pixels.count_ones(..) == scaled_size.area() as usize {
+        let done_pixels_count = self.done_pixels.count_ones(..);
+        let pixels_to_do = scaled_size.area() as usize;
+        debug!("{} pixels out of {} covered in {:?} (size {})",
+               done_pixels_count, pixels_to_do, &tmp_tile_path, scaled_size);
+
+        if done_pixels_count == pixels_to_do {
             // The tile has been fully covered by pixels
             debug!("Removing completed tile of level {} at position {}: {:?}", level_size, self_position, &tmp_tile_path);
             let _ = std::fs::remove_file(&tmp_tile_path);
