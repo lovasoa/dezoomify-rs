@@ -11,6 +11,7 @@ pub mod png_encoder;
 pub mod pixel_streamer;
 pub mod tile_buffer;
 pub mod iiif_encoder;
+mod retiler;
 
 pub trait Encoder: Send + 'static {
     /// Add a tile to the image

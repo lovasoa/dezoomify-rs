@@ -34,6 +34,10 @@ impl Vec2d {
     pub fn area(self) -> u64 {
         u64::from(self.x) * u64::from(self.y)
     }
+
+    pub fn fits_inside(self, other: Vec2d) -> bool {
+        self.x <= other.x && self.y <= other.y
+    }
 }
 
 impl From<u32> for Vec2d {

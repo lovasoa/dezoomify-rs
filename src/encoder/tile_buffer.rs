@@ -1,13 +1,14 @@
+use std::path::PathBuf;
+
 /**
 Used to receive tiles asynchronously and provide them to the encoder
 */
 use log::debug;
 use tokio::sync::mpsc;
-use crate::{Vec2d, ZoomError};
-use std::path::PathBuf;
-use crate::tile::Tile;
-use crate::encoder::{encoder_for_name, Encoder};
 
+use crate::{Vec2d, ZoomError};
+use crate::encoder::{Encoder, encoder_for_name};
+use crate::tile::Tile;
 
 /// Data structure used to store tiles until the final image size is known
 pub enum TileBuffer {
@@ -52,7 +53,8 @@ impl TileBuffer {
             }
             TileBuffer::Writing { tile_sender, error_receiver } => {
                 if let Ok(e) = error_receiver.try_recv() { return Err(e.into()) }
-                tile_sender.send(TileBufferMsg::AddTile(tile)).await?;
+                tile_sender.send(TileBufferMsg::AddTile(tile))
+                    .await.expect("The tile writer ended unexpectedly");
             }
         }
         Ok(())

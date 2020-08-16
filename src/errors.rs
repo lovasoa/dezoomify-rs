@@ -50,3 +50,15 @@ impl DezoomerError {
         DezoomerError::Other { source: err.into() }
     }
 }
+
+pub fn image_error_to_io_error(err: image::ImageError) -> std::io::Error {
+    match err {
+        image::ImageError::IoError(e) => e,
+        e => make_io_err(e)
+    }
+}
+
+pub fn make_io_err<E>(e: E) -> std::io::Error
+    where E: Into<Box<dyn std::error::Error + Send + Sync>> {
+    std::io::Error::new(std::io::ErrorKind::Other, e)
+}
