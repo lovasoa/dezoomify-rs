@@ -35,7 +35,7 @@ impl IiifEncoder {
 
 impl Encoder for IiifEncoder {
     fn add_tile(&mut self, tile: Tile) -> io::Result<()> {
-        self.retiler.add_tile(tile)
+        self.retiler.add_tile(&tile)
     }
 
     fn finalize(&mut self) -> io::Result<()> {
