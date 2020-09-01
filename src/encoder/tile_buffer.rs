@@ -12,7 +12,11 @@ use crate::tile::Tile;
 
 /// Data structure used to store tiles until the final image size is known
 pub enum TileBuffer {
-    Buffering { destination: PathBuf, buffer: Vec<Tile> },
+    Buffering {
+        destination: PathBuf,
+        buffer: Vec<Tile>,
+        compression: u8,
+    },
     Writing {
         tile_sender: mpsc::Sender<TileBufferMsg>,
         error_receiver: mpsc::Receiver<std::io::Error>,
@@ -23,18 +27,19 @@ impl TileBuffer {
     /// Create an encoder for an image of the given size at the path
     /// Errors out if the encoder cannot create files with the given extension
     /// or at the given size
-    pub async fn new(destination: PathBuf) -> Result<Self, ZoomError> {
+    pub async fn new(destination: PathBuf, compression: u8) -> Result<Self, ZoomError> {
         Ok(TileBuffer::Buffering {
             destination,
             buffer: vec![],
+            compression,
         })
     }
 
     pub async fn set_size(&mut self, size: Vec2d) -> Result<(), ZoomError> {
         let next_state = match self {
-            TileBuffer::Buffering { buffer, destination } => {
+            TileBuffer::Buffering { buffer, destination, compression } => {
                 debug!("Creating a tile writer for an image of size {}", size);
-                let mut e = encoder_for_name(destination.clone(), size)?;
+                let mut e = encoder_for_name(destination.clone(), size, *compression)?;
                 debug!("Adding buffered tiles: {:?}", buffer);
                 for tile in buffer.drain(..) { e.add_tile(tile)?; }
                 buffer_tiles(e).await

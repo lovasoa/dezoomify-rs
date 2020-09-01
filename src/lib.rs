@@ -150,7 +150,7 @@ pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
     let outname = get_outname(&args.outfile, &zoom_level.title(), zoom_level.size_hint());
     let save_as = fs::canonicalize(outname.as_path()).unwrap_or_else(|_e| outname.clone());
     reserve_output_file(&save_as)?;
-    let tile_buffer: TileBuffer = TileBuffer::new(save_as.clone()).await?;
+    let tile_buffer: TileBuffer = TileBuffer::new(save_as.clone(), args.compression).await?;
     info!("Dezooming {}", zoom_level.name());
     dezoomify_level(args, zoom_level, tile_buffer).await?;
     Ok(save_as)
