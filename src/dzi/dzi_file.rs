@@ -18,14 +18,8 @@ pub struct DziFile {
 
 impl DziFile {
     pub fn get_size(&self) -> Result<Vec2d, DziError> {
-        self.sizes
-            .iter()
-            .next()
-            .map(|s| Vec2d {
-                x: s.width,
-                y: s.height,
-            })
-            .ok_or(DziError::NoSize)
+        let size = self.sizes.get(0).ok_or(DziError::NoSize)?;
+        Ok(Vec2d { x: size.width, y: size.height })
     }
     pub fn get_tile_size(&self) -> Vec2d {
         Vec2d::square(self.tile_size)
