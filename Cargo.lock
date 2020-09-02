@@ -475,7 +475,7 @@ dependencies = [
 
 [[package]]
 name = "dezoomify-rs"
-version = "2.3.0-beta4"
+version = "2.3.0"
 dependencies = [
  "aes",
  "base64 0.12.3",
