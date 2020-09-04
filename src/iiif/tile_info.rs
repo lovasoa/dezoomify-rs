@@ -45,9 +45,10 @@ pub struct ImageInfo {
 
 // Image qualities, from least favorite to favorite
 static QUALITY_ORDER: [&str; 5] = ["bitonal", "gray", "color", "native", "default"];
-// Image formats, from least favorite to favorite
-static FORMAT_ORDER: [&str; 7] = ["gif", "bmp", "tif", "png", "jpg", "jpeg", "webp"];
 
+// Image formats, from least favorite to favorite
+// webp is the least favorite because of this bug: https://github.com/image-rs/image/issues/939
+static FORMAT_ORDER: [&str; 7] = ["webp", "gif", "bmp", "tif", "png", "jpg", "jpeg"];
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum TileSizeFormat { WidthHeight, Width }
