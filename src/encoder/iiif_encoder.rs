@@ -1,6 +1,6 @@
 use std::fs::OpenOptions;
 use std::io;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use image::{ImageOutputFormat};
