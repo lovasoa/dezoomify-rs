@@ -26,7 +26,7 @@ impl IiifEncoder {
         let _ = std::fs::remove_file(&destination);
         debug!("Creating IIIF  directory at {:?}", &destination);
         std::fs::create_dir(&destination)?;
-        let tile_saver = IIIFTileSaver { root_path: destination.clone(), quality: quality };
+        let tile_saver = IIIFTileSaver { root_path: destination.clone(), quality };
         let tile_size = Vec2d::square(512);
         Ok(IiifEncoder {
             retiler: Retiler::new(size, tile_size, Arc::new(tile_saver), 1),
