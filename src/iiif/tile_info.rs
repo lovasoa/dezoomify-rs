@@ -249,3 +249,22 @@ fn test_profile_info() {
         ]),
     })
 }
+
+#[test]
+fn test_best_quality() {
+    let pairs = vec![
+        (None, "default"),
+        (Some(vec![]), "default"),
+        (Some(vec!["color".into()]), "color"),
+        (Some(vec!["grey".into()]), "grey"),
+        (Some(vec!["zorglub".into()]), "zorglub"),
+        (Some(vec!["zorglub".into(), "color".into()]), "color"),
+        (Some(vec!["bitonal".into(), "gray".into()]), "gray"),
+        (Some(vec!["bitonal".into(), "gray".into(), "color".into()]), "color"),
+        (Some(vec!["default".into(), "bitonal".into(), "gray".into(), "color".into()]), "default"),
+    ];
+    for (qualities, expected_best_quality) in pairs.into_iter() {
+        let info = ImageInfo { qualities, ..ImageInfo::default() };
+        assert_eq!(info.best_quality(), expected_best_quality);
+    }
+}

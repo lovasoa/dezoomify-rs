@@ -8,6 +8,7 @@ use tile_info::ImageInfo;
 use crate::dezoomer::*;
 use crate::iiif::tile_info::TileSizeFormat;
 use crate::max_size_in_rect;
+use log::info;
 
 pub mod tile_info;
 
@@ -55,6 +56,8 @@ fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
             let quality = Arc::new(img.best_quality());
             let format = Arc::new(img.best_format());
             let size_format = img.preferred_size_format();
+            info!("Chose the following image parameters: tile_size={} quality={} format={}",
+                  tile_size, quality, format);
             let page_info = &img; // Required to allow the move
             tile_info
                 .scale_factors
