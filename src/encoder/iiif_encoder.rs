@@ -109,7 +109,7 @@ impl TileSaver for IIIFTileSaver {
         let image_path = image_dir_path.join(filename);
         debug!("Writing tile to {:?}", image_path);
         std::fs::create_dir_all(&image_dir_path)?;
-	let mut file = File::create(&image_path)?;
-	tile.image.write_to(&mut file, ImageOutputFormat::Jpeg(self.quality)).map_err(image_error_to_io_error)
+	let file = &mut BufWriter::new(File::create(&image_path)?);
+	tile.image.write_to(file, ImageOutputFormat::Jpeg(self.quality)).map_err(image_error_to_io_error)
     }
 }
