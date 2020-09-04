@@ -30,7 +30,8 @@ fn encoder_for_name(destination: PathBuf, size: Vec2d, compression: u8) -> Resul
         Ok(Box::new(png_encoder::PngEncoder::new(destination, size, compression)?))
     } else if extension == "iiif" {
         debug!("Using the iiif tiling encoder");
-        Ok(Box::new(iiif_encoder::IiifEncoder::new(destination, size)?))
+	let quality = 100u8.saturating_sub(compression);
+        Ok(Box::new(iiif_encoder::IiifEncoder::new(destination, size, quality)?))
     } else if extension == "jpeg" || extension == "jpg" {
         debug!("Using the jpeg encoder with a quality of {}", compression);
         let image_writer = ImageWriter::Jpeg { quality: 100u8.saturating_sub(compression) };

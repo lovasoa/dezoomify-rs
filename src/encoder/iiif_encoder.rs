@@ -1,8 +1,10 @@
 use std::fs::OpenOptions;
 use std::io;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
+use image::{ImageOutputFormat};
+use std::fs::File;
 
 use log::debug;
 
@@ -20,11 +22,11 @@ pub struct IiifEncoder {
 }
 
 impl IiifEncoder {
-    pub fn new(destination: PathBuf, size: Vec2d) -> Result<Self, ZoomError> {
+    pub fn new(destination: PathBuf, size: Vec2d, quality: u8) -> Result<Self, ZoomError> {
         let _ = std::fs::remove_file(&destination);
         debug!("Creating IIIF  directory at {:?}", &destination);
         std::fs::create_dir(&destination)?;
-        let tile_saver = IIIFTileSaver { root_path: destination.clone() };
+        let tile_saver = IIIFTileSaver { root_path: destination.clone(), quality };
         let tile_size = Vec2d::square(512);
         Ok(IiifEncoder {
             retiler: Retiler::new(size, tile_size, Arc::new(tile_saver), 1),
@@ -88,6 +90,7 @@ impl Encoder for IiifEncoder {
 
 struct IIIFTileSaver {
     root_path: PathBuf,
+    quality: u8,
 }
 
 impl TileSaver for IIIFTileSaver {
@@ -106,6 +109,7 @@ impl TileSaver for IIIFTileSaver {
         let image_path = image_dir_path.join(filename);
         debug!("Writing tile to {:?}", image_path);
         std::fs::create_dir_all(&image_dir_path)?;
-        tile.image.save(image_path).map_err(image_error_to_io_error)
+	let file = &mut BufWriter::new(File::create(&image_path)?);
+	tile.image.write_to(file, ImageOutputFormat::Jpeg(self.quality)).map_err(image_error_to_io_error)
     }
 }
