@@ -41,6 +41,7 @@ impl Encoder for IiifEncoder {
     }
 
     fn finalize(&mut self) -> io::Result<()> {
+        self.retiler.finalize();
         let scale_factors =
             (0..self.retiler.level_count())
                 .map(|n| 2u32.pow(n))

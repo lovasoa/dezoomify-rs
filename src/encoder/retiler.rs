@@ -8,7 +8,7 @@ use fixedbitset::FixedBitSet;
 use image::{DynamicImage, GenericImageView, SubImage};
 use image::GenericImage;
 use image::imageops::FilterType;
-use log::debug;
+use log::{debug, warn};
 
 use crate::{max_size_in_rect, Tile};
 use crate::errors::image_error_to_io_error;
@@ -18,6 +18,23 @@ pub trait TileSaver {
     fn save_tile(&self, size: Vec2d, tile: Tile) -> io::Result<()>;
 }
 
+/**
+A Retiler represents an image at a certain zoom level.
+It works in the following way :
+It has a child that represents the image at the next zoom level (where the image is smaller),
+the child itself has a child, and so on until the smallest zoom level.
+
+The retiler receives tiles from the original image.
+The received tiles can have any size, so they can cover partially or entirely any number of tiles
+in the target image.
+It computes the list of tiles covered by the current image,
+and pastes the correct resized and cropped source tile into temporary target tiles in the user's temporary folder.
+
+When a target tile has been entirely covered by source tiles,
+it is encoded to jpeg and saved to the target folder.
+
+Every level passes the source tile to it's child when it is done with it.
+**/
 pub struct Retiler<T: TileSaver> {
     original_size: Vec2d,
     pub tile_size: Vec2d,
@@ -109,6 +126,25 @@ impl<T: TileSaver> Retiler<T> {
         Ok(())
     }
 
+    /// Add all partially downloaded tiles to the final image
+    pub fn finalize(&mut self) {
+        for (position, tile) in std::mem::take(&mut self.tiles).into_iter() {
+            let cur_tile_size = max_size_in_rect(position, self.tile_size, self.original_size);
+            warn!("The target tile of size {} at zoom level {} and position {} \
+            was not fully covered by source tiles. It misses {} pixels.",
+                  cur_tile_size, self.scale_factor, position, tile.missing_pixels());
+            let tmp_tile_path = TmpTile::path(position, self.scale_factor);
+            let result = image::open(&tmp_tile_path)
+                .map_err(image_error_to_io_error)
+                .and_then(|image| self.tile_save(position, cur_tile_size, image))
+                .and_then(|()| std::fs::remove_file(&tmp_tile_path));
+            if let Err(e) = result {
+                warn!("Additionally, the following error occurred \
+                when trying to add the partial tile to the final image: {}", e)
+            }
+        }
+    }
+
     pub fn tile_save(&self, position: Vec2d, size: Vec2d, image: DynamicImage) -> io::Result<()> {
         self.tile_saver.save_tile(size, Tile { position, image })
     }
@@ -126,6 +162,10 @@ impl TmpTile {
         TmpTile {
             done_pixels: FixedBitSet::with_capacity(bits)
         }
+    }
+
+    fn missing_pixels(&self) -> usize {
+        self.done_pixels.len() - self.done_pixels.count_ones(..)
     }
 
     fn set_done_pixels(&mut self, self_size: Vec2d, top_left: Vec2d, bottom_right: Vec2d) {
@@ -164,7 +204,7 @@ impl TmpTile {
         })?;
 
         self.set_done_pixels(scaled_size, top_left, bottom_right);
-        if self.done_pixels.count_ones(..) == scaled_size.area() as usize {
+        if self.missing_pixels() == 0 {
             // The tile has been fully covered by pixels
             debug!("Removing completed tile of level {} at position {}: {:?}", level_size, self_position, &tmp_tile_path);
             let _ = std::fs::remove_file(&tmp_tile_path);
