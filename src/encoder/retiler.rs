@@ -143,6 +143,9 @@ impl<T: TileSaver> Retiler<T> {
                 when trying to add the partial tile to the final image: {}", e)
             }
         }
+        if let Some(next_level) = &mut self.next_level {
+            next_level.finalize()
+        }
     }
 
     pub fn tile_save(&self, position: Vec2d, size: Vec2d, image: DynamicImage) -> io::Result<()> {
