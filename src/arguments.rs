@@ -117,9 +117,9 @@ impl Default for Arguments {
 }
 
 impl Arguments {
-    pub fn choose_input_uri(&self) -> String {
+    pub fn choose_input_uri(&self) -> Result<String, ZoomError> {
         match &self.input_uri {
-            Some(uri) => uri.clone(),
+            Some(uri) => Ok(uri.clone()),
             None => {
                 println!("Enter an URL or a path to a tiles.yaml file: ");
                 stdin_line()

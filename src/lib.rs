@@ -1,4 +1,4 @@
-use std::{fs, fmt};
+use std::{fs, fmt, io};
 use std::io::BufRead;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -44,13 +44,14 @@ pub mod zoomify;
 pub mod krpano;
 pub mod iipimage;
 
-fn stdin_line() -> String {
-    std::io::stdin()
-        .lock()
-        .lines()
-        .next()
-        .expect("Invalid input")
-        .expect("Unable to read from stdin")
+fn stdin_line() -> Result<String, ZoomError> {
+    let stdin = std::io::stdin();
+    let mut lines = stdin.lock().lines();
+    let first_line = lines.next().ok_or_else(|| {
+        let err_msg = "Encountered end of standard input while reading a line";
+        io::Error::new(io::ErrorKind::UnexpectedEof, err_msg)
+    })?;
+    Ok(first_line?)
 }
 
 async fn list_tiles(
@@ -84,7 +85,7 @@ fn level_picker(mut levels: Vec<ZoomLevel>) -> Result<ZoomLevel, ZoomError> {
     }
     loop {
         println!("Which level do you want to download? ");
-        let line = stdin_line();
+        let line = stdin_line()?;
         if let Ok(idx) = line.parse::<usize>() {
             if levels.get(idx).is_some() {
                 return Ok(levels.swap_remove(idx));
@@ -137,7 +138,7 @@ fn progress_bar(n: usize) -> ProgressBar {
 
 async fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
     let mut dezoomer = args.find_dezoomer()?;
-    let uri = args.choose_input_uri();
+    let uri = args.choose_input_uri()?;
     let http_client = client(args.headers(), args, Some(&uri))?;
     info!("Trying to locate a zoomable image...");
     let zoom_levels: Vec<ZoomLevel> = list_tiles(dezoomer.as_mut(), &http_client, &uri).await?;
