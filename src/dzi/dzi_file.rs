@@ -14,12 +14,8 @@ pub struct DziFile {
     pub format: String,
     #[serde(rename = "Size", default)]
     pub sizes: Vec<Size>,
-    #[serde(rename = "Url", default = "no_url")]
-    pub base_url: String,
-}
-
-fn no_url() -> String {
-    "no url".to_string()
+    #[serde(rename = "Url")]
+    pub base_url: Option<String>,
 }
 
 impl DziFile {
@@ -33,6 +29,19 @@ impl DziFile {
     pub fn max_level(&self) -> u32 {
         let size = self.get_size().unwrap();
         log2(size.x.max(size.y))
+    }
+
+    /// Compute the base URL for tiles. If a base URL is specified in this structure, remove it
+    pub fn take_base_url(&mut self, resource_url: &str) -> String {
+        if let Some(mut url_str) = self.base_url.take() {
+            if url_str.ends_with('/') { url_str.pop(); }
+            url_str
+        } else {
+            let until_dot = if let Some(dot_pos) = resource_url.rfind('.') {
+                &resource_url[0..dot_pos]
+            } else { resource_url };
+            format!("{}_files", until_dot)
+        }
     }
 }
 
