@@ -62,3 +62,13 @@ impl std::fmt::Debug for Tile {
             .finish()
     }
 }
+
+impl PartialEq for Tile {
+    fn eq(&self, other: &Self) -> bool {
+        self.position == other.position &&
+            self.size() == other.size() &&
+            self.image.pixels().all(|(x, y, pix)| {
+                other.image.get_pixel(x, y) == pix
+            })
+    }
+}

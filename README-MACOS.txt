@@ -2,18 +2,23 @@ Thank you for downloading dezoomify-rs !
 
 In the same directory as this file, you will find
 another file called dezoomify-rs. It is a MacOS executable file.
-To execute it :
 
- - Double-click on dezoomify-rs
- - A message will appear saying that the application cannot be verified.
-   This is normal. This "verification" is in fact a tax that apple wants
-   to impose on developers, and that I am not ready to pay for this free tool.
- - Open "System Preferences", then click "Security and privacy",
-   and go to the "General" tab.
- - Near "dezoomify-rs was blocked", click "Allow Anyway"
- - Finally, double-click "dezoomify-rs" again.
+The easiest way to open the program is to :
+ - right-click on the file
+ - choose "Open"
+ - In the warning popup that appears, click "Open"
 
-A terminal window will open.
+If you simply double-click on the executable file, a message
+will appear saying that the application cannot be verified.
+This is normal. To pass this so-called "verification",
+developers have to pay a tax to apple,
+that I am not ready to pay for this free tool.
+If you don't want this warning to appear again, you can disable it in 
+the "System Preferences" app, under "Security and privacy",
+by clicking "Allow Anyway" near "dezoomify-rs was blocked".
+
+
+Once the program is open, a terminal window will appear.
 Follow the instructions in it to download your image.
 
 For more information, see:

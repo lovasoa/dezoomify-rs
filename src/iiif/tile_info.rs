@@ -45,9 +45,10 @@ pub struct ImageInfo {
 
 // Image qualities, from least favorite to favorite
 static QUALITY_ORDER: [&str; 5] = ["bitonal", "gray", "color", "native", "default"];
-// Image formats, from least favorite to favorite
-static FORMAT_ORDER: [&str; 7] = ["gif", "bmp", "tif", "png", "jpg", "jpeg", "webp"];
 
+// Image formats, from least favorite to favorite
+// webp is the least favorite because of this bug: https://github.com/image-rs/image/issues/939
+static FORMAT_ORDER: [&str; 7] = ["webp", "gif", "bmp", "tif", "png", "jpg", "jpeg"];
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum TileSizeFormat { WidthHeight, Width }
@@ -248,4 +249,23 @@ fn test_profile_info() {
             "sizeByWh".into(), // from the second profile
         ]),
     })
+}
+
+#[test]
+fn test_best_quality() {
+    let pairs = vec![
+        (None, "default"),
+        (Some(vec![]), "default"),
+        (Some(vec!["color".into()]), "color"),
+        (Some(vec!["grey".into()]), "grey"),
+        (Some(vec!["zorglub".into()]), "zorglub"),
+        (Some(vec!["zorglub".into(), "color".into()]), "color"),
+        (Some(vec!["bitonal".into(), "gray".into()]), "gray"),
+        (Some(vec!["bitonal".into(), "gray".into(), "color".into()]), "color"),
+        (Some(vec!["default".into(), "bitonal".into(), "gray".into(), "color".into()]), "default"),
+    ];
+    for (qualities, expected_best_quality) in pairs.into_iter() {
+        let info = ImageInfo { qualities, ..ImageInfo::default() };
+        assert_eq!(info.best_quality(), expected_best_quality);
+    }
 }

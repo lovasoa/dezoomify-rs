@@ -14,12 +14,18 @@ pub struct PngEncoder {
 }
 
 impl PngEncoder {
-    pub fn new(destination: PathBuf, size: Vec2d) -> Result<Self, ZoomError> {
+    pub fn new(destination: PathBuf, size: Vec2d, compression: u8) -> Result<Self, ZoomError> {
         let file = OpenOptions::new().write(true).create(true).open(destination)?;
         let mut encoder = png::Encoder::new(file, size.x, size.y);
         encoder.set_color(png::ColorType::RGB);
         encoder.set_depth(png::BitDepth::Eight);
-        encoder.set_compression(png::Compression::Fast);
+        encoder.set_compression(match compression {
+            0 => png::Compression::Rle,
+            1..=9 => png::Compression::Huffman,
+            10..=19 => png::Compression::Fast,
+            20..=60 => png::Compression::Default,
+            _ => png::Compression::Best,
+        });
         let writer = encoder.write_header()?
             .into_stream_writer_with_size(128 * 1024);
         let pixel_streamer = Some(PixelStreamer::new(writer, size));
@@ -62,7 +68,7 @@ mod tests {
     fn test_png_create() {
         let destination = temp_dir().join("dezoomify-rs-png-test.png");
         let size = Vec2d { x: 2, y: 2 };
-        let mut encoder = PngEncoder::new(destination.clone(), size).unwrap();
+        let mut encoder = PngEncoder::new(destination.clone(), size, 1).unwrap();
 
         encoder.add_tile(Tile {
             position: Vec2d { x: 1, y: 1 },

@@ -1,12 +1,14 @@
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
 use std::io;
-use image::{GenericImage, ImageBuffer, Pixel};
+use image::{GenericImage, ImageBuffer, Pixel, ImageResult};
 use log::debug;
 
 use crate::Vec2d;
 use crate::encoder::{Encoder, crop_tile};
 use crate::tile::Tile;
 use crate::ZoomError;
+use std::io::BufWriter;
+use std::fs::File;
 
 type SubPix = u8;
 type Pix = image::Rgba<SubPix>;
@@ -20,14 +22,16 @@ fn empty_buffer(size: Vec2d) -> CanvasBuffer {
 pub struct Canvas {
     image: CanvasBuffer,
     destination: PathBuf,
+    image_writer: ImageWriter,
 }
 
 
 impl Canvas {
-    pub fn new(destination: PathBuf, size: Vec2d) -> Result<Self, ZoomError> {
+    pub fn new(destination: PathBuf, size: Vec2d, image_writer: ImageWriter) -> Result<Self, ZoomError> {
         Ok(Canvas {
             image: empty_buffer(size),
             destination,
+            image_writer,
         })
     }
 }
@@ -43,7 +47,7 @@ impl Encoder for Canvas {
     }
 
     fn finalize(self: &mut Self) -> io::Result<()> {
-        self.image.save(&self.destination).map_err(|e| {
+        self.image_writer.write(&self.image, &self.destination).map_err(|e| {
             match e {
                 image::ImageError::IoError(e) => e,
                 other => io::Error::new(io::ErrorKind::Other, other)
@@ -55,3 +59,24 @@ impl Encoder for Canvas {
     fn size(&self) -> Vec2d { self.image.dimensions().into() }
 }
 
+pub enum ImageWriter {
+    Generic,
+    Jpeg { quality: u8 },
+}
+
+impl ImageWriter {
+    fn write(&self, image: &CanvasBuffer, destination: &Path) -> ImageResult<()> {
+        match *self {
+            ImageWriter::Jpeg { quality } => {
+                let file = File::create(destination)?;
+                let fout = &mut BufWriter::new(file);
+                let mut encoder = image::jpeg::JpegEncoder::new_with_quality(fout, quality);
+                encoder.encode(image, image.width(), image.height(), Pix::COLOR_TYPE)?;
+            },
+            ImageWriter::Generic => {
+                image.save(destination)?;
+            },
+        };
+        Ok(())
+    }
+}

@@ -5,6 +5,7 @@ use log::debug;
 
 use crate::{max_size_in_rect, Vec2d, ZoomError};
 use crate::tile::Tile;
+use crate::encoder::canvas::ImageWriter;
 
 pub mod canvas;
 pub mod png_encoder;
@@ -22,17 +23,22 @@ pub trait Encoder: Send + 'static {
     fn size(&self) -> Vec2d;
 }
 
-fn encoder_for_name(destination: PathBuf, size: Vec2d) -> Result<Box<dyn Encoder>, ZoomError> {
+fn encoder_for_name(destination: PathBuf, size: Vec2d, compression: u8) -> Result<Box<dyn Encoder>, ZoomError> {
     let extension = destination.extension().unwrap_or_default();
     if extension == "png" {
         debug!("Using the streaming png encoder");
-        Ok(Box::new(png_encoder::PngEncoder::new(destination, size)?))
+        Ok(Box::new(png_encoder::PngEncoder::new(destination, size, compression)?))
     } else if extension == "iiif" {
         debug!("Using the iiif tiling encoder");
-        Ok(Box::new(iiif_encoder::IiifEncoder::new(destination, size)?))
+	let quality = 100u8.saturating_sub(compression);
+        Ok(Box::new(iiif_encoder::IiifEncoder::new(destination, size, quality)?))
+    } else if extension == "jpeg" || extension == "jpg" {
+        debug!("Using the jpeg encoder with a quality of {}", compression);
+        let image_writer = ImageWriter::Jpeg { quality: 100u8.saturating_sub(compression) };
+        Ok(Box::new(canvas::Canvas::new(destination, size, image_writer)?))
     } else {
         debug!("Using the generic canvas implementation {}", &destination.to_string_lossy());
-        Ok(Box::new(canvas::Canvas::new(destination, size)?))
+        Ok(Box::new(canvas::Canvas::new(destination, size, ImageWriter::Generic)?))
     }
 }
 

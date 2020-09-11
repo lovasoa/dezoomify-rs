@@ -52,6 +52,13 @@ pub struct Arguments {
     #[structopt(long, default_value = "2s", parse(try_from_str = parse_duration))]
     pub retry_delay: Duration,
 
+    /// A number between 0 and 100 expressing how much to compress the output image.
+    /// For lossy output formats such as jpeg, this affects the quality of the resulting image.
+    /// 0 means less compression, 100 means more compression.
+    /// Currently affects only the JPEG and PNG encoders.
+    #[structopt(long, default_value = "20")]
+    pub compression: u8,
+
     /// Sets an HTTP header to use on requests.
     /// This option can be repeated in order to set multiple headers.
     /// You can use `-H "Referer: URL"` where URL is the URL of the website's
@@ -97,6 +104,7 @@ impl Default for Arguments {
             max_height: None,
             parallelism: 16,
             retries: 1,
+            compression: 20,
             retry_delay: Duration::from_secs(2),
             headers: vec![],
             max_idle_per_host: 32,
@@ -109,9 +117,9 @@ impl Default for Arguments {
 }
 
 impl Arguments {
-    pub fn choose_input_uri(&self) -> String {
+    pub fn choose_input_uri(&self) -> Result<String, ZoomError> {
         match &self.input_uri {
-            Some(uri) => uri.clone(),
+            Some(uri) => Ok(uri.clone()),
             None => {
                 println!("Enter an URL or a path to a tiles.yaml file: ");
                 stdin_line()

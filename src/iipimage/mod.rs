@@ -63,7 +63,7 @@ impl Debug for Level {
 impl TilesRect for Level {
     fn size(&self) -> Vec2d {
         let reverse_level = self.metadata.levels - self.level - 1;
-        self.metadata.size.ceil_div(2_u32.pow(reverse_level))
+        self.metadata.size / 2_u32.pow(reverse_level)
     }
 
     fn tile_size(&self) -> Vec2d { self.metadata.tile_size }

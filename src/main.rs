@@ -2,7 +2,7 @@ use colour::{green_ln, red_ln};
 use human_panic::setup_panic;
 use structopt::StructOpt;
 
-use dezoomify_rs::{Arguments, dezoomify};
+use dezoomify_rs::{Arguments, dezoomify, ZoomError};
 
 #[tokio::main]
 async fn main() {
@@ -17,7 +17,13 @@ async fn main() {
             Err(err) => {
                 red_ln!("ERROR {}", err);
                 has_errors = true;
-            }
+                // If we have reached the end of stdin, we exit
+                if let ZoomError::Io { source } = err {
+                    if source.kind() == std::io::ErrorKind::UnexpectedEof {
+                        break
+                    }
+                }
+            },
             Ok(saved_as) => {
                 green_ln!("Image successfully saved to '{}' (current working directory: {})",
                          saved_as.to_string_lossy(),

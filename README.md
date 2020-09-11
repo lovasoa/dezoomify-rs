@@ -183,6 +183,10 @@ FLAGS:
     -V, --version                 Prints version information
 
 OPTIONS:
+        --compression <compression>
+            A number between 0 and 100 expressing how much to compress the output image. For lossy output formats such
+            as jpeg, this affects the quality of the resulting image. 0 means less compression, 100 means more
+            compression. Currently affects only the JPEG and PNG encoders [default: 20]
         --connect-timeout <connect-timeout>
             Time after which we should give up when trying to connect to a server [default: 6s]
 
