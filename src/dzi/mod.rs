@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use custom_error::custom_error;
+
 use dzi_file::DziFile;
 
 use crate::dezoomer::*;
@@ -41,22 +42,13 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, DziErr
 
     // Workaround for https://github.com/netvl/xml-rs/issues/155
     // which the original author seems unwilling to fix
-    let image_properties: DziFile = serde_xml_rs::from_reader(remove_bom(contents))?;
+    let mut image_properties: DziFile = serde_xml_rs::from_reader(remove_bom(contents))?;
 
     if image_properties.tile_size == 0 {
         return Err(DziError::InvalidTileSize);
     }
 
-    let dot_pos = url.rfind('.').unwrap_or(url.len() - 1);
-    let mut url_str =  if image_properties.base_url.eq("no url") {  
-	format!("{}_files", &url[0..dot_pos])
-    } else {
-	image_properties.base_url.clone()
-    };
-    if url_str.ends_with('/') {
-	url_str.pop();
-    }
-    let base_url = &Arc::new(url_str);
+    let base_url = &Arc::new(image_properties.take_base_url(url));
 
     let size = image_properties.get_size()?;
     let max_level = image_properties.max_level();
