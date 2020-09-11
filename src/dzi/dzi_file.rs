@@ -14,6 +14,12 @@ pub struct DziFile {
     pub format: String,
     #[serde(rename = "Size", default)]
     pub sizes: Vec<Size>,
+    #[serde(rename = "Url", default = "no_url")]
+    pub base_url: String,
+}
+
+fn no_url() -> String {
+    "no url".to_string()
 }
 
 impl DziFile {
