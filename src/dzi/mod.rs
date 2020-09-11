@@ -48,7 +48,15 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, DziErr
     }
 
     let dot_pos = url.rfind('.').unwrap_or(url.len() - 1);
-    let base_url = &Arc::new(format!("{}_files", &url[0..dot_pos]));
+    let mut url_str =  if image_properties.base_url.eq("no url") {  
+	format!("{}_files", &url[0..dot_pos])
+    } else {
+	image_properties.base_url.clone()
+    };
+    if url_str.ends_with('/') {
+	url_str.pop();
+    }
+    let base_url = &Arc::new(url_str);
 
     let size = image_properties.get_size()?;
     let max_level = image_properties.max_level();
