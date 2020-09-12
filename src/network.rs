@@ -81,8 +81,9 @@ pub fn remove_bom(contents: &[u8]) -> &[u8] {
 
 #[test]
 fn test_resolve_relative() {
-    assert_eq!(resolve_relative("/a/b", "c/d"), "/a/c/d");
-    assert_eq!(resolve_relative("C:\\X", "c/d"), "C:\\X/c/d");
+    use std::path::MAIN_SEPARATOR;
+    assert_eq!(resolve_relative("/a/b", "c/d"), format!("/a{}c/d", MAIN_SEPARATOR));
+    assert_eq!(resolve_relative("C:\\X", "c/d"), format!("C:\\X{}c/d", MAIN_SEPARATOR));
     assert_eq!(resolve_relative("/a/b", "http://example.com/x"), "http://example.com/x");
     assert_eq!(resolve_relative("http://a.b", "http://example.com/x"), "http://example.com/x");
     assert_eq!(resolve_relative("http://a.b", "c/d"), "http://a.b/c/d");
