@@ -50,8 +50,8 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, DziErr
         .and_then(|dzi| load_from_dzi(url, dzi))
         .or_else(|e| {
             let levels: Vec<ZoomLevel> = all_json::<DziJsonFile>(contents)
-                .flat_map(|dzi| load_from_dzi(url, dzi).into_iter())
-                .flat_map(|levels| levels.into_iter())
+                .flat_map(|dzi| load_from_dzi(url, dzi))
+                .flatten()
                 .collect();
             if levels.is_empty() { Err(e) } else { Ok(levels) }
         })
