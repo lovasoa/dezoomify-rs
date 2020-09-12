@@ -40,7 +40,9 @@ pub struct Retiler<T: TileSaver> {
     pub tile_size: Vec2d,
     scale_factor: u32,
     next_level: Option<Box<Retiler<T>>>,
-    tiles: HashMap<Vec2d, TmpTile>,
+    /// This hash map contains target tiles that are being written.
+    /// When a target tile has been entirely covered by source tiles, its entry is set to None
+    tiles: HashMap<Vec2d, Option<TmpTile>>,
     tile_saver: Arc<T>,
 }
 
@@ -102,20 +104,27 @@ impl<T: TileSaver> Retiler<T> {
             let cur_tile_size = max_size_in_rect(cur_pos, tile_size, self.original_size);
             let scaled_tile_size = cur_tile_size.ceil_div(scale_factor);
 
-            let tmp_tile = self.tiles.entry(cur_pos)
+            let tmp_tile_entry = self.tiles.entry(cur_pos)
                 .or_insert_with(|| {
                     debug!("Creating a new partial tile at scale factor {} position {} size {}", scale_factor, cur_pos, cur_tile_size);
-                    TmpTile::new(scaled_tile_size)
+                    Some(TmpTile::new(scaled_tile_size))
                 });
-            let finished = tmp_tile.add_tile(
-                cur_pos,
-                cur_tile_size,
-                self.original_size,
-                scale_factor,
-                &scaled_tile)?;
-            if let Some(tile_img) = finished {
-                self.tile_save(cur_pos, cur_tile_size, tile_img)?;
-                self.tiles.remove(&cur_pos);
+            if let Some(tmp_tile) = tmp_tile_entry {
+                let finished = tmp_tile.add_tile(
+                    cur_pos,
+                    cur_tile_size,
+                    self.original_size,
+                    scale_factor,
+                    &scaled_tile)?;
+                if let Some(tile_img) = finished {
+                    self.tile_save(cur_pos, cur_tile_size, tile_img)?;
+                    self.tiles.insert(cur_pos, None);
+                }
+            } else {
+                debug!("Source tiles overlap:\
+                        Received pixels for tile at {} on level {}, but this tile has already been written.\
+                        Ignoring them (source tiles overlap).",
+                       cur_pos, self.scale_factor)
             }
         }
 
@@ -128,19 +137,21 @@ impl<T: TileSaver> Retiler<T> {
 
     /// Add all partially downloaded tiles to the final image
     pub fn finalize(&mut self) {
-        for (position, tile) in std::mem::take(&mut self.tiles).into_iter() {
-            let cur_tile_size = max_size_in_rect(position, self.tile_size, self.original_size);
-            warn!("The target tile of size {} at zoom level {} and position {} \
+        for (position, tile_opt) in std::mem::take(&mut self.tiles).into_iter() {
+            if let Some(tile) = tile_opt {
+                let cur_tile_size = max_size_in_rect(position, self.tile_size, self.original_size);
+                warn!("The target tile of size {} at zoom level {} and position {} \
             was not fully covered by source tiles. It misses {} pixels.",
-                  cur_tile_size, self.scale_factor, position, tile.missing_pixels());
-            let tmp_tile_path = TmpTile::path(position, self.scale_factor);
-            let result = image::open(&tmp_tile_path)
-                .map_err(image_error_to_io_error)
-                .and_then(|image| self.tile_save(position, cur_tile_size, image))
-                .and_then(|()| std::fs::remove_file(&tmp_tile_path));
-            if let Err(e) = result {
-                warn!("Additionally, the following error occurred \
+                      cur_tile_size, self.scale_factor, position, tile.missing_pixels());
+                let tmp_tile_path = TmpTile::path(position, self.scale_factor);
+                let result = image::open(&tmp_tile_path)
+                    .map_err(image_error_to_io_error)
+                    .and_then(|image| self.tile_save(position, cur_tile_size, image))
+                    .and_then(|()| std::fs::remove_file(&tmp_tile_path));
+                if let Err(e) = result {
+                    warn!("Additionally, the following error occurred \
                 when trying to add the partial tile to the final image: {}", e)
+                }
             }
         }
         if let Some(next_level) = &mut self.next_level {
@@ -240,8 +251,9 @@ fn crop_image_for_tile(source_tile: &Tile, scaled_tile_pos: Vec2d, scaled_tile_s
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use image::ImageBuffer;
+
+    use super::*;
 
     fn init() {
         let _ = env_logger::builder().is_test(true).try_init();
