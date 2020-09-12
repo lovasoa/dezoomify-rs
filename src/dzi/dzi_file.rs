@@ -1,27 +1,35 @@
+use std::fmt::Debug;
+
 use serde::Deserialize;
 
+use crate::json_utils::number_or_string;
+use crate::network::resolve_relative;
 use crate::Vec2d;
 
 use super::DziError;
 
+pub trait DziUrlType: Debug { fn compute_base_url(&self, resource_url: &str) -> String; }
+
 #[derive(Debug, Deserialize, PartialEq)]
-pub struct DziFile {
-    #[serde(rename = "Overlap", default)]
+pub struct GenericDziFile<BaseUrlType: DziUrlType> {
+    #[serde(rename = "Overlap", deserialize_with = "number_or_string", default)]
     pub overlap: u32,
-    #[serde(rename = "TileSize", default)]
+    #[serde(rename = "TileSize", deserialize_with = "number_or_string")]
     pub tile_size: u32,
-    #[serde(rename = "Format", default)]
+    #[serde(rename = "Format")]
     pub format: String,
-    #[serde(rename = "Size", default)]
-    pub sizes: Vec<Size>,
+    #[serde(rename = "Size")]
+    pub size: Size,
     #[serde(rename = "Url")]
-    pub base_url: Option<String>,
+    pub base_url: BaseUrlType,
 }
 
-impl DziFile {
+pub type DziFile = GenericDziFile<Option<String>>;
+pub type DziJsonFile = GenericDziFile<String>;
+
+impl<T: DziUrlType> GenericDziFile<T> {
     pub fn get_size(&self) -> Result<Vec2d, DziError> {
-        let size = self.sizes.get(0).ok_or(DziError::NoSize)?;
-        Ok(Vec2d { x: size.width, y: size.height })
+        Ok(Vec2d { x: self.size.width, y: self.size.height })
     }
     pub fn get_tile_size(&self) -> Vec2d {
         Vec2d::square(self.tile_size)
@@ -30,12 +38,13 @@ impl DziFile {
         let size = self.get_size().unwrap();
         log2(size.x.max(size.y))
     }
+    pub fn base_url(&self, resource_url: &str) -> String { self.base_url.compute_base_url(resource_url) }
+}
 
-    /// Compute the base URL for tiles. If a base URL is specified in this structure, remove it
-    pub fn take_base_url(&mut self, resource_url: &str) -> String {
-        if let Some(mut url_str) = self.base_url.take() {
-            if url_str.ends_with('/') { url_str.pop(); }
-            url_str
+impl DziUrlType for Option<String> {
+    fn compute_base_url(&self, resource_url: &str) -> String {
+        if let Some(s) = self {
+            s.compute_base_url(resource_url)
         } else {
             let until_dot = if let Some(dot_pos) = resource_url.rfind('.') {
                 &resource_url[0..dot_pos]
@@ -45,15 +54,22 @@ impl DziFile {
     }
 }
 
+impl DziUrlType for String {
+    fn compute_base_url(&self, resource_url: &str) -> String {
+        let relative_url_str = self.trim_end_matches('/');
+        resolve_relative(resource_url, relative_url_str)
+    }
+}
+
 fn log2(n: u32) -> u32 {
     32 - (n - 1).leading_zeros()
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Default)]
 pub struct Size {
-    #[serde(rename = "Width", default)]
+    #[serde(rename = "Width", deserialize_with = "number_or_string", default)]
     pub width: u32,
-    #[serde(rename = "Height", default)]
+    #[serde(rename = "Height", deserialize_with = "number_or_string", default)]
     pub height: u32,
 }
 
@@ -69,5 +85,23 @@ fn test_dzi() {
         .unwrap();
     assert_eq!(dzi.get_size().unwrap(), Vec2d { x: 5393, y: 3852 });
     assert_eq!(dzi.get_tile_size(), Vec2d { x: 256, y: 256 });
+    assert_eq!(dzi.max_level(), 13);
+}
+
+#[test]
+fn test_dzi_json() {
+    let dzi: DziFile = serde_json::from_str(
+        r#"{
+            "type":  "image",
+            "xmlns": "http://schemas.microsoft.com/deepzoom/2008",
+	        "Url":   "http://content.example.net/images/",
+            "Format":   "jpg",
+            "Overlap":  "1",
+            "TileSize": "254",
+            "Size": { "Height": "4409", "Width": "7793" }
+	    }"#,
+    ).unwrap();
+    assert_eq!(dzi.get_size().unwrap(), Vec2d { y: 4409, x: 7793 });
+    assert_eq!(dzi.get_tile_size(), Vec2d { x: 254, y: 254 });
     assert_eq!(dzi.max_level(), 13);
 }
