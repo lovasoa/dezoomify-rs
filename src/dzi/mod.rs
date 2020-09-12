@@ -127,11 +127,17 @@ impl TilesRect for DziLevel {
             position: self.tile_size() * pos - delta,
         }
     }
+
+    fn title(&self) -> Option<String> {
+        let suffix = self.base_url.rsplitn(2, '/').next().unwrap_or("");
+        let name = suffix.trim_end_matches("_files");
+        Some(name.to_string())
+    }
 }
 
 impl std::fmt::Debug for DziLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Deep Zoom Image")
+        write!(f, "{} (Deep Zoom Image)", TileProvider::title(self).unwrap_or_default())
     }
 }
 
