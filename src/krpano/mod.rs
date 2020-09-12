@@ -42,8 +42,7 @@ impl From<KrpanoError> for DezoomerError {
 fn load_from_properties(url: &str, contents: &[u8])
                         -> Result<ZoomLevels, KrpanoError> {
     let image_properties: KrpanoMetadata = serde_xml_rs::from_reader(remove_bom(contents))?;
-    let slash_pos = url.rfind('/').unwrap_or(url.len() - 1);
-    let base_url = &Arc::new(format!("{}/", &url[0..slash_pos]));
+    let base_url = &Arc::new(url.to_string());
 
     Ok(image_properties.image.into_iter().flat_map(move |image| {
         let root_tile_size = image.tilesize.map(Vec2d::square);
