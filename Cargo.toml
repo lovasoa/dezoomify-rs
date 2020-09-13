@@ -1,6 +1,6 @@
 [package]
 name = "dezoomify-rs"
-version = "2.3.3"
+version = "2.4.0"
 authors = ["lovasoa"]
 edition = "2018"
 license-file = "LICENSE"
@@ -46,6 +46,7 @@ fixedbitset = "0.3"
 [dev-dependencies]
 criterion = "0.3"
 img_hash = "3"
+rand = "0.7"
 
 [[bench]]
 name = "local_dezoomifying"

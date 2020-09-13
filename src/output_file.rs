@@ -56,8 +56,10 @@ mod tests {
     use std::error::Error;
     use std::fs::{create_dir, File, remove_dir_all, remove_file};
     use std::hash::{Hash, Hasher};
+    use std::io::ErrorKind::AlreadyExists;
     use std::panic::{catch_unwind, RefUnwindSafe};
     use std::process::id;
+    use std::time::{Duration, Instant};
 
     use super::*;
 
@@ -66,7 +68,11 @@ mod tests {
         value.hash(hasher);
         let hash = hasher.finish();
         let lock = temp_dir().join("dezoomify-rs-lock");
-        while create_dir(&lock).is_err() {} // Wait for the lock to be free
+        let start = Instant::now();
+        while create_dir(&lock).map_err(|e| e.kind()) == Err(AlreadyExists) {
+            // Wait for the lock to be free
+            if Instant::now() - start > Duration::from_secs(10) { panic!("Unable to lock {:?}", lock) }
+        }
         let res = catch_unwind(|| {
             let cwd = current_dir().expect("Unable to getcwd");
             let tmp = lock.join(format!("dezoomify-rs-test-{}-{:?}", id(), hash));
