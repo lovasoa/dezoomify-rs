@@ -51,10 +51,10 @@ pub fn get_outname(outfile: &Option<PathBuf>, zoom_name: &Option<String>, size: 
 
 #[cfg(test)]
 mod tests {
-    use std::env::set_current_dir;
-    use std::env::temp_dir;
+    use std::env::{current_dir, set_current_dir, temp_dir};
     use std::error::Error;
-    use std::fs::{File, remove_file};
+    use std::fs::{create_dir, File, remove_dir_all, remove_file};
+    use std::time::SystemTime;
 
     use super::*;
 
@@ -62,6 +62,18 @@ mod tests {
         let cwd = temp_dir();
         set_current_dir(&cwd)?;
         Ok(cwd)
+    }
+
+    fn in_tmp_dir<T, F: FnMut() -> T>(mut f: F) -> Result<T, Box<dyn Error>> {
+        let cwd = current_dir()?;
+        let mut tmp = temp_dir();
+        tmp.push(format!("dezoomify-rs-{:?}", SystemTime::now()));
+        create_dir(&tmp)?;
+        set_current_dir(&tmp)?;
+        let res = f();
+        set_current_dir(&cwd)?;
+        remove_dir_all(&tmp)?;
+        Ok(res)
     }
 
     fn assert_filename_ok(filename: &str) -> Result<(), Box<dyn Error>> {
@@ -83,7 +95,11 @@ mod tests {
             "\"Is It So Nominated in the Bond?\" (Scene from \"The Merchant of Venice\")",
             "", // test empty name
         ];
-        for filename in filenames { assert_filename_ok(filename)?; }
+        for filename in filenames {
+            in_tmp_dir(|| {
+                assert_filename_ok(filename)
+            })??;
+        }
         Ok(())
     }
 
@@ -99,30 +115,19 @@ mod tests {
 
     #[test]
     fn switch_to_png_for_large_files() {
-        move_to_tmp().unwrap();
-        assert_eq!(
-            get_outname(&None, &Some("hello".to_string()), None),
-            PathBuf::from("hello.png")
-        );
-        assert_eq!(
-            get_outname(&None, &Some("hello".to_string()), Some(Vec2d { x: 1000, y: 1000 })),
-            PathBuf::from("hello.jpg")
-        );
-        assert_eq!(
-            get_outname(&None, &Some(String::new()), None),
-            PathBuf::from("dezoomified.png")
-        );
-        assert_eq!(
-            get_outname(&None, &None, None),
-            PathBuf::from("dezoomified.png")
-        );
-        assert_eq!(
-            get_outname(&None, &None, Some(Vec2d { x: 1000, y: 1000 })),
-            PathBuf::from("dezoomified.jpg")
-        );
-        assert_eq!(
-            get_outname(&Some("test.tiff".into()), &Some("hello".to_string()), Some(Vec2d { x: 1000, y: 1000 })),
-            PathBuf::from("test.tiff")
-        );
+        let tests = vec![
+            // outfile, zoom_name, size, expected_result
+            (None, Some("hello".to_string()), None, "hello.png"),
+            (None, Some("hello".to_string()), Some(Vec2d { x: 1000, y: 1000 }), "hello.jpg", ),
+            (None, Some(String::new()), None, "dezoomified.png", ),
+            (None, None, None, "dezoomified.png"),
+            (None, None, Some(Vec2d { x: 1000, y: 1000 }), "dezoomified.jpg"),
+            (Some("test.tiff".into()), Some("hello".to_string()), Some(Vec2d { x: 1000, y: 1000 }), "test.tiff"),
+        ];
+        for (outfile, zoom_name, size, expected_result) in tests.into_iter() {
+            in_tmp_dir(|| {
+                assert_eq!(get_outname(&outfile, &zoom_name, size), PathBuf::from(expected_result))
+            }).unwrap();
+        }
     }
 }
