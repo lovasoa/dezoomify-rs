@@ -91,11 +91,13 @@ impl<T: TileSaver> Retiler<T> {
     pub fn add_tile(&mut self, tile: &Tile) -> io::Result<()> {
         let tile_size = self.tile_size;
         let scale_factor = self.scale_factor;
-        let scaled_size = tile.size().ceil_div(scale_factor);
+        let scaled_top_left = tile.position() / scale_factor;
+        let scaled_bottom_right = tile.bottom_right().ceil_div(scale_factor);
+        let scaled_size = scaled_bottom_right - scaled_top_left;
         let covered_tiles_positions = self.tile_positions(tile.position, tile.size());
         let scaled_tile = if scale_factor == 1 { None } else {
             Some(Tile {
-                position: tile.position / scale_factor,
+                position: scaled_top_left,
                 image: tile.image.resize_exact(scaled_size.x, scaled_size.y, FilterType::Gaussian),
             })
         };
@@ -299,14 +301,30 @@ mod tests {
             image: plain_image(Vec2d { x: 2, y: 2 }, 16),
             position: Vec2d { x: 0, y: 1 },
         }).unwrap();
+        retiler.finalize();
+        /* We created the following image :
+           |----+----|  +---------+
+           | 64 | 64 |  |         |
+           |----+----|  + tile 1  |
+           | 16 | 16 |  |         |
+           |----+----|  +---------+
+           | 16 | 16 |  | tile 2  |
+           +----+----+  +---------+
+        */
         let expected_first_tile = DynamicImage::ImageLuma8(
             ImageBuffer::from_raw(2, 2, vec![
                 64, 64,
                 16, 16
             ]).unwrap());
+        let expected_zoomed_out_tile = DynamicImage::ImageLuma8(
+            ImageBuffer::from_raw(1, 2, vec![
+                16, 16, // A scaled down version of the whole image
+            ]).unwrap());
         assert_eq!(tile_saver.get_added(), vec![
+            //   ( covered size , Tile {position in target, size in target, pixels })
             (Vec2d { x: 2, y: 2 }, Tile { position: Vec2d { x: 0, y: 0 }, image: expected_first_tile }),
             (Vec2d { x: 2, y: 1 }, Tile { position: Vec2d { x: 0, y: 2 }, image: plain_image(Vec2d { x: 2, y: 1 }, 16) }),
+            (image_size, Tile { position: Vec2d { x: 0, y: 0 }, image: expected_zoomed_out_tile }),
         ]);
     }
 }
