@@ -51,11 +51,9 @@ pub fn get_outname(outfile: &Option<PathBuf>, zoom_name: &Option<String>, size: 
 
 #[cfg(test)]
 mod tests {
-    use std::collections::hash_map::DefaultHasher;
     use std::env::{current_dir, set_current_dir, temp_dir};
     use std::error::Error;
     use std::fs::{create_dir, File, remove_dir_all, remove_file};
-    use std::hash::{Hash, Hasher};
     use std::io::ErrorKind::AlreadyExists;
     use std::panic::{catch_unwind, RefUnwindSafe};
     use std::process::id;
@@ -63,27 +61,24 @@ mod tests {
 
     use super::*;
 
-    fn in_tmp_dir<T, F: RefUnwindSafe + Fn(&PathBuf) -> T, H: Hash>(f: F, value: H) -> T {
-        let hasher = &mut DefaultHasher::new();
-        value.hash(hasher);
-        let hash = hasher.finish();
-        let lock = temp_dir().join("dezoomify-rs-lock");
+    fn in_tmp_dir<T, F: RefUnwindSafe + Fn(&PathBuf) -> T>(f: F) -> T {
+        let tmp = temp_dir().join(format!("dezoomify-rs-lock-{}", id()));
         let start = Instant::now();
-        while create_dir(&lock).map_err(|e| e.kind()) == Err(AlreadyExists) {
+        while create_dir(&tmp).map_err(|e| e.kind()) == Err(AlreadyExists) {
             // Wait for the lock to be free
-            if Instant::now() - start > Duration::from_secs(10) { panic!("Unable to lock {:?}", lock) }
+            if Instant::now() - start > Duration::from_secs(10) {
+                let _ = remove_dir_all(&tmp);
+                panic!("Unable to lock {:?}", tmp);
+            }
         }
         let res = catch_unwind(|| {
             let cwd = current_dir().expect("Unable to getcwd");
-            let tmp = lock.join(format!("dezoomify-rs-test-{}-{:?}", id(), hash));
-            create_dir(&tmp).expect(&format!("Unable to create {:?}", &tmp));
             set_current_dir(&tmp).expect(&format!("Unable to cd into {:?}", &tmp));
             let res = f(&tmp);
-            remove_dir_all(&tmp).expect(&format!("Unable to rm -r {:?}", &tmp));
             set_current_dir(&cwd).expect(&format!("Unable to cd into {:?}", &cwd));
             res
         });
-        remove_dir_all(&lock).expect("Unable to remove dezoomify-rs test dir");
+        remove_dir_all(&tmp).expect("Unable to remove dezoomify-rs test dir");
         res.unwrap()
     }
 
@@ -108,7 +103,7 @@ mod tests {
         for filename in filenames {
             in_tmp_dir(|_| {
                 assert_filename_ok(filename).expect(&format!("Invalid filename {}", filename))
-            }, filename);
+            });
         }
         Ok(())
     }
@@ -119,7 +114,7 @@ mod tests {
             let name = cwd.join("xxx");
             File::create(&name).expect("cannot create file");
             assert_filename_ok(&name.to_string_lossy()).expect("Invalid file name")
-        }, "xxx")
+        })
     }
 
     #[test]
@@ -136,7 +131,7 @@ mod tests {
         for (outfile, zoom_name, size, expected_result) in tests.into_iter() {
             in_tmp_dir(|_| {
                 assert_eq!(get_outname(&outfile, &zoom_name, size), PathBuf::from(expected_result))
-            }, (&outfile, &zoom_name, &size));
+            });
         }
     }
 }
