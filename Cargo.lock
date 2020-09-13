@@ -524,7 +524,6 @@ dependencies = [
  "lazy_static",
  "log",
  "png",
- "rand",
  "regex",
  "reqwest",
  "sanitize-filename-reader-friendly",

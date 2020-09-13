@@ -73,7 +73,9 @@ Each image format encoder has a distinct set of features and limitations :
     The JPEG encoder in dezoomify-rs requires the whole image to fit in memory on your computer.
  - All formats [supported by image-rs](https://github.com/image-rs/image#21-supported-image-formats)
    are also supported.
- - There is also experimental support for re-tiling images in the [IIIF](https://iiif.io/) format.
+ - [**IIIF**](https://iiif.io/), which allows you to re-create a zoomable image locally.
+   This is the recommended output format when your image is very large
+   (multiple hundreds of megapixels), since most image viewers do not accept huge PNGs or JPEGs.
    If the output path ends with `.iiif`, a folder will be created instead of a single file,
    with its structure following the IIIF specification.
    A file called `viewer.html` will be created inside this folder,
