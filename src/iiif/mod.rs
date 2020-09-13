@@ -1,14 +1,15 @@
 use std::sync::Arc;
 
 use custom_error::custom_error;
+use log::info;
 use serde::export::Formatter;
 
 use tile_info::ImageInfo;
 
 use crate::dezoomer::*;
 use crate::iiif::tile_info::TileSizeFormat;
+use crate::json_utils::all_json;
 use crate::max_size_in_rect;
-use log::info;
 
 pub mod tile_info;
 
@@ -33,7 +34,6 @@ impl Dezoomer for IIIF {
     }
 
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
-        self.assert(data.uri.ends_with("/info.json"))?;
         let with_contents = data.with_contents()?;
         let contents = with_contents.contents;
         let uri = with_contents.uri;
@@ -42,7 +42,22 @@ impl Dezoomer for IIIF {
 }
 
 fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
-    let image_info: ImageInfo = serde_json::from_slice(raw_info)?;
+    match serde_json::from_slice(raw_info) {
+        Ok(info) => zoom_levels_from_info(url, info),
+        Err(e) => {
+            let levels: Vec<ZoomLevel> = all_json(raw_info)
+                .flat_map(|info| zoom_levels_from_info(url, info).into_iter().flatten())
+                .collect();
+            if levels.is_empty() {
+                Err(e.into())
+            } else {
+                Ok(levels)
+            }
+        }
+    }
+}
+
+fn zoom_levels_from_info(url: &str, image_info: ImageInfo) -> Result<ZoomLevels, IIIFError> {
     let img = Arc::new(image_info);
     let tiles = img.tiles();
     let base_url = &Arc::new(url.replace("/info.json", ""));

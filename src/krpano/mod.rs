@@ -42,8 +42,7 @@ impl From<KrpanoError> for DezoomerError {
 fn load_from_properties(url: &str, contents: &[u8])
                         -> Result<ZoomLevels, KrpanoError> {
     let image_properties: KrpanoMetadata = serde_xml_rs::from_reader(remove_bom(contents))?;
-    let slash_pos = url.rfind('/').unwrap_or(url.len() - 1);
-    let base_url = &Arc::new(format!("{}/", &url[0..slash_pos]));
+    let base_url = &Arc::new(url.to_string());
 
     Ok(image_properties.image.into_iter().flat_map(move |image| {
         let root_tile_size = image.tilesize.map(Vec2d::square);
@@ -165,6 +164,6 @@ fn test_flat_multires() {
     assert_eq!(levels[1].size_hint(), Some(Vec2d { x: 3, y: 4 }));
     assert_eq!(format!("{:?}", levels[0]), "Krpano Flat");
     assert_eq!(levels[1].next_tiles(None), vec![
-        TileReference { url: "level=2 x=01 y=01".to_string(), position: Vec2d { x: 0, y: 0 } },
-        TileReference { url: "level=2 x=01 y=02".to_string(), position: Vec2d { x: 0, y: 3 } }]);
+        TileReference { url: "http://test.com/level=2%20x=01%20y=01".to_string(), position: Vec2d { x: 0, y: 0 } },
+        TileReference { url: "http://test.com/level=2%20x=01%20y=02".to_string(), position: Vec2d { x: 0, y: 3 } }]);
 }

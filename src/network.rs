@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::iter::once;
+use std::path::PathBuf;
 
 use log::debug;
 use reqwest::{Client, header};
@@ -57,12 +58,16 @@ pub fn default_headers() -> HashMap<String, String> {
 }
 
 pub fn resolve_relative(base: &str, path: &str) -> String {
-    if let Ok(url) = Url::parse(base) {
+    if Url::parse(path).is_ok() {
+        return path.to_string()
+    } else if let Ok(url) = Url::parse(base) {
         if let Ok(r) = url.join(path) {
             return r.to_string()
         }
     }
-    base.rsplit('/').next().unwrap_or_default().to_string() + path
+    let mut res = PathBuf::from(base.rsplitn(2, '/').last().unwrap_or_default());
+    res.push(path);
+    res.to_string_lossy().to_string()
 }
 
 pub fn remove_bom(contents: &[u8]) -> &[u8] {
@@ -72,4 +77,16 @@ pub fn remove_bom(contents: &[u8]) -> &[u8] {
     if contents.starts_with(BOM) {
         &contents[BOM.len()..]
     } else { contents }
+}
+
+#[test]
+fn test_resolve_relative() {
+    use std::path::MAIN_SEPARATOR;
+    assert_eq!(resolve_relative("/a/b", "c/d"), format!("/a{}c/d", MAIN_SEPARATOR));
+    assert_eq!(resolve_relative("C:\\X", "c/d"), format!("C:\\X{}c/d", MAIN_SEPARATOR));
+    assert_eq!(resolve_relative("/a/b", "http://example.com/x"), "http://example.com/x");
+    assert_eq!(resolve_relative("http://a.b", "http://example.com/x"), "http://example.com/x");
+    assert_eq!(resolve_relative("http://a.b", "c/d"), "http://a.b/c/d");
+    assert_eq!(resolve_relative("http://a.b/x", "c/d"), "http://a.b/c/d");
+    assert_eq!(resolve_relative("http://a.b/x/", "c/d"), "http://a.b/x/c/d");
 }

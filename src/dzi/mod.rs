@@ -1,9 +1,13 @@
 use std::sync::Arc;
 
 use custom_error::custom_error;
+use log::debug;
+
 use dzi_file::DziFile;
 
 use crate::dezoomer::*;
+use crate::dzi::dzi_file::{DziJsonFile, DziUrlType, GenericDziFile};
+use crate::json_utils::all_json;
 use crate::network::remove_bom;
 
 mod dzi_file;
@@ -28,7 +32,7 @@ impl Dezoomer for DziDezoomer {
 custom_error! {pub DziError
     XmlError{source: serde_xml_rs::Error} = "Unable to parse the dzi file: {source}",
     NoSize = "Expected a size in the DZI file",
-    InvalidTileSize = "Invalid tile size",
+    InvalidTileSize = "Invalid tile size. The tile size cannot be zero.",
 }
 
 impl From<DziError> for DezoomerError {
@@ -41,14 +45,26 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, DziErr
 
     // Workaround for https://github.com/netvl/xml-rs/issues/155
     // which the original author seems unwilling to fix
-    let image_properties: DziFile = serde_xml_rs::from_reader(remove_bom(contents))?;
+    serde_xml_rs::from_reader::<_, DziFile>(remove_bom(contents))
+        .map_err(DziError::from)
+        .and_then(|dzi| load_from_dzi(url, dzi))
+        .or_else(|e| {
+            let levels: Vec<ZoomLevel> = all_json::<DziJsonFile>(contents)
+                .flat_map(|dzi| load_from_dzi(url, dzi))
+                .flatten()
+                .collect();
+            if levels.is_empty() { Err(e) } else { Ok(levels) }
+        })
+}
+
+fn load_from_dzi<T: DziUrlType>(url: &str, image_properties: GenericDziFile<T>) -> Result<ZoomLevels, DziError> {
+    debug!("Found dzi meta-information: {:?}", image_properties);
 
     if image_properties.tile_size == 0 {
         return Err(DziError::InvalidTileSize);
     }
 
-    let dot_pos = url.rfind('.').unwrap_or(url.len() - 1);
-    let base_url = &Arc::new(format!("{}_files", &url[0..dot_pos]));
+    let base_url = &Arc::new(image_properties.base_url(url));
 
     let size = image_properties.get_size()?;
     let max_level = image_properties.max_level();
@@ -111,11 +127,17 @@ impl TilesRect for DziLevel {
             position: self.tile_size() * pos - delta,
         }
     }
+
+    fn title(&self) -> Option<String> {
+        let suffix = self.base_url.rsplitn(2, '/').next().unwrap_or("");
+        let name = suffix.trim_end_matches("_files");
+        Some(name.to_string())
+    }
 }
 
 impl std::fmt::Debug for DziLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Deep Zoom Image")
+        write!(f, "{} (Deep Zoom Image)", TileProvider::title(self).unwrap_or_default())
     }
 }
 
@@ -154,4 +176,34 @@ fn test_dzi_with_bom() {
         <Size Width=\"6261\" Height=\"6047\" />
         </Image>";
     load_from_properties("http://test.com/test.xml", contents.as_ref()).unwrap();
+}
+
+#[test]
+fn test_openseadragon_javascript() {
+    // See https://github.com/lovasoa/dezoomify-rs/issues/45
+    // Trying to parse a file with a byte order mark
+    let contents = r#"OpenSeadragon({
+            id:            "example-inline-configuration-for-dzi",
+            prefixUrl:     "/openseadragon/images/",
+            showNavigator:  true,
+            tileSources:   {
+                Image: {
+                    xmlns:    "http://schemas.microsoft.com/deepzoom/2008",
+                    Url:      "/example-images/highsmith/highsmith_files/",
+                    Format:   "jpg",
+                    Overlap:  "2",
+                    TileSize: "256",
+                    Size: {
+                        Height: "9221",
+                        Width:  "7026"
+                    }
+                }
+            }
+        });
+    "#;
+    let level =
+        &mut load_from_properties("http://test.com/x/test.xml", contents.as_ref()).unwrap()[0];
+    assert_eq!(Some(Vec2d { y: 9221, x: 7026 }), level.size_hint());
+    let tiles: Vec<String> = level.next_tiles(None).into_iter().map(|t| t.url).collect();
+    assert_eq!(tiles[0], "http://test.com/example-images/highsmith/highsmith_files/14/0_0.jpg");
 }
