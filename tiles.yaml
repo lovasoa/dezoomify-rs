@@ -1,20 +1,10 @@
 # The url of individual tiles, where {{ expressions }} will be evaluated using the variables below
-url_template: "http://mw2.google.com/mw-earth-vectordb/gallery_layers/prado/P02179/img/img_7_{{x/tilesize}}_{{93-y/tilesize}}.jpg"
-
+url_template: "https://openseadragon.github.io/example-images/highsmith/highsmith_zdata/TileGroup0/3-{{x}}-{{y}}.jpg"
+x_template: "x * tile_size"
+y_template: "y * tile_size"
 variables:
-  # The x position of tiles goes from 0 to the image width with an increment of the tile width
-  - name: x
-    from: 0
-    to: 18944 # Image width = 74 * 256
-    step: 256 # Tile width
-
-  - name: y
-    from: 0
-    to: 23808 # Image height
-    step: 256 # Tile height
-
-  - name: tile_size
-    value: 256
-
+  - { name: x, from: 0, to: 3 } # Image width, in tiles
+  - { name: y, from: 0, to: 4 } # Image height, in tiles
+  - { name: tile_size, value: 256 }
 headers:
-  Referer: http://www.asmilano.it/
+  Referer: "https://openseadragon.github.io/examples/tilesource-zoomify/"
