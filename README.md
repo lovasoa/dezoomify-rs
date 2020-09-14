@@ -164,11 +164,13 @@ http://example.com/my_image/image-{{X:02}}-{{Y:02}}.jpg
 
 ### Custom yaml
 
-The custom dezoomer can be used when you know the form of the individual tile URLs,
-as well as some meta-informations about the file.
-
-In order to use this dezoomer, you'll need to create a `tiles.yaml` file.
-See: [Usage example for the custom YAML dezoomer](https://github.com/lovasoa/dezoomify-rs/wiki/Usage-example-for-the-custom-YAML-dezoomer).
+The [custom yaml dezoomer](https://github.com/lovasoa/dezoomify-rs/wiki/Usage-example-for-the-custom-YAML-dezoomer)
+is a powerful tool that lets you download tiled images in many different formats, including formats that are not explicitly 
+supported by dezoomify-rs.
+In order to use this dezoomer, you'll need to create a `tiles.yaml` file, which is a little bit technical, but we have 
+[a tutorial for the custom YAML dezoomer](https://github.com/lovasoa/dezoomify-rs/wiki/Usage-example-for-the-custom-YAML-dezoomer) to help you.
+If you are having troubles understanding the tutorial or adapting it to your use-case, you should get in touch by
+[opening a new github issue](https://github.com/lovasoa/dezoomify-rs/issues?q=).
 
 ## Command-line options
 
