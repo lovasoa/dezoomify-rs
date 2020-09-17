@@ -32,9 +32,9 @@ The following dezoomers are currently available:
  - [**Zoomify PFF**](#zoomify-pff) supports the old zoomify single-file image format.
  - [**Krpano**](#krpano) supports the [krpano](https://krpano.com/home/) panorama viewer
  - [**IIPImage**](#iipimage) supports the [iipimage](https://iipimage.sourceforge.io/) image format
- - [**generic**](#Generic) For when you know the format of the tile URLs.
+ - [**generic**](#Generic) For when the tile URLs follow a simple pattern.
  - [**custom**](#Custom-yaml) for advanced users.
-    It allows you to specify a custom tile URL format.
+   It allows you to specify a custom tile URL format that can contain multiple variables. This gives you the most flexibity, but requires some manual work.
 
 ## Screenshots
 
@@ -58,7 +58,8 @@ before being able to launch it. See how to do
 
 Dezoomify-rs supports multiple output image formats.
 The format to use is determined by the name of the output file.
-For instance, `dezoomify-rs http://example.com/ my_image.png` will create a PNG image.
+For instance, entering `dezoomify-rs http://example.com/ my_image.png` on the command line
+will create a PNG image.
 
 Each image format encoder has a distinct set of features and limitations :
  - **PNG** images are compressed losslessly, which means that the output image quality
@@ -91,6 +92,10 @@ https://artsandculture.google.com/asset/light-in-the-dark/ZQFouDGMVmsI2w
 ### Zoomify
 
 You have to give dezoomify-rs an url to the `ImageProperties.xml` file.
+You can use [dezoomify-extension](https://lovasoa.github.io/dezoomify-extension/) to
+find the URL of this file.
+
+Alternatively, you can find it out manually by opening your network inspector.
 If the image tile URLs have the form
 `http://example.com/path/to/TileGroup1/1-2-3.jpg`,
 then the URL to enter is
@@ -100,11 +105,17 @@ then the URL to enter is
 
 The IIIF dezoomer takes the URL of an
  [`info.json`](https://iiif.io/api/image/2.1/#image-information) file as input.
-You can find this url in your browser's network inspector when loading the image.
+ 
+You can use [dezoomify-extension](https://lovasoa.github.io/dezoomify-extension/) to
+find the URL of this file.
+
+Alternatively, you can find this url in your browser's network inspector when loading the image.
 
 ### DeepZoom
 
-The DeepZoom dezoomer takes the URL of a `dzi` file as input.
+The DeepZoom dezoomer takes the URL of a `dzi` file as input, which you can find using 
+[dezoomify-extension](https://lovasoa.github.io/dezoomify-extension/).
+
 You can find this url in your browser's network inspector when loading the image.
 If the image tile URLs have the form
 `http://test.com/y/xy_files/1/2_3.jpg`,
@@ -167,8 +178,9 @@ http://example.com/my_image/image-{{X:02}}-{{Y:02}}.jpg
 The [custom yaml dezoomer](https://github.com/lovasoa/dezoomify-rs/wiki/Usage-example-for-the-custom-YAML-dezoomer)
 is a powerful tool that lets you download tiled images in many different formats, including formats that are not explicitly 
 supported by dezoomify-rs.
-In order to use this dezoomer, you'll need to create a `tiles.yaml` file, which is a little bit technical, but we have 
-[a tutorial for the custom YAML dezoomer](https://github.com/lovasoa/dezoomify-rs/wiki/Usage-example-for-the-custom-YAML-dezoomer) to help you.
+In order to use this dezoomer, you'll need to create a `tiles.yaml` file, which is a little bit technical.
+However, we have a [a tutorial for the custom YAML dezoomer](https://github.com/lovasoa/dezoomify-rs/wiki/Usage-example-for-the-custom-YAML-dezoomer)
+to help you.
 If you are having troubles understanding the tutorial or adapting it to your use-case, you should get in touch by
 [opening a new github issue](https://github.com/lovasoa/dezoomify-rs/issues?q=).
 
