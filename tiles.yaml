@@ -1,3 +1,7 @@
+# This is a tiles.yaml file for dezoomify-rs
+# For more information about how to adapt this file to your use case, see:
+# https://github.com/lovasoa/dezoomify-rs/wiki/Usage-example-for-the-custom-YAML-dezoomer
+
 # The url of individual tiles, where {{ expressions }} will be evaluated using the variables below
 url_template: "https://openseadragon.github.io/example-images/highsmith/highsmith_zdata/TileGroup0/3-{{x}}-{{y}}.jpg"
 x_template: "x * tile_size"
