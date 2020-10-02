@@ -46,6 +46,7 @@ pub fn client<'a, I: Iterator<Item=(&'a String, &'a String)>>(
     debug!("Creating an http client with the following headers: {:?}", header_map);
     let client = reqwest::Client::builder()
         .default_headers(header_map)
+        .referer(false)
         .pool_max_idle_per_host(args.max_idle_per_host)
         .danger_accept_invalid_certs(args.accept_invalid_certs)
         .timeout(args.timeout)
