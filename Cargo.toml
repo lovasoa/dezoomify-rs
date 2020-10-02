@@ -1,6 +1,6 @@
 [package]
 name = "dezoomify-rs"
-version = "2.4.0"
+version = "2.4.1"
 authors = ["lovasoa"]
 edition = "2018"
 license-file = "LICENSE"
@@ -33,7 +33,7 @@ block-modes = "0.6"
 aes = "0.5"
 hmac = "0.9"
 sha-1 = "0.9"
-base64 = "0.12"
+base64 = "0.13"
 indicatif = "0.15"
 sanitize-filename-reader-friendly = "1"
 colour = "0.5"
