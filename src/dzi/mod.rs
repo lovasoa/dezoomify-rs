@@ -6,7 +6,6 @@ use log::debug;
 use dzi_file::DziFile;
 
 use crate::dezoomer::*;
-use crate::dzi::dzi_file::{DziJsonFile, DziUrlType, GenericDziFile};
 use crate::json_utils::all_json;
 use crate::network::remove_bom;
 
@@ -49,7 +48,7 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, DziErr
         .map_err(DziError::from)
         .and_then(|dzi| load_from_dzi(url, dzi))
         .or_else(|e| {
-            let levels: Vec<ZoomLevel> = all_json::<DziJsonFile>(contents)
+            let levels: Vec<ZoomLevel> = all_json::<DziFile>(contents)
                 .flat_map(|dzi| load_from_dzi(url, dzi))
                 .flatten()
                 .collect();
@@ -57,7 +56,7 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, DziErr
         })
 }
 
-fn load_from_dzi<T: DziUrlType>(url: &str, image_properties: GenericDziFile<T>) -> Result<ZoomLevels, DziError> {
+fn load_from_dzi(url: &str, image_properties: DziFile) -> Result<ZoomLevels, DziError> {
     debug!("Found dzi meta-information: {:?}", image_properties);
 
     if image_properties.tile_size == 0 {

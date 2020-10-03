@@ -8,10 +8,8 @@ use crate::Vec2d;
 
 use super::DziError;
 
-pub trait DziUrlType: Debug { fn compute_base_url(&self, resource_url: &str) -> String; }
-
 #[derive(Debug, Deserialize, PartialEq)]
-pub struct GenericDziFile<BaseUrlType: DziUrlType> {
+pub struct DziFile {
     #[serde(rename = "Overlap", deserialize_with = "number_or_string", default)]
     pub overlap: u32,
     #[serde(rename = "TileSize", deserialize_with = "number_or_string")]
@@ -21,13 +19,10 @@ pub struct GenericDziFile<BaseUrlType: DziUrlType> {
     #[serde(rename = "Size")]
     pub size: Size,
     #[serde(rename = "Url")]
-    pub base_url: BaseUrlType,
+    pub base_url: Option<String>,
 }
 
-pub type DziFile = GenericDziFile<Option<String>>;
-pub type DziJsonFile = GenericDziFile<String>;
-
-impl<T: DziUrlType> GenericDziFile<T> {
+impl DziFile {
     pub fn get_size(&self) -> Result<Vec2d, DziError> {
         Ok(Vec2d { x: self.size.width, y: self.size.height })
     }
@@ -38,26 +33,16 @@ impl<T: DziUrlType> GenericDziFile<T> {
         let size = self.get_size().unwrap();
         log2(size.x.max(size.y))
     }
-    pub fn base_url(&self, resource_url: &str) -> String { self.base_url.compute_base_url(resource_url) }
-}
-
-impl DziUrlType for Option<String> {
-    fn compute_base_url(&self, resource_url: &str) -> String {
-        if let Some(s) = self {
-            s.compute_base_url(resource_url)
+    pub fn base_url(&self, resource_url: &str) -> String {
+        if let Some(s) = &self.base_url {
+            let relative_url_str = s.trim_end_matches('/');
+            resolve_relative(resource_url, relative_url_str)
         } else {
             let until_dot = if let Some(dot_pos) = resource_url.rfind('.') {
                 &resource_url[0..dot_pos]
             } else { resource_url };
             format!("{}_files", until_dot)
         }
-    }
-}
-
-impl DziUrlType for String {
-    fn compute_base_url(&self, resource_url: &str) -> String {
-        let relative_url_str = self.trim_end_matches('/');
-        resolve_relative(resource_url, relative_url_str)
     }
 }
 
