@@ -10,6 +10,7 @@ use crate::dezoomer::*;
 use crate::iiif::tile_info::TileSizeFormat;
 use crate::json_utils::all_json;
 use crate::max_size_in_rect;
+use regex::bytes::Regex;
 
 pub mod tile_info;
 
@@ -45,12 +46,25 @@ fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
     match serde_json::from_slice(raw_info) {
         Ok(info) => zoom_levels_from_info(url, info),
         Err(e) => {
-            let levels: Vec<ZoomLevel> = all_json(raw_info)
+            // Due to the very fault-tolerant way we parse iiif manifests, a single javascript
+            // object with a 'width' and a 'height' field is enough to be detected as an IIIF level
+            // See https://github.com/lovasoa/dezoomify-rs/issues/80
+            let openseadragon_detected =
+                Regex::new(r"[oO]pen[sS]eadragon|tileSources").unwrap().is_match(raw_info);
+            let levels: Vec<ZoomLevel> = all_json::<ImageInfo>(raw_info)
+                .filter(|info| {
+                    let keep = openseadragon_detected || !info.has_distinctive_iiif_properties();
+                    if !keep { info!("dropping level {:?}", info); }
+                    keep
+                })
                 .flat_map(|info| zoom_levels_from_info(url, info).into_iter().flatten())
                 .collect();
             if levels.is_empty() {
                 Err(e.into())
             } else {
+                info!("No normal info.json parsing failed ({}), \
+                but {} inline json5 zoom level(s) were found. \
+                OpenSeadragon detected: {}", e, levels.len(), openseadragon_detected);
                 Ok(levels)
             }
         }
@@ -71,7 +85,7 @@ fn zoom_levels_from_info(url: &str, image_info: ImageInfo) -> Result<ZoomLevels,
             let quality = Arc::new(img.best_quality());
             let format = Arc::new(img.best_format());
             let size_format = img.preferred_size_format();
-            info!("Chose the following image parameters: tile_size={} quality={} format={}",
+            info!("Chose the following image parameters: tile_size=({}) quality={} format={}",
                   tile_size, quality, format);
             let page_info = &img; // Required to allow the move
             tile_info

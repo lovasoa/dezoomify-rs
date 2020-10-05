@@ -124,6 +124,14 @@ impl ImageInfo {
                 vec![info]
             })
     }
+
+    /// Because our parser is so tolerant, we need to evaluate the probability
+    /// that this is not in fact a valid IIIF image
+    pub fn has_distinctive_iiif_properties(&self) -> bool {
+        self.id.is_some() || self.protocol.is_some() || self.context.is_some() ||
+            self.tiles.is_some() || self.iiif_type.is_some() || self.formats.is_some() ||
+            self.iiif_type.as_ref().filter(|&s| s == "iiif:ImageProfile").is_some()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
