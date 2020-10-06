@@ -7,6 +7,7 @@ use log::warn;
 use serde::{Deserialize, Serialize};
 
 use crate::Vec2d;
+use regex::Regex;
 
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ImageInfo {
@@ -131,6 +132,17 @@ impl ImageInfo {
         self.id.is_some() || self.protocol.is_some() || self.context.is_some() ||
             self.tiles.is_some() || self.iiif_type.is_some() || self.formats.is_some() ||
             self.iiif_type.as_ref().filter(|&s| s == "iiif:ImageProfile").is_some()
+    }
+
+    /// Some info.json files contain a an invalid value for "@id",
+    /// such as "localhost" or "example.com"
+    pub fn remove_test_id(&mut self) {
+        if let Some(id) = &self.id {
+            if Regex::new(r"^https?://((www\.)?example\.|localhost)").unwrap().is_match(id) {
+                info!("Removing probably invalid IIIF id '{}'", id);
+                self.id = None;
+            }
+        }
     }
 }
 

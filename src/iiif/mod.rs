@@ -71,7 +71,8 @@ fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
     }
 }
 
-fn zoom_levels_from_info(url: &str, image_info: ImageInfo) -> Result<ZoomLevels, IIIFError> {
+fn zoom_levels_from_info(url: &str, mut image_info: ImageInfo) -> Result<ZoomLevels, IIIFError> {
+    image_info.remove_test_id();
     let img = Arc::new(image_info);
     let tiles = img.tiles();
     let base_url = &Arc::new(url.replace("/info.json", ""));
