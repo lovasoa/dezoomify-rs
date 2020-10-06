@@ -20,7 +20,7 @@ pub enum PageContents {
 
 impl From<Result<Vec<u8>, ZoomError>> for PageContents {
     fn from(res: Result<Vec<u8>, ZoomError>) -> Self {
-        res.map(|c| Self::Success(c)).unwrap_or_else(|e| Self::Error(e))
+        res.map(Self::Success).unwrap_or_else(Self::Error)
     }
 }
 
