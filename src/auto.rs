@@ -52,11 +52,13 @@ impl Dezoomer for AutoDezoomer {
                 Ok(mut levels) => {
                     info!("dezoomer '{}' found {} zoom levels", dezoomer.name(), levels.len());
                     self.successes.append(&mut levels);
-                    true
+                    false
                 }
                 Err(DezoomerError::NeedsData { uri }) => {
                     info!("dezoomer '{}' requested to load {}", dezoomer.name(), &uri);
-                    self.needs_uris.push(uri);
+                    if !self.needs_uris.contains(&uri) {
+                        self.needs_uris.push(uri);
+                    }
                     true
                 }
                 Err(e) => {

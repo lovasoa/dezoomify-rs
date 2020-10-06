@@ -10,10 +10,33 @@ pub use super::Vec2d;
 use super::ZoomError;
 use std::fmt;
 use serde::export::Formatter;
+use crate::dezoomer::PageContents::Success;
+
+pub enum PageContents {
+    Unknown,
+    Success(Vec<u8>),
+    Error(ZoomError),
+}
+
+impl From<Result<Vec<u8>, ZoomError>> for PageContents {
+    fn from(res: Result<Vec<u8>, ZoomError>) -> Self {
+        res.map(|c| Self::Success(c)).unwrap_or_else(|e| Self::Error(e))
+    }
+}
+
+impl std::fmt::Debug for PageContents {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unknown => f.write_str("<not yet available>"),
+            Success(contents) => f.write_str(&String::from_utf8_lossy(contents)),
+            PageContents::Error(e) => write!(f, "{}", e)
+        }
+    }
+}
 
 pub struct DezoomerInput {
     pub uri: String,
-    pub contents: Option<Vec<u8>>,
+    pub contents: PageContents,
 }
 
 pub struct DezoomerInputWithContents<'a> {
@@ -23,15 +46,17 @@ pub struct DezoomerInputWithContents<'a> {
 
 impl DezoomerInput {
     pub fn with_contents(&self) -> Result<DezoomerInputWithContents, DezoomerError> {
-        if let Some(contents) = &self.contents {
-            Ok(DezoomerInputWithContents {
+        match &self.contents {
+            PageContents::Unknown => Err(DezoomerError::NeedsData {
+                uri: self.uri.clone(),
+            }),
+            Success(contents) => Ok(DezoomerInputWithContents {
                 uri: &self.uri,
                 contents,
-            })
-        } else {
-            Err(DezoomerError::NeedsData {
-                uri: self.uri.clone(),
-            })
+            }),
+            PageContents::Error(e) => {
+                Err(DezoomerError::DownloadError{msg: e.to_string()})
+            }
         }
     }
 }

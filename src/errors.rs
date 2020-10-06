@@ -42,6 +42,7 @@ custom_error! {
 custom_error! {pub DezoomerError
     NeedsData{uri: String}           = "Need to download data from {uri}",
     WrongDezoomer{name:&'static str} = "The '{name}' dezoomer cannot handle this URI",
+    DownloadError{msg: String} = "Unable to download required data: {msg}",
     Other{source: Box<dyn Error>}    = "Unable to create the dezoomer: {source}"
 }
 

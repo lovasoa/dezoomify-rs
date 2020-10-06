@@ -21,6 +21,7 @@ pub use vec2d::Vec2d;
 
 use crate::encoder::tile_buffer::TileBuffer;
 use crate::output_file::reserve_output_file;
+use crate::dezoomer::PageContents;
 use std::error::Error;
 use serde::export::Formatter;
 
@@ -62,16 +63,16 @@ async fn list_tiles(
 ) -> Result<ZoomLevels, ZoomError> {
     let mut i = DezoomerInput {
         uri: String::from(uri),
-        contents: None,
+        contents: PageContents::Unknown,
     };
     loop {
         match dezoomer.zoom_levels(&i) {
             Ok(levels) => return Ok(levels),
             Err(DezoomerError::NeedsData { uri }) => {
-                let contents = fetch_uri(&uri, http).await?;
-                debug!("Downloaded metadata file {}: '{}'", uri, String::from_utf8_lossy(&contents));
+                let contents = fetch_uri(&uri, http).await.into();
+                debug!("Response for metadata file '{}': {:?}", uri, &contents);
                 i.uri = uri;
-                i.contents = Some(contents);
+                i.contents = contents;
             }
             Err(e) => return Err(e.into()),
         }

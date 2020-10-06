@@ -3,12 +3,7 @@ use std::collections::HashSet;
 use lazy_static::lazy_static;
 use regex::Regex;
 
-use crate::dezoomer::{
-    Dezoomer,
-    DezoomerError, DezoomerInput, single_level,
-    TileFetchResult, TileProvider, TileReference,
-    ZoomLevels,
-};
+use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, single_level, TileFetchResult, TileProvider, TileReference, ZoomLevels};
 use crate::Vec2d;
 
 mod dichotomy_2d;
@@ -134,11 +129,12 @@ impl std::fmt::Debug for ZoomLevel {
 #[test]
 fn test_generic_dezoomer() {
     use std::collections::HashSet;
+    use crate::dezoomer::PageContents;
     let uri = "{{X}},{{Y}}".to_string();
     let mut lvl = GenericDezoomer {}
         .zoom_levels(&DezoomerInput {
             uri,
-            contents: None,
+            contents: PageContents::Unknown,
         })
         .unwrap()
         .into_iter()
