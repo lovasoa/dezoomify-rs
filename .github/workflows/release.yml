@@ -38,7 +38,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@master
       - name: get commit message
-        run: echo ::set-env name=commitmsg::$(git tag --format='%(subject)' -l | tail -n 1)
+        run: echo commitmsg=$(git tag --format='%(subject)' -l | tail -n 1) >> $GITHUB_ENV
       - name: Create Release
         id: create_release
         uses: actions/create-release@latest
@@ -47,7 +47,7 @@ jobs:
         with:
           tag_name: ${{ github.ref }}
           release_name: Release ${{ github.ref }}
-          body: ${{ env.commitmsg }}
+          body: ${{ env.commitmsg }}
           draft: false
           prerelease: false
 
