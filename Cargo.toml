@@ -1,6 +1,6 @@
 [package]
 name = "dezoomify-rs"
-version = "2.5.1"
+version = "2.5.2"
 authors = ["lovasoa"]
 edition = "2018"
 license-file = "LICENSE"
@@ -15,7 +15,7 @@ keywords = ["image", "download"]
 image = "0.23"
 png = "0.16"
 reqwest = { version = "0.10", features = ["gzip"] }
-tokio = { version = "0.2", features = ["rt-threaded", "rt-core", "macros", "rt-util", "time", "fs", "sync"] }
+tokio = { version = "0.3", features = ["rt-multi-thread", "rt", "macros", "time", "fs", "sync"] }
 futures = "0.3"
 custom_error = "1.7"
 structopt = "0.3"

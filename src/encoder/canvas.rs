@@ -37,7 +37,7 @@ impl Canvas {
 }
 
 impl Encoder for Canvas {
-    fn add_tile(self: &mut Self, tile: Tile) -> io::Result<()> {
+    fn add_tile(&mut self, tile: Tile) -> io::Result<()> {
         let sub_tile = crop_tile(&tile, self.size());
         let Vec2d { x, y } = tile.position();
         debug!("Copying tile data from {:?}", tile);
@@ -46,7 +46,7 @@ impl Encoder for Canvas {
         })
     }
 
-    fn finalize(self: &mut Self) -> io::Result<()> {
+    fn finalize(&mut self) -> io::Result<()> {
         self.image_writer.write(&self.image, &self.destination).map_err(|e| {
             match e {
                 image::ImageError::IoError(e) => e,

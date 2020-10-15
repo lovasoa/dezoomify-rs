@@ -93,7 +93,7 @@ pub enum TileBufferMsg {
 
 async fn buffer_tiles(mut encoder: Box<dyn Encoder>) -> TileBuffer {
     let (tile_sender, mut tile_receiver) = mpsc::channel(1024);
-    let (mut error_sender, error_receiver) = mpsc::channel(1);
+    let (error_sender, error_receiver) = mpsc::channel(1);
     tokio::spawn(async move {
         while let Some(msg) = tile_receiver.recv().await {
             match msg {

@@ -41,7 +41,7 @@ impl Encoder for PngEncoder {
             .add_tile(tile)
     }
 
-    fn finalize(self: &mut Self) -> io::Result<()> {
+    fn finalize(&mut self) -> io::Result<()> {
         let mut pixel_streamer = self.pixel_streamer
             .take().expect("Tried to finalize an image twice");
         pixel_streamer.finalize()?;

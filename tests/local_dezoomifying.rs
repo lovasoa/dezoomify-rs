@@ -10,7 +10,7 @@ use dezoomify_rs::{Arguments, dezoomify, ZoomError};
 
 /// Dezoom a file locally
 #[ignore] // Ignore this test by default because it's slow in debug mode
-#[tokio::test(threaded_scheduler)]
+#[tokio::test(flavor = "multi_thread")]
 pub async fn custom_size_local_zoomify_tiles() {
     test_image(
         "testdata/zoomify/test_custom_size/ImageProperties.xml",
@@ -18,7 +18,7 @@ pub async fn custom_size_local_zoomify_tiles() {
     ).await.unwrap()
 }
 
-#[tokio::test(threaded_scheduler)]
+#[tokio::test(flavor = "multi_thread")]
 pub async fn local_generic_tiles() {
     test_image(
         "testdata/generic/map_{{X}}_{{Y}}.jpg",
