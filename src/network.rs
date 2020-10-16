@@ -1,9 +1,8 @@
+use log::debug;
+use reqwest::{Client, header};
 use std::collections::HashMap;
 use std::iter::once;
 use std::path::PathBuf;
-
-use log::debug;
-use reqwest::{Client, header};
 use tokio::fs;
 use url::Url;
 
@@ -17,9 +16,11 @@ use crate::ZoomError;
 pub async fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
     if uri.starts_with("http://") || uri.starts_with("https://") {
         debug!("Loading url: '{}'", uri);
-        let response = http.get(uri).send().await?.error_for_status()?;
+        let response = http.get(uri).send()
+            .await?.error_for_status()?;
         let mut contents = Vec::new();
-        contents.extend(response.bytes().await?);
+        let bytes = response.bytes().await?;
+        contents.extend(bytes);
         debug!("Loaded url: '{}'", uri);
         Ok(contents)
     } else {

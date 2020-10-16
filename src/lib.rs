@@ -265,7 +265,7 @@ async fn download_tile(
             Ok(_) => { break; },
             Err(e) => {
                 warn!("{}. Retrying tile download in {:?}.", e, wait_time);
-                tokio::time::sleep(wait_time).await;
+                tokio::time::delay_for(wait_time).await;
                 wait_time *= 2;
             }
         }
