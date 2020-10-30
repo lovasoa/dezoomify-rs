@@ -104,7 +104,7 @@ impl FromStr for Metadata {
         use NYPLError::*;
         let _parsed = json::parse(s);
         if _parsed.is_err(){
-            return Err(JsonError);
+            return Err(JsonError{resp: s.to_string()});
         }
         let parsed = _parsed.unwrap();
         let meta = parsed["configs"]["0"].to_owned();
@@ -131,7 +131,8 @@ impl TryFrom<&[u8]> for Metadata {
 }
 
 custom_error! {#[derive(PartialEq)] pub NYPLError
-    JsonError = "Failed to parse NYPL Image meta as json",
+    JsonError{resp: String} = "Failed to parse NYPL Image meta as json, \
+        got content(blank shows the site has no zoom function for this one):\n {resp}",
     Utf8{source: std::str::Utf8Error} = "Invalid NYPLImage metadata file: {}",
 }
 
