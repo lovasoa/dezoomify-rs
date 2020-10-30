@@ -7,7 +7,6 @@ use std::convert::TryFrom;
 use std::iter::successors;
 use std::fmt::Debug;
 use serde::export::Formatter;
-use json::JsonValue;
 
 /// A dezoomer for NYPL images
 #[derive(Default)]
@@ -20,7 +19,6 @@ const NYPL_META_POSTFIX: &str = "/tiles/config.js";
 fn _get_image_url_from_meta_url(meta_url: &str) -> String {
     meta_url.replace(NYPL_META_PREFIX, "")
         .replace(NYPL_META_POSTFIX, "")
-        .to_owned()
 }
 
 macro_rules! nypl_meta_format_tpl {
@@ -104,13 +102,11 @@ impl FromStr for Metadata {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         use NYPLError::*;
-        let parsed: JsonValue;
         let _parsed = json::parse(s);
         if _parsed.is_err(){
             return Err(JsonError);
-        } else {
-            parsed = _parsed.unwrap();
         }
+        let parsed = _parsed.unwrap();
         let meta = parsed["configs"]["0"].to_owned();
         let width = meta["size"]["width"].as_str().unwrap()
             .parse::<u32>().unwrap();
