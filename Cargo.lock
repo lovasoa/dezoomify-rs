@@ -532,6 +532,7 @@ dependencies = [
  "img_hash",
  "indicatif",
  "itertools",
+ "json",
  "json5",
  "lazy_static",
  "log",
@@ -1091,6 +1092,12 @@ checksum = "ca059e81d9486668f12d455a4ea6daa600bd408134cd17e3d3fb5a32d1f016f8"
 dependencies = [
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "json"
+version = "0.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "078e285eafdfb6c4b434e0d31e8cfcb5115b651496faca5749b88fafd4f23bfd"
 
 [[package]]
 name = "json5"
