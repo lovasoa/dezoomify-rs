@@ -84,11 +84,11 @@ impl TilesRect for Level {
     fn tile_size(&self) -> Vec2d { self.metadata.tile_size }
 
     fn tile_url(&self, Vec2d { x, y }: Vec2d) -> String {
-        let Vec2d { x: _width, .. } = self.size().ceil_div(self.tile_size());
-        format!("https://access.nypl.org/image.php/{id}/tiles/0/12/{x}_{y}.png",
+        format!("https://access.nypl.org/image.php/{id}/tiles/0/12/{x}_{y}.{format}",
                 id = self.base,
                 x = x,
                 y = y,
+                format = self.metadata.format,
         )
     }
 }
@@ -98,6 +98,7 @@ pub struct Metadata {
     size: Vec2d,
     tile_size: Vec2d,
     levels: u32,
+    format: String,
 }
 
 impl FromStr for Metadata {
@@ -117,10 +118,11 @@ impl FromStr for Metadata {
             .parse::<u32>().unwrap();
         let _tile_width = meta["tilesize"].as_str().unwrap()
             .parse::<u32>().unwrap();
+        let format = meta["tilesize"].to_string();
         let size = Vec2d { x: width, y: height };
         let tile_size = Vec2d{x: _tile_width, y: _tile_width};
         let levels= 1;
-        Ok(Metadata { size, tile_size, levels })
+        Ok(Metadata { size, tile_size, levels, format })
     }
 }
 
