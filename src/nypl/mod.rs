@@ -1,13 +1,18 @@
-use crate::Vec2d;
-use std::str::FromStr;
-use custom_error::custom_error;
 use std::sync::Arc;
-use crate::dezoomer::{TilesRect, Dezoomer, DezoomerInput, ZoomLevels, DezoomerError, IntoZoomLevels, DezoomerInputWithContents};
-use std::convert::TryFrom;
 use std::iter::successors;
 use std::fmt::{Debug, Formatter};
-use serde_json::Value;
+use std::collections::HashMap;
+
+use custom_error::custom_error;
 use regex::Regex;
+use serde::Deserialize;
+
+use crate::dezoomer::{
+    TilesRect, Dezoomer, DezoomerInput, ZoomLevels, DezoomerError, IntoZoomLevels,
+    DezoomerInputWithContents,
+};
+use crate::json_utils::number_or_string;
+use crate::Vec2d;
 
 /// A dezoomer for NYPL images
 #[derive(Default)]
@@ -55,9 +60,14 @@ fn arcs<T>(v: T) -> impl Iterator<Item=Arc<T>> {
 fn iter_levels(uri: &str, contents: &[u8])
                -> Result<impl Iterator<Item=Level> + 'static, NYPLError> {
     let base = get_image_id_from_meta_url(uri);
-    let meta = Metadata::try_from(contents)?;
+    let mut meta_map: MetadataRoot = serde_json::from_slice(contents)?;
+    let (_, meta) = meta_map.configs.drain()
+        .find(|(k, _v)| k == "0")
+        .ok_or(NYPLError::NoMetadata)?;
+
+    let level_count: u32 = meta.level_count();
     let levels =
-        (0..meta.levels).zip(arcs(base)).zip(arcs(meta))
+        (0..=level_count).zip(arcs(base)).zip(arcs(meta))
             .map(|((level, base), metadata)|
                 Level { metadata, base, level });
     Ok(levels)
@@ -78,15 +88,16 @@ impl Debug for Level {
 
 impl TilesRect for Level {
     fn size(&self) -> Vec2d {
-        let reverse_level = self.metadata.levels - self.level - 1;
-        self.metadata.size / 2_u32.pow(reverse_level)
+        let reverse_level = self.metadata.level_count() - self.level;
+        Vec2d::from(self.metadata.size) / 2_u32.pow(reverse_level)
     }
 
-    fn tile_size(&self) -> Vec2d { self.metadata.tile_size }
+    fn tile_size(&self) -> Vec2d { Vec2d::square(self.metadata.tile_size) }
 
     fn tile_url(&self, Vec2d { x, y }: Vec2d) -> String {
-        format!("https://access.nypl.org/image.php/{id}/tiles/0/12/{x}_{y}.{format}",
+        format!("https://access.nypl.org/image.php/{id}/tiles/0/{level}/{x}_{y}.{format}",
                 id = self.base,
+                level = self.level,
                 x = x,
                 y = y,
                 format = self.metadata.format,
@@ -94,53 +105,47 @@ impl TilesRect for Level {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Deserialize)]
+pub struct MetadataRoot {
+    configs: HashMap<String, Metadata>,
+}
+
+#[derive(Debug, PartialEq, Deserialize)]
 pub struct Metadata {
-    size: Vec2d,
-    tile_size: Vec2d,
-    levels: u32,
+    size: MetadataSize,
+    #[serde(alias = "tilesize", deserialize_with = "number_or_string")]
+    tile_size: u32,
     format: String,
 }
 
-impl FromStr for Metadata {
-    type Err = NYPLError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use NYPLError::*;
-        let _parsed = serde_json::from_str(s);
-        if _parsed.is_err(){
-            return Err(JsonError{resp: s.to_string()});
-        }
-        let parsed: Value = _parsed.unwrap();
-        let meta: Value = parsed["configs"]["0"].to_owned();
-        let width = meta["size"]["width"].as_str().unwrap()
-            .parse::<u32>().unwrap();
-        let height = meta["size"]["height"].as_str().unwrap()
-            .parse::<u32>().unwrap();
-        let _tile_width = meta["tilesize"].as_str().unwrap()
-            .parse::<u32>().unwrap();
-        let format = meta["format"].as_str().unwrap_or("png").to_string();
-        let size = Vec2d { x: width, y: height };
-        let tile_size = Vec2d{x: _tile_width, y: _tile_width};
-        let levels= 1;
-        Ok(Metadata { size, tile_size, levels, format })
+impl Metadata {
+    fn level_count(&self) -> u32 {
+        let min_dim: u32 = self.size.width.min(self.size.height);
+        32 - min_dim.leading_zeros()
     }
 }
 
-impl TryFrom<&[u8]> for Metadata {
-    type Error = NYPLError;
-
-    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        let s = std::str::from_utf8(value)?;
-        Metadata::from_str(s)
+impl From<MetadataSize> for Vec2d {
+    fn from(s: MetadataSize) -> Self {
+        Vec2d { x: s.width, y: s.height }
     }
 }
 
-custom_error! {#[derive(PartialEq)] pub NYPLError
+#[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
+struct MetadataSize {
+    #[serde(deserialize_with = "number_or_string")]
+    width: u32,
+    #[serde(deserialize_with = "number_or_string")]
+    height: u32,
+}
+
+custom_error! {pub NYPLError
     JsonError{resp: String} = "Failed to parse NYPL Image meta as json, \
         got content(blank shows the site has no zoom function for this one):\n {resp}",
     Utf8{source: std::str::Utf8Error} = "Invalid NYPLImage metadata file: {}",
-    NoIdInUrl{url: String} = "Unable to extract an image id from {:?}"
+    NoIdInUrl{url: String} = "Unable to extract an image id from {:?}",
+    BadMetadata{source: serde_json::Error} = "Invalid nypl metadata: {}",
+    NoMetadata = "No metadata found",
 }
 
 #[cfg(test)]
@@ -192,23 +197,16 @@ mod tests {
         }
         "#.as_bytes();
         let base: Arc<String> = Arc::new("a28d6e6b-b317-f008-e040-e00a1806635d".into());
-        let levels: Vec<Level> = iter_levels(&base, contents).unwrap().collect();
-        assert_eq!(&levels, &[
-            Level {
-                metadata: Arc::from(Metadata {
-                    size: Vec2d { x: 2422, y: 3000 },
-                    tile_size: Vec2d { x: 256, y: 256 },
-                    levels: 1,
-                    format: "png".to_string()
-                }),
-                base: base.clone(),
-                level: 0,
-            },
-        ]);
+        let level: Level = iter_levels(&base, contents).unwrap().last().unwrap();
+        assert_eq!(level.metadata, Arc::new(Metadata {
+            size: MetadataSize { width: 2422, height: 3000 },
+            tile_size: 256,
+            format: "png".to_string(),
+        }));
         let expected_url = "https://access.nypl.org/image.php/\
             a28d6e6b-b317-f008-e040-e00a1806635d\
             /tiles/0/12/0_0.png";
-        assert_eq!(levels[0].tile_url(Vec2d { x: 0, y: 0 }), expected_url);
+        assert_eq!(level.tile_url(Vec2d { x: 0, y: 0 }), expected_url);
         assert_eq!(
             parse_image_id(
                 "https://digitalcollections.nypl.org/items/a14f3200-fac1-012f-f7a4-58d385a7bbd0#item-data"
