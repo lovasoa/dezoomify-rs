@@ -8,6 +8,7 @@ use std::iter::successors;
 use std::fmt::Debug;
 use serde::export::Formatter;
 use serde_json::Value;
+use regex::Regex;
 
 /// A dezoomer for NYPL images
 #[derive(Default)]
@@ -17,16 +18,24 @@ const NYPL_IMAGE_VIEW_PREFIX: &str = "https://digitalcollections.nypl.org/items/
 const NYPL_META_PREFIX: &str = "https://access.nypl.org/image.php/";
 const NYPL_META_POSTFIX: &str = "/tiles/config.js";
 
-fn mk_image_url_from_meta_url(meta_url: &str) -> String {
+fn get_image_id_from_meta_url(meta_url: &str) -> String {
     meta_url.replace(NYPL_META_PREFIX, "")
         .replace(NYPL_META_POSTFIX, "")
+}
+
+fn parse_image_id(image_view_url: &str) -> Option<String> {
+    let pattern = Regex::new(r"https://digitalcollections.nypl.org/items/([a-f0-9\-]+)").unwrap();
+    for cap in pattern.captures_iter(image_view_url) {
+        return Some(cap[1].to_owned());
+    }
+    return None;
 }
 
 impl Dezoomer for NYPLImage {
     fn name(&self) -> &'static str { "NYPLImage" }
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
         if data.uri.starts_with(NYPL_IMAGE_VIEW_PREFIX) {
-            let image_id = data.uri.replace(NYPL_IMAGE_VIEW_PREFIX, "");
+            let image_id = parse_image_id(data.uri.as_str()).unwrap();
             let meta_uri = format!("{}{}{}", NYPL_META_PREFIX, image_id, NYPL_META_POSTFIX);
             Err(DezoomerError::NeedsData { uri: meta_uri })
         } else {
@@ -44,7 +53,7 @@ fn arcs<T>(v: T) -> impl Iterator<Item=Arc<T>> {
 
 fn iter_levels(uri: &str, contents: &[u8])
                -> Result<impl Iterator<Item=Level> + 'static, NYPLError> {
-    let base = mk_image_url_from_meta_url(uri);
+    let base = get_image_id_from_meta_url(uri);
     let meta = Metadata::try_from(contents)?;
     let levels =
         (0..meta.levels).zip(arcs(base)).zip(arcs(meta))
@@ -195,5 +204,11 @@ mod tests {
             a28d6e6b-b317-f008-e040-e00a1806635d\
             /tiles/0/12/0_0.png";
         assert_eq!(levels[0].tile_url(Vec2d { x: 0, y: 0 }), expected_url);
+        assert_eq!(
+            parse_image_id(
+                "https://digitalcollections.nypl.org/items/a14f3200-fac1-012f-f7a4-58d385a7bbd0#item-data"
+            ).unwrap(),
+            "a14f3200-fac1-012f-f7a4-58d385a7bbd0",
+        )
     }
 }
