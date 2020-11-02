@@ -5,8 +5,7 @@ use std::sync::Arc;
 use crate::dezoomer::{TilesRect, Dezoomer, DezoomerInput, ZoomLevels, DezoomerError, IntoZoomLevels, DezoomerInputWithContents};
 use std::convert::TryFrom;
 use std::iter::successors;
-use std::fmt::Debug;
-use serde::export::Formatter;
+use std::fmt::{Debug, Formatter};
 use serde_json::Value;
 use regex::Regex;
 
@@ -120,7 +119,7 @@ impl FromStr for Metadata {
             .parse::<u32>().unwrap();
         let _tile_width = meta["tilesize"].as_str().unwrap()
             .parse::<u32>().unwrap();
-        let format = meta["tilesize"].to_string();
+        let format = meta["format"].as_str().unwrap_or("png").to_string();
         let size = Vec2d { x: width, y: height };
         let tile_size = Vec2d{x: _tile_width, y: _tile_width};
         let levels= 1;
