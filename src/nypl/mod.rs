@@ -7,6 +7,7 @@ use std::convert::TryFrom;
 use std::iter::successors;
 use std::fmt::Debug;
 use serde::export::Formatter;
+use serde_json::Value;
 
 /// A dezoomer for NYPL images
 #[derive(Default)]
@@ -102,12 +103,12 @@ impl FromStr for Metadata {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         use NYPLError::*;
-        let _parsed = json::parse(s);
+        let _parsed = serde_json::from_str(s);
         if _parsed.is_err(){
             return Err(JsonError{resp: s.to_string()});
         }
-        let parsed = _parsed.unwrap();
-        let meta = parsed["configs"]["0"].to_owned();
+        let parsed: Value = _parsed.unwrap();
+        let meta: Value = parsed["configs"]["0"].to_owned();
         let width = meta["size"]["width"].as_str().unwrap()
             .parse::<u32>().unwrap();
         let height = meta["size"]["height"].as_str().unwrap()
