@@ -22,19 +22,13 @@ fn mk_image_url_from_meta_url(meta_url: &str) -> String {
         .replace(NYPL_META_POSTFIX, "")
 }
 
-macro_rules! nypl_meta_format_tpl {
-    () => {
-        "https://access.nypl.org/image.php/{}/tiles/config.js"
-    }
-}
-
 impl Dezoomer for NYPLImage {
     fn name(&self) -> &'static str { "NYPLImage" }
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
         if data.uri.starts_with(NYPL_IMAGE_VIEW_PREFIX) {
             self.assert(data.uri.contains(NYPL_IMAGE_VIEW_PREFIX))?;
             let image_id = data.uri.replace(NYPL_IMAGE_VIEW_PREFIX, "");
-            let meta_uri = format!(nypl_meta_format_tpl!(), image_id);
+            let meta_uri = format!("{}{}{}", NYPL_META_PREFIX, image_id, NYPL_META_POSTFIX);
             Err(DezoomerError::NeedsData { uri: meta_uri })
         } else {
             self.assert(data.uri.contains(NYPL_META_PREFIX))?;
