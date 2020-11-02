@@ -197,6 +197,7 @@ mod tests {
                     size: Vec2d { x: 2422, y: 3000 },
                     tile_size: Vec2d { x: 256, y: 256 },
                     levels: 1,
+                    format: "png".to_string()
                 }),
                 base: base.clone(),
                 level: 0,
