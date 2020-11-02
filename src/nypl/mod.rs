@@ -24,18 +24,20 @@ fn get_image_id_from_meta_url(meta_url: &str) -> String {
 }
 
 fn parse_image_id(image_view_url: &str) -> Option<String> {
-    let pattern = Regex::new(r"https://digitalcollections.nypl.org/items/([a-f0-9\-]+)").unwrap();
-    for cap in pattern.captures_iter(image_view_url) {
-        return Some(cap[1].to_owned());
-    }
-    return None;
+    Regex::new(r"https://digitalcollections.nypl.org/items/([a-f0-9\-]+)").unwrap()
+        .captures(image_view_url)
+        .and_then(|cap| cap.get(1))
+        .map(|m| m.as_str().to_string())
 }
 
 impl Dezoomer for NYPLImage {
     fn name(&self) -> &'static str { "NYPLImage" }
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
         if data.uri.starts_with(NYPL_IMAGE_VIEW_PREFIX) {
-            let image_id = parse_image_id(data.uri.as_str()).unwrap();
+            let image_view_url = data.uri.as_str();
+            let image_id = parse_image_id(image_view_url).ok_or_else(||
+                DezoomerError::wrap(NYPLError::NoIdInUrl { url: image_view_url.to_string() })
+            )?;
             let meta_uri = format!("{}{}{}", NYPL_META_PREFIX, image_id, NYPL_META_POSTFIX);
             Err(DezoomerError::NeedsData { uri: meta_uri })
         } else {
@@ -139,6 +141,7 @@ custom_error! {#[derive(PartialEq)] pub NYPLError
     JsonError{resp: String} = "Failed to parse NYPL Image meta as json, \
         got content(blank shows the site has no zoom function for this one):\n {resp}",
     Utf8{source: std::str::Utf8Error} = "Invalid NYPLImage metadata file: {}",
+    NoIdInUrl{url: String} = "Unable to extract an image id from {:?}"
 }
 
 #[cfg(test)]
