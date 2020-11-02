@@ -17,7 +17,7 @@ const NYPL_IMAGE_VIEW_PREFIX: &str = "https://digitalcollections.nypl.org/items/
 const NYPL_META_PREFIX: &str = "https://access.nypl.org/image.php/";
 const NYPL_META_POSTFIX: &str = "/tiles/config.js";
 
-fn _get_image_url_from_meta_url(meta_url: &str) -> String {
+fn mk_image_url_from_meta_url(meta_url: &str) -> String {
     meta_url.replace(NYPL_META_PREFIX, "")
         .replace(NYPL_META_POSTFIX, "")
 }
@@ -51,7 +51,7 @@ fn arcs<T>(v: T) -> impl Iterator<Item=Arc<T>> {
 
 fn iter_levels(uri: &str, contents: &[u8])
                -> Result<impl Iterator<Item=Level> + 'static, NYPLError> {
-    let base = _get_image_url_from_meta_url(uri);
+    let base = mk_image_url_from_meta_url(uri);
     let meta = Metadata::try_from(contents)?;
     let levels =
         (0..meta.levels).zip(arcs(base)).zip(arcs(meta))
