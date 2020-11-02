@@ -26,7 +26,6 @@ impl Dezoomer for NYPLImage {
     fn name(&self) -> &'static str { "NYPLImage" }
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
         if data.uri.starts_with(NYPL_IMAGE_VIEW_PREFIX) {
-            self.assert(data.uri.contains(NYPL_IMAGE_VIEW_PREFIX))?;
             let image_id = data.uri.replace(NYPL_IMAGE_VIEW_PREFIX, "");
             let meta_uri = format!("{}{}{}", NYPL_META_PREFIX, image_id, NYPL_META_POSTFIX);
             Err(DezoomerError::NeedsData { uri: meta_uri })
