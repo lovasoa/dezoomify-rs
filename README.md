@@ -32,6 +32,7 @@ The following dezoomers are currently available:
  - [**Zoomify PFF**](#zoomify-pff) supports the old zoomify single-file image format.
  - [**Krpano**](#krpano) supports the [krpano](https://krpano.com/home/) panorama viewer
  - [**IIPImage**](#iipimage) supports the [iipimage](https://iipimage.sourceforge.io/) image format
+ - [**NYPLImage**](#nyplimage) supports the [nypl](https://digitalcollections.nypl.org) image format
  - [**generic**](#Generic) For when the tile URLs follow a simple pattern.
  - [**custom**](#Custom-yaml) for advanced users.
    It allows you to specify a custom tile URL format that can contain multiple variables. This gives you the most flexibity, but requires some manual work.
@@ -135,6 +136,17 @@ to dezoomify-rs and it will download it.
 for panoramas, virtual tours, photoshperes, and other 3d zoomable images.
 dezoomify-rs supports downloading individual image planes from such images.
 You need to provide the xml meta-information file for the image.
+
+### Nypl
+
+The [digital collections of New York's Public Library](https://digitalcollections.nypl.org)
+use their own zoomable image format, which dezoomify-rs supports.
+Some images have a high-resolution version available, and work with this software.
+Others do not, and can be downloaded by simply right-clicking on them in your browser.
+To download an image, just enter the URL of its viewer page in dezoomify-rs, like for example:
+ ```
+ https://digitalcollections.nypl.org/items/a28d6e6b-b317-f008-e040-e00a1806635d
+```
 
 ### IIPImage
 

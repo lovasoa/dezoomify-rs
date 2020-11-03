@@ -43,6 +43,7 @@ pub mod iiif;
 pub mod pff;
 pub mod zoomify;
 pub mod krpano;
+pub mod nypl;
 pub mod iipimage;
 mod json_utils;
 
