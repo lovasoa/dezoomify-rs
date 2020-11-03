@@ -140,10 +140,10 @@ You need to provide the xml meta-information file for the image.
 ### NYPLImage
 
 [NYPLIMage](https://digitalcollections.nypl.org) is just a tile-set of png-image
-which could be mixed as a large image for zooming and rotating. Now we support only 
-large image fetch.
-Now we support the url like this: `https://digitalcollections.nypl.org/items/a28d6e6b-b317-f008-e040-e00a1806635d`,
-other format will not work currently.
+which could be mixed as a large image for zooming and rotating.We support only 
+large image fetch currently.
+We support the url like this: `https://digitalcollections.nypl.org/items/a28d6e6b-b317-f008-e040-e00a1806635d`,
+other format will not work.
 
 
 ### IIPImage
