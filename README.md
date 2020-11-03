@@ -137,14 +137,16 @@ for panoramas, virtual tours, photoshperes, and other 3d zoomable images.
 dezoomify-rs supports downloading individual image planes from such images.
 You need to provide the xml meta-information file for the image.
 
-### NYPLImage
+### Nypl
 
-[NYPLIMage](https://digitalcollections.nypl.org) is just a tile-set of png-image
-which could be mixed as a large image for zooming and rotating.We support only 
-large image fetch currently.
-We support the url like this: `https://digitalcollections.nypl.org/items/a28d6e6b-b317-f008-e040-e00a1806635d`,
-other format will not work.
-
+The [digital collections of New York's Public Library](https://digitalcollections.nypl.org)
+use their own zoomable image format, which dezoomify-rs supports.
+Some images have a high-resolution version available, and work with this software.
+Others do not, and can be downloaded by simply right-clicking on them in your browser.
+To download an image, just enter the URL of its viewer page in dezoomify-rs, like for example:
+ ```
+ https://digitalcollections.nypl.org/items/a28d6e6b-b317-f008-e040-e00a1806635d
+```
 
 ### IIPImage
 
