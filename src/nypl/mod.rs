@@ -35,7 +35,7 @@ fn parse_image_id(image_view_url: &str) -> Option<String> {
 }
 
 impl Dezoomer for NYPLImage {
-    fn name(&self) -> &'static str { "NYPLImage" }
+    fn name(&self) -> &'static str { "nypl" }
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
         if data.uri.starts_with(NYPL_IMAGE_VIEW_PREFIX) {
             let image_view_url = data.uri.as_str();
@@ -82,7 +82,7 @@ struct Level {
 
 impl Debug for Level {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "NYPLImage")
+        write!(f, "NYPL Image")
     }
 }
 
@@ -142,7 +142,7 @@ struct MetadataSize {
 custom_error! {pub NYPLError
     JsonError{resp: String} = "Failed to parse NYPL Image meta as json, \
         got content(blank shows the site has no zoom function for this one):\n {resp}",
-    Utf8{source: std::str::Utf8Error} = "Invalid NYPLImage metadata file: {}",
+    Utf8{source: std::str::Utf8Error} = "Invalid NYPL metadata file: {}",
     NoIdInUrl{url: String} = "Unable to extract an image id from {:?}",
     BadMetadata{source: serde_json::Error} = "Invalid nypl metadata: {}",
     NoMetadata = "No metadata found",
