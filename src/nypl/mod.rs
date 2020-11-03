@@ -120,8 +120,8 @@ pub struct Metadata {
 
 impl Metadata {
     fn level_count(&self) -> u32 {
-        let min_dim: u32 = self.size.width.min(self.size.height);
-        32 - min_dim.leading_zeros()
+        let max_dim: u32 = self.size.width.max(self.size.height);
+        32 - max_dim.leading_zeros()
     }
 }
 
