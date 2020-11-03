@@ -7,10 +7,7 @@ use custom_error::custom_error;
 use regex::Regex;
 use serde::Deserialize;
 
-use crate::dezoomer::{
-    TilesRect, Dezoomer, DezoomerInput, ZoomLevels, DezoomerError, IntoZoomLevels,
-    DezoomerInputWithContents,
-};
+use crate::dezoomer::{TilesRect, Dezoomer, DezoomerInput, ZoomLevels, DezoomerError, IntoZoomLevels, DezoomerInputWithContents, TileReference};
 use crate::json_utils::number_or_string;
 use crate::Vec2d;
 
@@ -59,6 +56,9 @@ fn arcs<T>(v: T) -> impl Iterator<Item=Arc<T>> {
 
 fn iter_levels(uri: &str, contents: &[u8])
                -> Result<impl Iterator<Item=Level> + 'static, NYPLError> {
+    if contents.is_empty() {
+        return Err(NYPLError::NoMetadata)
+    }
     let base = get_image_id_from_meta_url(uri);
     let mut meta_map: MetadataRoot = serde_json::from_slice(contents)?;
     let (_, meta) = meta_map.configs.drain()
@@ -103,6 +103,17 @@ impl TilesRect for Level {
                 format = self.metadata.format,
         )
     }
+
+    fn tile_ref(&self, pos: Vec2d) -> TileReference {
+        let delta = Vec2d {
+            x: if pos.x == 0 { 0 } else { self.metadata.overlap },
+            y: if pos.y == 0 { 0 } else { self.metadata.overlap },
+        };
+        TileReference {
+            url: self.tile_url(pos),
+            position: self.tile_size() * pos - delta,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Deserialize)]
@@ -116,6 +127,8 @@ pub struct Metadata {
     #[serde(alias = "tilesize", deserialize_with = "number_or_string")]
     tile_size: u32,
     format: String,
+    #[serde(default = "Default::default", deserialize_with = "number_or_string")]
+    overlap: u32,
 }
 
 impl Metadata {
@@ -145,7 +158,9 @@ custom_error! {pub NYPLError
     Utf8{source: std::str::Utf8Error} = "Invalid NYPL metadata file: {}",
     NoIdInUrl{url: String} = "Unable to extract an image id from {:?}",
     BadMetadata{source: serde_json::Error} = "Invalid nypl metadata: {}",
-    NoMetadata = "No metadata found",
+    NoMetadata = "No metadata found. This image is probably not tiled, \
+    and you can download it directly by right-clicking on it from \
+    your browser without any external tool.",
 }
 
 #[cfg(test)]
