@@ -217,6 +217,7 @@ mod tests {
             size: MetadataSize { width: 2422, height: 3000 },
             tile_size: 256,
             format: "png".to_string(),
+            overlap: 2,
         }));
         let expected_url = "https://access.nypl.org/image.php/\
             a28d6e6b-b317-f008-e040-e00a1806635d\
