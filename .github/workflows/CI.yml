@@ -27,10 +27,7 @@ jobs:
       - name: Cache cargo dependencies
         uses: actions/cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
+          path: target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - uses: actions-rs/toolchain@v1
         with: {toolchain: stable, override: true}
