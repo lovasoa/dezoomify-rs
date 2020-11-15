@@ -1,5 +1,6 @@
-use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels, ZoomLevel};
-use log::{info, debug};
+use log::{debug, info};
+
+use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevel, ZoomLevels};
 use crate::errors::DezoomerError::NeedsData;
 
 pub fn all_dezoomers(include_generic: bool) -> Vec<Box<dyn Dezoomer>> {
@@ -104,6 +105,12 @@ impl std::fmt::Display for AutoDezoomerError {
         for (dezoomer_name, err) in self.0.iter() {
             writeln!(f, " - {}: {}", dezoomer_name, err)?;
         }
-        Ok(())
+        writeln!(f, "\n\
+        dezoomify-rs expects a zoomable image meta-information file URL. \
+        To find this URL, you can use the dezoomify browser extension, which you can download at\n\
+         - https://lovasoa.github.io/dezoomify-extension/ \n\
+        If this doesn't help, then your image may be in a format that is not yet supported by dezoomify-rs.\n\
+        You can ask for a new format to be supported by opening a new issue on \
+        https://github.com/lovasoa/dezoomify-rs/issues")
     }
 }
