@@ -33,7 +33,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --release
+          args: --release --locked
       - uses: actions/upload-artifact@v1
         with:
           name: dezoomify-rs ${{ matrix.os }}

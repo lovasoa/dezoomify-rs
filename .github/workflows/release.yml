@@ -25,7 +25,7 @@ jobs:
         with: {toolchain: stable, override: true}
       - name: build
         uses: actions-rs/cargo@v1
-        with: { command: build, args: --release }
+        with: { command: build, args: --release --locked }
       - uses: actions/upload-artifact@v1
         with:
           name: dezoomify-rs ${{ matrix.os }}
