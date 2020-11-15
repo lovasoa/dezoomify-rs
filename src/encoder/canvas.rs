@@ -70,7 +70,7 @@ impl ImageWriter {
             ImageWriter::Jpeg { quality } => {
                 let file = File::create(destination)?;
                 let fout = &mut BufWriter::new(file);
-                let mut encoder = image::jpeg::JpegEncoder::new_with_quality(fout, quality);
+                let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(fout, quality);
                 encoder.encode(image, image.width(), image.height(), Pix::COLOR_TYPE)?;
             },
             ImageWriter::Generic => {
