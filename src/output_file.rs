@@ -41,7 +41,7 @@ pub fn get_outname(outfile: &Option<PathBuf>, zoom_name: &Option<String>, size: 
             if !path.exists() { break; }
             info!("File {:?} already exists. Trying another file name...", &path);
             let mut name = OsString::from(&filename);
-            name.push(&format!("_{}.", i));
+            name.push(&format!("_{:04}.", i));
             name.push(&ext);
             path.set_file_name(name);
         }
