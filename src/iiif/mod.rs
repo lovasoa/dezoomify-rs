@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use custom_error::custom_error;
-use log::info;
+use log::{info, debug};
 use serde::export::Formatter;
 
 use tile_info::ImageInfo;
@@ -10,7 +10,6 @@ use crate::dezoomer::*;
 use crate::iiif::tile_info::TileSizeFormat;
 use crate::json_utils::all_json;
 use crate::max_size_in_rect;
-use regex::bytes::Regex;
 
 pub mod tile_info;
 
@@ -49,12 +48,11 @@ fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
             // Due to the very fault-tolerant way we parse iiif manifests, a single javascript
             // object with a 'width' and a 'height' field is enough to be detected as an IIIF level
             // See https://github.com/lovasoa/dezoomify-rs/issues/80
-            let openseadragon_detected =
-                Regex::new(r"[oO]pen[sS]eadragon|tileSources").unwrap().is_match(raw_info);
             let levels: Vec<ZoomLevel> = all_json::<ImageInfo>(raw_info)
                 .filter(|info| {
-                    let keep = openseadragon_detected || !info.has_distinctive_iiif_properties();
-                    if !keep { info!("dropping level {:?}", info); }
+                    let keep = info.has_distinctive_iiif_properties();
+                    if keep { debug!("keeping image info {:?} because it has distinctive IIIF properties", info) }
+                    else {  info!("dropping level {:?}", info) }
                     keep
                 })
                 .flat_map(|info| zoom_levels_from_info(url, info).into_iter().flatten())
@@ -63,8 +61,8 @@ fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
                 Err(e.into())
             } else {
                 info!("No normal info.json parsing failed ({}), \
-                but {} inline json5 zoom level(s) were found. \
-                OpenSeadragon detected: {}", e, levels.len(), openseadragon_detected);
+                but {} inline json5 zoom level(s) were found.",
+                      e, levels.len());
                 Ok(levels)
             }
         }
@@ -224,6 +222,20 @@ fn test_missing_id() {
             "http://test.com/512,0,88,350/88,350/0/default.jpg"
         ]
     )
+}
+
+#[test]
+fn test_false_positive() {
+    let data = br#"
+    var mainImage={
+        type:       "zoomifytileservice",
+        width:      62596,
+        height:     38467,
+        tilesUrl:   "./ORIONFINAL/"
+    };
+    "#;
+    let res = zoom_levels("https://orion2020v5b.spaceforeverybody.com/", data);
+    assert!(res.is_err(), "openseadragon zoomify image should not be misdetected");
 }
 
 #[test]

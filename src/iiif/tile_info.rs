@@ -130,8 +130,10 @@ impl ImageInfo {
     /// that this is not in fact a valid IIIF image
     pub fn has_distinctive_iiif_properties(&self) -> bool {
         self.id.is_some() || self.protocol.is_some() || self.context.is_some() ||
-            self.tiles.is_some() || self.iiif_type.is_some() || self.formats.is_some() ||
-            self.iiif_type.as_ref().filter(|&s| s == "iiif:ImageProfile").is_some()
+            self.tiles.is_some() || self.formats.is_some() ||
+            self.iiif_type.as_ref().filter(
+                |&s| s == "iiif:ImageProfile" || s == "ImageService3"
+            ).is_some()
     }
 
     /// Some info.json files contain a an invalid value for "@id",
