@@ -81,7 +81,7 @@ mod tests {
         let final_image = image::open(&destination).unwrap();
         let empty = Rgb::from([0u8, 0, 0]);
         assert_eq!(
-            final_image.to_rgb().pixels().copied().collect_vec(),
+            final_image.to_rgb8().pixels().copied().collect_vec(),
             vec![empty, empty, empty, Rgb::from([1, 2, 3])]
         );
     }
