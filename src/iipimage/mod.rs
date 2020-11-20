@@ -32,8 +32,9 @@ impl Dezoomer for IIPImage {
     }
 }
 
-fn arcs<T>(v: T) -> impl Iterator<Item=Arc<T>> {
-    successors(Some(Arc::new(v)), |x| Some(Arc::clone(x)))
+fn arcs<T, U: ?Sized>(v: T) -> impl Iterator<Item=Arc<U>>
+    where Arc<U>: From<T> {
+    successors(Some(Arc::from(v)), |x| Some(Arc::clone(x)))
 }
 
 fn iter_levels(uri: &str, contents: &[u8])
@@ -50,7 +51,7 @@ fn iter_levels(uri: &str, contents: &[u8])
 #[derive(PartialEq)]
 struct Level {
     metadata: Arc<Metadata>,
-    base: Arc<String>,
+    base: Arc<str>,
     level: u32,
 }
 
@@ -137,7 +138,7 @@ mod tests {
     #[test]
     fn test_parse_metadata() {
         let contents = &b"Max-size:512 512\nTile-size:256 256\nResolution-number:2"[..];
-        let base: Arc<String> = Arc::new("http://test.com/".into());
+        let base: Arc<str> = Arc::from("http://test.com/");
         let levels: Vec<Level> = iter_levels(&base, contents).unwrap().collect();
         assert_eq!(&levels, &[
             Level {

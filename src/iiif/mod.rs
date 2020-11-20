@@ -51,8 +51,11 @@ fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
             let levels: Vec<ZoomLevel> = all_json::<ImageInfo>(raw_info)
                 .filter(|info| {
                     let keep = info.has_distinctive_iiif_properties();
-                    if keep { debug!("keeping image info {:?} because it has distinctive IIIF properties", info) }
-                    else {  info!("dropping level {:?}", info) }
+                    if keep {
+                        debug!("keeping image info {:?} because it has distinctive IIIF properties", info)
+                    } else {
+                        info!("dropping level {:?}", info)
+                    }
                     keep
                 })
                 .flat_map(|info| zoom_levels_from_info(url, info).into_iter().flatten())
@@ -73,7 +76,7 @@ fn zoom_levels_from_info(url: &str, mut image_info: ImageInfo) -> Result<ZoomLev
     image_info.remove_test_id();
     let img = Arc::new(image_info);
     let tiles = img.tiles();
-    let base_url = &Arc::new(url.replace("/info.json", ""));
+    let base_url = &Arc::from(url.replace("/info.json", ""));
     let levels = tiles
         .iter()
         .flat_map(|tile_info| {
@@ -81,8 +84,8 @@ fn zoom_levels_from_info(url: &str, mut image_info: ImageInfo) -> Result<ZoomLev
                 x: tile_info.width,
                 y: tile_info.height.unwrap_or(tile_info.width),
             };
-            let quality = Arc::new(img.best_quality());
-            let format = Arc::new(img.best_format());
+            let quality = Arc::from(img.best_quality());
+            let format = Arc::from(img.best_format());
             let size_format = img.preferred_size_format();
             info!("Chose the following image parameters: tile_size=({}) quality={} format={}",
                   tile_size, quality, format);
@@ -108,9 +111,9 @@ struct IIIFZoomLevel {
     scale_factor: u32,
     tile_size: Vec2d,
     page_info: Arc<ImageInfo>,
-    base_url: Arc<String>,
-    quality: Arc<String>,
-    format: Arc<String>,
+    base_url: Arc<str>,
+    quality: Arc<str>,
+    format: Arc<str>,
     size_format: TileSizeFormat,
 }
 
@@ -130,7 +133,7 @@ impl TilesRect for IIIFZoomLevel {
         let tile_size = scaled_tile_size / self.scale_factor;
         format!(
             "{base}/{x},{y},{img_w},{img_h}/{tile_size}/{rotation}/{quality}.{format}",
-            base = self.page_info.id.as_ref().unwrap_or(&self.base_url),
+            base = self.page_info.id.as_deref().unwrap_or_else(|| self.base_url.as_ref()),
             x = xy_pos.x,
             y = xy_pos.y,
             img_w = scaled_tile_size.x,

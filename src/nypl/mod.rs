@@ -50,14 +50,15 @@ impl Dezoomer for NYPLImage {
     }
 }
 
-fn arcs<T>(v: T) -> impl Iterator<Item=Arc<T>> {
-    successors(Some(Arc::new(v)), |x| Some(Arc::clone(x)))
+fn arcs<T, U: ?Sized>(v: T) -> impl Iterator<Item=Arc<U>>
+    where Arc<U>: From<T> {
+    successors(Some(Arc::from(v)), |x| Some(Arc::clone(x)))
 }
 
 fn iter_levels(uri: &str, contents: &[u8])
                -> Result<impl Iterator<Item=Level> + 'static, NYPLError> {
     if contents.is_empty() {
-        return Err(NYPLError::NoMetadata)
+        return Err(NYPLError::NoMetadata);
     }
     let base = get_image_id_from_meta_url(uri);
     let mut meta_map: MetadataRoot = serde_json::from_slice(contents)?;
@@ -76,7 +77,7 @@ fn iter_levels(uri: &str, contents: &[u8])
 #[derive(PartialEq)]
 struct Level {
     metadata: Arc<Metadata>,
-    base: Arc<String>,
+    base: Arc<str>,
     level: u32,
 }
 

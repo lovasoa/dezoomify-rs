@@ -37,7 +37,8 @@ impl From<ZoomifyError> for DezoomerError {
 
 fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, ZoomifyError> {
     let image_properties: ImageProperties = serde_xml_rs::from_reader(contents)?;
-    let base_url = &Arc::new(url.split("/ImageProperties.xml").next().unwrap().into());
+    let base_url_string = url.split("/ImageProperties.xml").next().unwrap().to_string();
+    let base_url = &Arc::from(base_url_string);
     let levels: Vec<ZoomLevelInfo> = image_properties.levels();
     let levels: ZoomLevels = levels.into_iter().enumerate()
         .map(move |(level, level_info)| ZoomifyLevel {
@@ -50,7 +51,7 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, Zoomif
 }
 
 struct ZoomifyLevel {
-    base_url: Arc<String>,
+    base_url: Arc<str>,
     level_info: ZoomLevelInfo,
     level: usize,
 }

@@ -152,7 +152,7 @@ impl FromStr for TemplateString<TemplateVariable> {
         loop {
             let literal: String = chars.take_while_ref(|&c| c != '%').collect();
             if !literal.is_empty() {
-                parts.push(Literal(Arc::new(literal)));
+                parts.push(Literal(Arc::from(literal)));
             }
             if chars.next().is_none() { break; }
             let padding = 1 + chars.take_while_ref(|&c| c == '0').count();
@@ -161,7 +161,7 @@ impl FromStr for TemplateString<TemplateVariable> {
                 Some('v') | Some('y') | Some('r') => Variable { padding, variable: Y },
                 Some('s') => Variable { padding, variable: Side },
                 Some('l') => Variable { padding, variable: LevelIndex },
-                Some('%') => Literal(Arc::new("%".to_string())),
+                Some('%') => Literal(Arc::from("%")),
                 Some(x) => return Err(format!("Unknown template variable '{}' in '{}'", x, input)),
                 None => return Err(format!("Invalid templating syntax in '{}'", input))
             });
@@ -188,7 +188,7 @@ impl TemplateString<TemplateVariable> {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum TemplateStringPart<T> {
-    Literal(Arc<String>),
+    Literal(Arc<str>),
     Variable { padding: usize, variable: T },
 }
 
@@ -203,10 +203,10 @@ impl TemplateStringPart<TemplateVariable> {
                 match variable {
                     X => Variable { padding, variable: XY::X },
                     Y => Variable { padding, variable: XY::Y },
-                    Side => Literal(Arc::new(side[..1].to_string())),
+                    Side => Literal(Arc::from(&side[..1])),
                     LevelIndex => {
                         let idx_str = format!("{v:0padding$}", v = level, padding = padding as usize);
-                        Literal(Arc::new(idx_str))
+                        Literal(Arc::from(idx_str))
                     },
                 }
             }
@@ -228,7 +228,7 @@ mod test {
 
     use super::*;
 
-    fn str(s: &str) -> TemplateStringPart<TemplateVariable> { Literal(Arc::new(s.to_string())) }
+    fn str(s: &str) -> TemplateStringPart<TemplateVariable> { Literal(Arc::from(s)) }
 
     fn x(padding: usize) -> TemplateStringPart<TemplateVariable> { Variable { padding, variable: X } }
 

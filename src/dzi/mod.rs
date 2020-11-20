@@ -63,7 +63,7 @@ fn load_from_dzi(url: &str, image_properties: DziFile) -> Result<ZoomLevels, Dzi
         return Err(DziError::InvalidTileSize);
     }
 
-    let base_url = &Arc::new(image_properties.base_url(url));
+    let base_url = &Arc::from(image_properties.base_url(url));
 
     let size = image_properties.get_size()?;
     let max_level = image_properties.max_level();
@@ -88,7 +88,7 @@ fn load_from_dzi(url: &str, image_properties: DziFile) -> Result<ZoomLevels, Dzi
 }
 
 struct DziLevel {
-    base_url: Arc<String>,
+    base_url: Arc<str>,
     size: Vec2d,
     tile_size: Vec2d,
     format: String,
