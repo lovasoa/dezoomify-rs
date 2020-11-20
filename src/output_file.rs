@@ -49,6 +49,7 @@ pub fn get_outname(outfile: &Option<PathBuf>, zoom_name: &Option<String>, size: 
     }
 }
 
+#[allow(clippy::expect_fun_call)]
 #[cfg(test)]
 mod tests {
     use std::env::{current_dir, set_current_dir, temp_dir};

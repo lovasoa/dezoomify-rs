@@ -119,6 +119,7 @@ impl ImageStrip {
     }
 }
 
+#[allow(clippy::zero_prefixed_literal)]
 #[cfg(test)]
 mod tests {
     // In these tests, we consider a 4x4 image made from three tiles like so:

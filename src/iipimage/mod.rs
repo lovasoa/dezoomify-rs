@@ -156,7 +156,7 @@ mod tests {
                     tile_size: Vec2d { x: 256, y: 256 },
                     levels: 2,
                 }),
-                base: base.clone(),
+                base,
                 level: 1,
             }
         ]);
