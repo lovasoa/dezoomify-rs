@@ -243,8 +243,8 @@ OPTIONS:
             up the generic dezoomer, which relies on failed tile loads to detect the dimensions of the image. On the
             contrary, if a server is not reliable, set this value to a higher number [default: 1]
         --retry-delay <retry-delay>
-            Amount of time to wait before retrying a request that failed [default: 2s]
-
+            Amount of time to wait before retrying a request that failed. Applies only to the first retry. Subsequent
+            retries follow an exponential backoff strategy: each one is twice as long as the previous one [default: 2s]
         --timeout <timeout>
             Maximum time between the beginning of a request and the end of a response before the request should be
             interrupted and considered failed [default: 30s]

@@ -48,7 +48,10 @@ pub struct Arguments {
     #[structopt(short = "r", long = "retries", default_value = "1")]
     pub retries: usize,
 
-    /// Amount of time to wait before retrying a request that failed
+    /// Amount of time to wait before retrying a request that failed.
+    /// Applies only to the first retry. Subsequent retries follow an
+    /// exponential backoff strategy: each one is twice as long as
+    /// the previous one.
     #[structopt(long, default_value = "2s", parse(try_from_str = parse_duration))]
     pub retry_delay: Duration,
 
