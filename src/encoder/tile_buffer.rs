@@ -9,6 +9,7 @@ use tokio::sync::mpsc;
 use crate::{Vec2d, ZoomError};
 use crate::encoder::{Encoder, encoder_for_name};
 use crate::tile::Tile;
+use log::warn;
 
 /// Data structure used to store tiles until the final image size is known
 pub enum TileBuffer {
@@ -51,18 +52,16 @@ impl TileBuffer {
     }
 
     /// Add a tile to the image
-    pub async fn add_tile(&mut self, tile: Tile) -> Result<(), ZoomError> {
+    pub async fn add_tile(&mut self, tile: Tile) {
         match self {
             TileBuffer::Buffering { buffer, .. } => {
                 buffer.push(tile)
             }
-            TileBuffer::Writing { tile_sender, error_receiver } => {
-                if let Ok(e) = error_receiver.try_recv() { return Err(e.into()) }
+            TileBuffer::Writing { tile_sender, .. } => {
                 tile_sender.send(TileBufferMsg::AddTile(tile))
                     .await.expect("The tile writer ended unexpectedly");
             }
         }
-        Ok(())
     }
 
     /// To be called when no more tile will be added
@@ -93,7 +92,7 @@ pub enum TileBufferMsg {
 
 async fn buffer_tiles(mut encoder: Box<dyn Encoder>) -> TileBuffer {
     let (tile_sender, mut tile_receiver) = mpsc::channel(1024);
-    let (mut error_sender, error_receiver) = mpsc::channel(1);
+    let (error_sender, error_receiver) = mpsc::channel(1);
     tokio::spawn(async move {
         while let Some(msg) = tile_receiver.recv().await {
             match msg {
@@ -101,6 +100,7 @@ async fn buffer_tiles(mut encoder: Box<dyn Encoder>) -> TileBuffer {
                     debug!("Sending tile to encoder: {:?}", tile);
                     let result = tokio::task::block_in_place(|| encoder.add_tile(tile));
                     if let Err(err) = result {
+                        warn!("Error when adding tile: {}", err);
                         error_sender.send(err).await.expect("could not send error");
                     }
                 }
@@ -109,6 +109,7 @@ async fn buffer_tiles(mut encoder: Box<dyn Encoder>) -> TileBuffer {
         }
         debug!("Finalizing the encoder");
         if let Err(err) = encoder.finalize() {
+            warn!("Error when finalizing image: {}", err);
             error_sender.send(err).await.expect("could not send error");
         }
     });

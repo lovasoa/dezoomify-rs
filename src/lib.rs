@@ -119,16 +119,6 @@ fn choose_level(mut levels: Vec<ZoomLevel>, args: &Arguments) -> Result<ZoomLeve
     }
 }
 
-fn display_err<T, E: std::fmt::Display>(res: Result<T, E>) -> Option<T> {
-    match res {
-        Ok(value) => Some(value),
-        Err(e) => {
-            eprintln!("{}", e);
-            None
-        }
-    }
-}
-
 fn progress_bar(n: usize) -> ProgressBar {
     let progress = ProgressBar::new(n as u64);
     progress.set_style(
@@ -224,7 +214,7 @@ pub async fn dezoomify_level(
                     })
                 }
             };
-            if let Some(tile) = tile { display_err(canvas.add_tile(tile).await); }
+            if let Some(tile) = tile { canvas.add_tile(tile).await; }
         }
         successful_tiles += last_successes;
         zoom_level_iter.set_fetch_result(TileFetchResult {
@@ -266,7 +256,7 @@ async fn download_tile(
             Ok(_) => { break; },
             Err(e) => {
                 warn!("{}. Retrying tile download in {:?}.", e, wait_time);
-                tokio::time::delay_for(wait_time).await;
+                tokio::time::sleep(wait_time).await;
                 wait_time *= 2;
             }
         }
