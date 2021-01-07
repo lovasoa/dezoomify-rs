@@ -6,10 +6,7 @@ use std::time::Duration;
 mod tests;
 
 fn criterion_benchmark(c: &mut Criterion) {
-    let mut rt = runtime::Builder::new()
-        .threaded_scheduler()
-        .build()
-        .unwrap();
+    let rt = runtime::Builder::new_multi_thread().build().unwrap();
 
     c.bench_function("zoomify_1702x2052_jpeg",
                      |b| b.iter(||
