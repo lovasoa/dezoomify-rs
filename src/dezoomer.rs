@@ -9,7 +9,6 @@ pub use crate::errors::DezoomerError;
 pub use super::Vec2d;
 use super::ZoomError;
 use std::fmt;
-use serde::export::Formatter;
 use crate::dezoomer::PageContents::Success;
 
 pub enum PageContents {
@@ -25,7 +24,7 @@ impl From<Result<Vec<u8>, ZoomError>> for PageContents {
 }
 
 impl std::fmt::Debug for PageContents {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unknown => f.write_str("<not yet available>"),
             Success(contents) => f.write_str(&String::from_utf8_lossy(contents)),
@@ -284,7 +283,7 @@ impl FromStr for TileReference {
 }
 
 impl fmt::Display for TileReference {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.url)
     }
 }

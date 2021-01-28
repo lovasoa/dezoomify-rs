@@ -6,7 +6,6 @@ use crate::dezoomer::{TilesRect, Dezoomer, DezoomerInput, ZoomLevels, DezoomerEr
 use std::convert::TryFrom;
 use std::iter::successors;
 use std::fmt::Debug;
-use serde::export::Formatter;
 
 /// A dezoomer for krpano images
 /// See https://iipimage.sourceforge.io/documentation/protocol/
@@ -56,7 +55,7 @@ struct Level {
 }
 
 impl Debug for Level {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "IIPImage")
     }
 }

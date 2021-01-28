@@ -23,7 +23,6 @@ use crate::encoder::tile_buffer::TileBuffer;
 use crate::output_file::reserve_output_file;
 use crate::dezoomer::PageContents;
 use std::error::Error;
-use serde::export::Formatter;
 
 mod arguments;
 mod encoder;
@@ -271,7 +270,7 @@ struct TileDownloadError {
 }
 
 impl fmt::Display for TileDownloadError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Unable to download tile '{}'. Cause: {}", self.tile_reference.url, self.cause)
     }
 }
