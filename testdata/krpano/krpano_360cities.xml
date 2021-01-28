@@ -1,0 +1,298 @@
+
+<krpano showerrors="false" logkey="false">
+  <skin_settings gyro="true"/>
+
+  <control
+    keycodesin="107"
+    keycodesout="109"
+    touchtype="{{mousetype}}"
+    mousetype="{{mousetype}}"
+  />
+
+  <style name="hotspot_360" url="/redesign_2014_images/pano/ui/hotspot_360_sm.png"/>
+  <style name="hotspot_far_360" url="/redesign_2014_images/pano/ui/hotspot_360_sm_far.png"/>
+
+    <view hlookat="327.5" vlookat="6.2" fov="70.0" fovmin="10" fovmax="110" fisheye="0" />
+
+<network downloadqueues="4" decodequeues="3" />
+
+<!-- tiled multi-resolution cubic image / krpano.swf does not support stereo panos. We also disable it when embedding via Facebook -->
+
+  <image type="cube" multires="true" tilesize="512" baseindex="0" progressive="false" multiresthreshold="-0.3">
+
+      <level download="view" decode="view" tiledimagewidth="275" tiledimageheight="275">
+          <left url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/left/tile/512/0/%r/%c.jpg?orig=" />
+          <right url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/right/tile/512/0/%r/%c.jpg?orig=" />
+          <front url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/front/tile/512/0/%r/%c.jpg?orig=" />
+          <back url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/back/tile/512/0/%r/%c.jpg?orig=" />
+          <up url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/up/tile/512/0/%r/%c.jpg?orig=" />
+          <down url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/down/tile/512/0/%r/%c.jpg?orig=" />
+      </level>
+
+      <level download="view" decode="view" tiledimagewidth="550" tiledimageheight="550">
+          <left url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/left/tile/512/1/%r/%c.jpg?orig=" />
+          <right url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/right/tile/512/1/%r/%c.jpg?orig=" />
+          <front url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/front/tile/512/1/%r/%c.jpg?orig=" />
+          <back url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/back/tile/512/1/%r/%c.jpg?orig=" />
+          <up url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/up/tile/512/1/%r/%c.jpg?orig=" />
+          <down url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/down/tile/512/1/%r/%c.jpg?orig=" />
+      </level>
+
+      <level download="view" decode="view" tiledimagewidth="1100" tiledimageheight="1100">
+          <left url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/left/tile/512/2/%r/%c.jpg?orig=" />
+          <right url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/right/tile/512/2/%r/%c.jpg?orig=" />
+          <front url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/front/tile/512/2/%r/%c.jpg?orig=" />
+          <back url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/back/tile/512/2/%r/%c.jpg?orig=" />
+          <up url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/up/tile/512/2/%r/%c.jpg?orig=" />
+          <down url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/down/tile/512/2/%r/%c.jpg?orig=" />
+      </level>
+
+      <level download="view" decode="view" tiledimagewidth="2199" tiledimageheight="2199">
+          <left url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/left/tile/512/3/%r/%c.jpg?orig=" />
+          <right url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/right/tile/512/3/%r/%c.jpg?orig=" />
+          <front url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/front/tile/512/3/%r/%c.jpg?orig=" />
+          <back url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/back/tile/512/3/%r/%c.jpg?orig=" />
+          <up url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/up/tile/512/3/%r/%c.jpg?orig=" />
+          <down url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/cube/down/tile/512/3/%r/%c.jpg?orig=" />
+      </level>
+  </image>
+
+
+<!-- right-click context menu to change the viewing settings -->
+<contextmenu>
+  <item caption="FULLSCREEN" />
+  <item name="view_normal" caption="Normal View" onclick="action(enable_normal); js(updateProjectionsCss('normal_projection')); js(updateEmbedUrlWithProjection('normal_projection'));" enabled="false" separator="true" />
+  <item name="view_fisheye" caption="Fisheye View" onclick="action(enable_fisheye); js(updateProjectionsCss('fisheye_projection')); js(updateEmbedUrlWithProjection('fisheye_projection'));" />
+  <item name="view_architectural" caption="Architectural View" onclick="action(enable_architectural); js(updateProjectionsCss('architectural_projection')); js(updateEmbedUrlWithProjection('architectural_projection'));" />
+  <item name="view_stereographic" caption="Stereographic View" onclick="action(enable_stereographic); js(updateProjectionsCss('stereographic_projection')); js(updateEmbedUrlWithProjection('stereographic_projection'));" />
+  <item name="view_little_planet" caption="Little Planet View" onclick="action(enable_little_planet); js(updateProjectionsCss('little_planet_projection')); js(updateEmbedUrlWithProjection('little_planet_projection'));" />
+  <item name="view_panini" caption="Panini View" onclick="action(enable_panini); js(updateProjectionsCss('panini_projection')); js(updateEmbedUrlWithProjection('panini_projection'));" />
+  <item name="view_qtvr" caption="Toggle Click/Drag - QTVR Mode" onclick="action(toggle_qtvr);" />
+  <item caption="KRPANO" separator="true" />
+</contextmenu>
+
+<action name="enable_view">
+	set(contextmenu.item[view_normal].enabled, true);
+	set(contextmenu.item[view_fisheye].enabled, true);
+	set(contextmenu.item[view_architectural].enabled, true);
+	set(contextmenu.item[view_stereographic].enabled, true);
+	set(contextmenu.item[view_little_planet].enabled, true);
+	set(contextmenu.item[view_panini].enabled, true);
+	set(contextmenu.item[%1].enabled, false);
+</action>
+
+<action name="enable_normal">
+	action(enable_view,view_normal);
+	tween(view.fovmax, 120.0, distance(179, 0.25), easeoutquad);
+	tween(view.architectural, 0.0, distance(1.0, 0.25), easeoutquad);
+	tween(view.fisheye, 0.0, distance(1.0, 0.25), easeoutquad, set(view.stereographic, false););
+</action>
+
+<action name="enable_fisheye">
+	action(enable_view, view_fisheye);
+	tween(view.architectural, 0.0, distance(1.0, 0.25), easeoutquad);
+	tween(view.fisheye, 0.0 ,distance(1.0, 0.20), easeoutquad,
+	  set(view.stereographic, false);
+	  set(view.fovmax, 179);
+	  tween(view.fisheye, 0.35, distance(1.0, 1.25));
+	);
+</action>
+
+<action name="enable_architectural">
+	action(enable_view,view_architectural);
+	tween(view.fovmax, 155.0, distance(179, 0.25), easeoutquad);
+	tween(view.architectural, 1.0, distance(1.0, 0.25), easeoutquad);
+	tween(view.fisheye, 0.0, distance(1.0, 0.25), easeoutquad, set(view.stereographic,false););
+</action>
+
+<action name="enable_stereographic">
+	action(enable_view, view_stereographic);
+	tween(view.architectural, 0.0, distance(1.0, 0.25), easeoutquad);
+	tween(view.fisheye, 0.0 ,distance(1.0, 0.10), easeoutquad,
+	  set(view.stereographic, true);
+	  tween(view.fisheye, 1.0, distance(1.0, 1.25));
+	  tween(view.fovmax, 150, distance(179, 1.25));
+	);
+</action>
+
+<action name="enable_little_planet">
+	action(enable_view, view_little_planet);
+	tween(view.architectural, 0.0, distance(1.0, 0.25), easeoutquad);
+	tween(view.fisheye, 0.0 ,distance(1.0, 0.10), easeoutquad,
+	  set(view.stereographic, true);
+	  tween(view.fisheye, 1.0, distance(1.0, 0.75));
+	  tween(view.fov, 130, distance(179, 0.75), easeoutquad, set(view.fovmax, 150););
+	  tween(view.vlookat, 90, distance(179, 0.75), easeoutquad);
+	);
+</action>
+
+<action name="enable_panini">
+	action(enable_view, view_panini);
+	set(display.flash10, off);
+  tween(view.architectural, 0.0, 0.25);
+  set(backtonormalfirst, false);
+  if(view.pannini == false, set(backtonormalfirst, true));
+  if(view.stereographic == false, set(backtonormalfirst, true));
+  if(backtonormalfirst, tween(view.fisheye, 0.0 ,distance(1.0, 0.25), easeoutquad, WAIT););
+  set(view.pannini, true);
+  set(view.stereographic, true);
+  set(view.fovmax, 150);
+  tween(view.fisheye, 1.0, distance(1.0, 0.75), easeoutquad);
+</action>
+
+<action name="toggle_qtvr">
+	if(control.mousetype == "moveto", set_drag2d(), set_moveto());
+</action>
+
+<action name="set_moveto">
+	set(control.mousetype, "moveto");
+	js(updateMouseModeCookie('moveto'));
+	js(updateMouseModeCss('qtvr_mode'));
+</action>
+
+<action name="set_drag2d">
+	set(control.mousetype, "drag2d");
+  js(updateMouseModeCookie('drag2d'));
+	js(updateMouseModeCss('click_drag_mode'));
+</action>
+
+
+
+  <preview type="CUBESTRIP" url="https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/equirect/4.jpg" />
+
+  <plugin name="gyro" url="/javascripts/krpano/plugins/gyro2.js" enabled="true" devices="html5" camroll="true" friction="0.5" velastic="0" keep="true" />
+
+  
+  <hotspot name="a_stgeorgehoteldubaimushrifarabicnightclub"
+    ath=    "-107.381718448664"
+    atv=    "15"
+    style=    "hotspot_360"
+    onover=   "spheretoscreen(ath,atv,q,w); js(pop_thumb(get(name),get(q),get(w),'https://cloudflare1.360gigapixels.com/pano/pentimo/00139626_st-george-hotel-dubai-mushrif-arabic-night-club-jpg/equirect_crop_3_1/1.jpg','St George Hotel Dubai Mushr...','0 m' ) );"
+    onout=    "js(un_pop_thumb() );"
+    onclick=  "js(click_hotspot('st-george-hotel-dubai-mushrif-arabic-night-club'));"/>
+
+  <hotspot name="a_stgeorgehoteldubaiiraninightclub"
+    ath=    "-107.381718448664"
+    atv=    "15"
+    style=    "hotspot_360"
+    onover=   "spheretoscreen(ath,atv,q,w); js(pop_thumb(get(name),get(q),get(w),'https://cloudflare1.360gigapixels.com/pano/pentimo/00139627_st-george-hotel-dubai-irani-night-club-jpg/equirect_crop_3_1/1.jpg','St George Hotel Dubai Irani...','0 m' ) );"
+    onout=    "js(un_pop_thumb() );"
+    onclick=  "js(click_hotspot('st-george-hotel-dubai-irani-night-club'));"/>
+
+  <hotspot name="a_stgeorgehoteltivolicafeandbardubai"
+    ath=    "115.56227753333201"
+    atv=    "15"
+    style=    "hotspot_360"
+    onover=   "spheretoscreen(ath,atv,q,w); js(pop_thumb(get(name),get(q),get(w),'https://cloudflare1.360gigapixels.com/pano/pentimo/00139630_st-george-hotel-tivoli-cafe-and-bar-jpg/equirect_crop_3_1/1.jpg','St George Hotel Tivoli Cafe...','0 m' ) );"
+    onout=    "js(un_pop_thumb() );"
+    onclick=  "js(click_hotspot('st-george-hotel-tivoli-cafe-and-bar-dubai'));"/>
+
+  <hotspot name="a_stgeorgehoteldubailobby"
+    ath=    "216.403885609373"
+    atv=    "15"
+    style=    "hotspot_360"
+    onover=   "spheretoscreen(ath,atv,q,w); js(pop_thumb(get(name),get(q),get(w),'https://cloudflare1.360gigapixels.com/pano/pentimo/00139634_st-george-hotel-dubai-lobby-jpg/equirect_crop_3_1/1.jpg','St George Hotel Dubai Lobby...','0 m' ) );"
+    onout=    "js(un_pop_thumb() );"
+    onclick=  "js(click_hotspot('st-george-hotel-dubai-lobby'));"/>
+
+  <hotspot name="a_stgeorgehoteldubaiexecutivesuite"
+    ath=    "59.814009740186975"
+    atv=    "15"
+    style=    "hotspot_360"
+    onover=   "spheretoscreen(ath,atv,q,w); js(pop_thumb(get(name),get(q),get(w),'https://cloudflare1.360gigapixels.com/pano/pentimo/00142031_st-george-hotel-dubai-executive-suite-jpg/equirect_crop_3_1/1.jpg','St George Hotel Dubai Execu...','12 m' ) );"
+    onout=    "js(un_pop_thumb() );"
+    onclick=  "js(click_hotspot('st-george-hotel-dubai-executive-suite'));"/>
+
+  <hotspot name="a_elalmadelebroexpo2008zaragoza"
+    ath=    "-163.05544068023005"
+    atv=    "15"
+    style=    "hotspot_far_360"
+    onover=   "spheretoscreen(ath,atv,q,w); js(pop_thumb(get(name),get(q),get(w),'https://cloudflare1.360gigapixels.com/pano/ricardopi/00774999_actualizacion.2..El_alma_del_Ebro___Expo_2008___Zaragoza_.jpg/equirect_crop_3_1/1.jpg','El alma del Ebro - Expo 200...','5425 km' ) );"
+    onout=    "js(un_pop_thumb() );"
+    onclick=  "js(click_hotspot('el-alma-del-ebro-expo-2008-zaragoza'));"/>
+
+
+  <style name="annotation" url="/redesign_2014_images/pano/ui/annotation_icon_32.png"/>
+
+<data name="annotation_styles">
+  p {
+    background-image: url("/redesign_2014_images/bg/diag_line_2.png");
+    color: rgba(245, 245, 245, 0.85);
+    font-size:14px;
+    padding-left: 10px;
+    padding-right:20px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+    border-style: solid;
+    border-width: 1px;
+    border-radius: 4px;
+    border-color: rgba(49, 47, 47, 0.57);
+    font-family: 'Roboto Condensed';
+    font-weight: 300;
+  }
+
+</data>
+
+
+<data name="metadata"><![CDATA[
+    {
+  "id":   "st-george-hotel-dubai-tip-top-english-disco", 
+  "title":  "St George Hotel Dubai Tip Top English Disco by 360emirates",
+  "short_description": "Tip Top English Disco at St. George Hotel Dubai by  360emirates.com Click to see ST. GEORGE HOTEL...",
+  "description": "\u003cp\u003e\u003cstrong\u003eTip Top English Disco at St. George Hotel Dubai by \u003ca href=\"http://360emirates.com\" rel=\"nofollow\" target=\"_blank\"\u003e 360emirates.com \u003c/a\u003e\u003c/strong\u003e\u003c/p\u003e\u003cp\u003e\u003ca href=\"http://360emirates.com/virtual_tours/90/St-George-Hotel\" rel=\"nofollow\" target=\"_blank\"\u003eClick to see ST. GEORGE HOTEL'S Virtual Tour !\u003c/a\u003e\u003c/p\u003e\u003cp\u003eSt. George Hotel Dubai. \r\nThe hotel features a wide range of outlets including Tip Top English Disco, a traditional Arabian restaurant, Tivoli Bar and Cafe, \r\nIrani Night club, and 24 hour coffee shop. Rooms offer panoramic views of Dubai Creek and Old Town and include minibar and air conditioning.\r\n\u003cbr\u003e\u003c/p\u003e\u003cp\u003e \u003c/p\u003e\u003cp\u003e\u003cstrong\u003eUAE Virtual Tours. 360 panorama photos with interactive map from Abu Dhabi, Dubai, Sharjah, Ajman, Umm al-Quwain, Ras al-Khaimah, Fujairah.\u003c/strong\u003e\u003c/p\u003e\u003cp\u003e\u003cstrong\u003e\u003ca href=\"http://360emirates.com\" title=\"Emirates Virtual Tours\" rel=\"nofollow\" target=\"_blank\"\u003eVisit Emirates Virtual Tours at 360emirates.com\u003c/a\u003e\u003cstrong\u003e\u003c/strong\u003e\u003c/strong\u003e\u003c/p\u003e",
+  "licensed": true,
+  "licenseable": true,
+  "author":   {
+          "name"    : "360emirates.com",
+          "id"    : "360emirates_com",
+          "ranking" : ["expert"],
+          "url"   : "/profile/360emirates_com",
+          "image"   : "//360-profile-pics.s3.amazonaws.com/User/3376_128"
+        },
+  
+  "thumburl": "/redesign_2014_placeholders/panos/achilleion-hof-unten.tiles/thumb.jpg", 
+
+  "banners":  ["editors_pick"],
+  
+  "lat":    "39.563340", 
+  "lng":    "19.904324", 
+  "heading":  "null",
+  "view":   {
+          "hlookat":  "327.5", 
+          "vlookat":  "6.2", 
+          "fovtype":  "MFOV", 
+          "fov":    "70.0", 
+          "fovmin": "10", 
+          "fovmax": "110", 
+          "limitview":"auto"
+        },
+  "preview":  "https://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/equirect/4.jpg",
+  "sharable_preview":  "http://cloudflare1.360gigapixels.com/pano/pentimo/00139625_st-george-hotel-dubai-tip-top-english-disco-jpg/equirect_crop/6.jpg",
+  "origin":  "",
+  "crumbs": [{"handle":"dubai","latitude":25.2273048262816,"longitude":55.2914428710938,"initial_zoom_level":10,"name":"Dubai"},{"handle":"uae","latitude":23.4229284550652,"longitude":53.843994140625,"initial_zoom_level":12,"name":"United Arab Emirates"},{"handle":"middle-east","latitude":28.9985318140518,"longitude":47.197265625,"initial_zoom_level":4,"name":"Middle East"},{"handle":"asia","latitude":34.307143856288,"longitude":107.2265625,"initial_zoom_level":2,"name":"Asia"},{"handle":"world","latitude":4.21494314139064,"longitude":36.5625,"initial_zoom_level":1,"name":"The World"}],
+  "location": {"latitude":25.2665380845123,"longitude":55.2941197156906},
+  "related": [ {"id":"242-cities-and-towns-in-autumn","title":"Cities And Towns In Autumn","thumburl":"https://cloudflare1.360gigapixels.com/pano/flemming_v_larsen_denmark/00095203_tricholoma_populinum_fairy_ring.jpg/equirect_crop_3_1/1.jpg"},{
+        "title": "Editors Picks",
+        "thumburl": "/images/carousel/Ed.Picks-CAROUSEL.png",
+        "type": "ad",
+        "ad_type": "EditorsPicks",
+        "url" : "https://www.360cities.net/search/@tags-editorspicks",
+        "campaign": "EditorsPicksCampaign",
+        "banner": "EditorsPicksCampaign"
+      },{"id":"24-disney-parks:-first-opened-in-anaheim,-california,-now-located-worldwide","title":"Disney Parks: First Opened in Anaheim, California, Now Located Worldwide","thumburl":"https://cloudflare1.360gigapixels.com/pano/traugott-emrich/00050259_disney_downtown_2_copy.jpg/equirect_crop_3_1/1.jpg"},{"type":"video","title":"Copan Building aerial Sao Paulo Brazil skyline 360 video VR","url":"/video/20130722-0119copanvr-mp4","thumburl":"https://video.360cities.net/360eden-com/01678875_20130722-0119copanVR-1024x512.jpg?update_cache=548959"},{"id":"169-summer-island-hopping-in-europe","title":"Summer Island Hopping In Europe","thumburl":"https://cloudflare1.360gigapixels.com/pano/alessandro-ugazio/00033929_Tharros.jpg/equirect_crop_3_1/1.jpg"},{
+        "title": "For Teachers",
+        "thumburl": "/images/carousel/CarouselAd-ForTeachersBlue.jpg",
+        "type": "ad",
+        "ad_type": "ForTeachers",
+        "url" : "https://schools.360cities.net/",
+        "campaign": "ForTeachersCampaign",
+        "banner": "ForTeachersCampaign"
+      },{"id":"161-the-diverse-sights-of-ecuador","title":"The Diverse Sights Of Ecuador","thumburl":"https://cloudflare1.360gigapixels.com/pano/thomas-humeau/00127249_pano_2010_02_Ecuador_Puerto_Lopez_2.jpg/equirect_crop_3_1/1.jpg"} ]
+}
+]]></data>
+
+  <events onxmlcomplete="js(krpano_onxmlcomplete());"/>
+  <events onpreviewcomplete="js(krpano_onpreviewcomplete());"/>
+
+</krpano>
+

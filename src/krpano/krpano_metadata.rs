@@ -5,9 +5,41 @@ use serde::{de, Deserialize, Deserializer};
 
 use crate::Vec2d;
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Default)]
 pub struct KrpanoMetadata {
-    pub image: Vec<KrpanoImage>,
+    #[serde(rename = "$value")]
+    children: Vec<TopLevelTags>,
+}
+
+impl KrpanoMetadata {
+    pub fn into_image_iter(self) -> impl Iterator<Item=KrpanoImage> {
+        self.children.into_iter().flat_map(|t| t.into_image_iter())
+    }
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum TopLevelTags {
+    Image(KrpanoImage),
+    Scene(KrpanoMetadata),
+    #[serde(other, deserialize_with = "deserialize_ignore_any")]
+    Other,
+}
+
+
+fn deserialize_ignore_any<'de, D: Deserializer<'de>>(deserializer: D) -> Result<(), D::Error> {
+    serde::de::IgnoredAny::deserialize(deserializer)?;
+    Ok(())
+}
+
+impl TopLevelTags {
+    fn into_image_iter(self) -> Box<dyn Iterator<Item=KrpanoImage>> {
+        match self {
+            Self::Image(image) => Box::new(std::iter::once(image)),
+            Self::Scene(s) => Box::new(s.into_image_iter()),
+            Self::Other => Box::new(std::iter::empty())
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -66,7 +98,7 @@ impl KrpanoLevel {
             Self::Level(LevelAttributes { tiledimagewidth, tiledimageheight, shape }) => {
                 let size = Vec2d { x: tiledimagewidth, y: tiledimageheight };
                 shape.into_iter().flat_map(|level| level.level_descriptions(Some(size))).collect()
-            },
+            }
             Self::Cube(d) => shape_descriptions("Cube", d, size),
             Self::Cylinder(d) => shape_descriptions("Cylinder", d, size),
             Self::Flat(d) => shape_descriptions("Flat", d, size),
@@ -207,7 +239,7 @@ impl TemplateStringPart<TemplateVariable> {
                     LevelIndex => {
                         let idx_str = format!("{v:0padding$}", v = level, padding = padding as usize);
                         Literal(Arc::from(idx_str))
-                    },
+                    }
                 }
             }
         }
@@ -222,9 +254,10 @@ pub enum XY { X, Y }
 
 #[cfg(test)]
 mod test {
-    use crate::krpano::krpano_metadata::KrpanoLevel::{Left, Mobile, Cube};
-    use crate::krpano::krpano_metadata::TemplateStringPart::{Literal, Variable};
-    use crate::krpano::krpano_metadata::TemplateVariable::{LevelIndex, X, Y};
+    use super::KrpanoLevel::{Left, Mobile, Cube, Cylinder};
+    use super::TopLevelTags::{Image, Scene};
+    use super::TemplateStringPart::{Literal, Variable};
+    use super::TemplateVariable::{LevelIndex, X, Y};
 
     use super::*;
 
@@ -240,8 +273,8 @@ mod test {
     fn parse_xml_cylinder() {
         let parsed: KrpanoMetadata = serde_xml_rs::from_str(r#"
         <krpano version="1.18"  bgcolor="0xFFFFFF">
-        <include url="skin/flatpano_setup.xml" />
-        <view devices="mobile" hlookat="0" vlookat="0" maxpixelzoom="0.7" limitview="fullrange" fov="1.8" fovmax="1.8" fovmin="0.02"/>
+            <include url="skin/flatpano_setup.xml" />
+            <view devices="mobile" hlookat="0" vlookat="0" maxpixelzoom="0.7" limitview="fullrange" fov="1.8" fovmax="1.8" fovmin="0.02"/>
             <preview url="monomane.tiles/preview.jpg" />
             <image type="CYLINDER" hfov="1.00" vfov="1.208146" voffset="0.00" multires="true" tilesize="512" progressive="true">
                 <level tiledimagewidth="31646" tiledimageheight="38234">
@@ -250,27 +283,24 @@ mod test {
             </image>
         </krpano>
         "#).unwrap();
-        assert_eq!(parsed, KrpanoMetadata {
-            image: vec![
-                KrpanoImage {
-                    baseindex: 1,
-                    tilesize: Some(512),
-                    level: vec![
-                        KrpanoLevel::Level(LevelAttributes {
-                            tiledimagewidth: 31646,
-                            tiledimageheight: 38234,
-                            shape: vec![KrpanoLevel::Cylinder(ShapeDesc {
-                                url: TemplateString(vec![
-                                    str("monomane.tiles/l7/"), y(1), str("/l7_"),
-                                    y(1), str("_"), x(1), str(".jpg"),
-                                ]),
-                                multires: None,
-                            })],
-                        }),
-                    ],
-                }
-            ]
-        })
+        let images: Vec<KrpanoImage> = parsed.into_image_iter().collect();
+        assert_eq!(images, vec![KrpanoImage {
+            baseindex: 1,
+            tilesize: Some(512),
+            level: vec![
+                KrpanoLevel::Level(LevelAttributes {
+                    tiledimagewidth: 31646,
+                    tiledimageheight: 38234,
+                    shape: vec![KrpanoLevel::Cylinder(ShapeDesc {
+                        url: TemplateString(vec![
+                            str("monomane.tiles/l7/"), y(1), str("/l7_"),
+                            y(1), str("_"), x(1), str(".jpg"),
+                        ]),
+                        multires: None,
+                    })],
+                }),
+            ],
+        }]);
     }
 
 
@@ -284,7 +314,7 @@ mod test {
         </image>
         </krpano>"#).unwrap();
         assert_eq!(parsed, KrpanoMetadata {
-            image: vec![KrpanoImage {
+            children: vec![Image(KrpanoImage {
                 baseindex: 0,
                 tilesize: Some(512),
                 level: vec![KrpanoLevel::Level(LevelAttributes {
@@ -298,7 +328,8 @@ mod test {
                             multires: None,
                         })],
                 })],
-            }]
+            })],
+            ..Default::default()
         })
     }
 
@@ -311,14 +342,15 @@ mod test {
         </image>
         </krpano>"#).unwrap();
         assert_eq!(parsed, KrpanoMetadata {
-            image: vec![KrpanoImage {
+            children: vec![Image(KrpanoImage {
                 baseindex: 1,
                 tilesize: None,
                 level: vec![KrpanoLevel::Flat(ShapeDesc {
                     url: TemplateString(vec![str("https://example.com/"), ]),
                     multires: Some("512,768x554,1664x1202,3200x2310,6400x4618,12800x9234".to_string()),
                 })],
-            }]
+            })],
+            ..Default::default()
         })
     }
 
@@ -334,15 +366,72 @@ mod test {
         </image>
         </krpano>"#).unwrap();
         assert_eq!(parsed, KrpanoMetadata {
-            image: vec![KrpanoImage {
+            children: vec![Image(KrpanoImage {
                 baseindex: 1,
                 tilesize: None,
                 level: vec![Mobile(vec![Cube(ShapeDesc {
                     url: TemplateString(vec![str("test.jpg")]),
                     multires: None,
                 })])],
-            }]
+            })],
+            ..Default::default()
         })
+    }
+
+    #[test]
+    fn parse_xml_with_scene() {
+        // See https://github.com/lovasoa/dezoomify-rs/issues/100#issuecomment-767048175
+        let parsed: KrpanoMetadata = serde_xml_rs::from_str(r#"<krpano version="1.18">
+        <scene name="scene_Color">
+            <image type="CYLINDER" hfov="1.00" vfov="1.291661" voffset="0.00" multires="true" tilesize="512">
+                <level tiledimagewidth="7424" tiledimageheight="9590">
+                    <cylinder url="xxx/%0v/l5_%0v_%0h.jpg"/>
+                </level>
+            </image>
+        </scene>
+        </krpano>"#).unwrap();
+        assert_eq!(parsed, KrpanoMetadata {
+            children: vec![Scene(KrpanoMetadata {
+                children: vec![Image(KrpanoImage {
+                    baseindex: 1,
+                    tilesize: Some(512),
+                    level: vec![
+                        KrpanoLevel::Level(LevelAttributes {
+                            tiledimagewidth: 7424,
+                            tiledimageheight: 9590,
+                            shape: vec![
+                                Cylinder(ShapeDesc {
+                                    url: TemplateString(vec![
+                                        str("xxx/"), y(2), str("/l5_"),
+                                        y(2), str("_"), x(2), str(".jpg")
+                                    ]),
+                                    multires: None,
+                                })
+                            ],
+                        })
+                    ],
+                })],
+            })],
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn parse_factum_arte() {
+        // See https://github.com/lovasoa/dezoomify-rs/issues/100#issuecomment-767048175
+        let f = std::fs::File::open("testdata/krpano/krpano_scenes.xml").unwrap();
+        let parsed: KrpanoMetadata = serde_xml_rs::from_reader(f).unwrap();
+        assert_eq!(parsed.into_image_iter().count(), 3);
+    }
+
+    #[test]
+    fn parse_360cities() {
+        // title: St George Hotel Dubai Tip Top English Disco by 360emirates
+        let f = std::fs::File::open("testdata/krpano/krpano_360cities.xml").unwrap();
+        let parsed: KrpanoMetadata = serde_xml_rs::from_reader(f).unwrap();
+        let images: Vec<KrpanoImage> = parsed.into_image_iter().collect();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].level.len(), 4);
     }
 
     #[test]
