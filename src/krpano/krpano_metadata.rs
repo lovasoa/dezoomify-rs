@@ -9,6 +9,8 @@ use crate::Vec2d;
 pub struct KrpanoMetadata {
     #[serde(rename = "$value")]
     children: Vec<TopLevelTags>,
+    #[serde(default)]
+    name: String,
 }
 
 impl KrpanoMetadata {
@@ -411,6 +413,7 @@ mod test {
                         })
                     ],
                 })],
+                name: "scene_Color".to_string()
             })],
             ..Default::default()
         })
