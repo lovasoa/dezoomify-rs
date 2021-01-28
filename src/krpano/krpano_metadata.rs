@@ -18,7 +18,7 @@ impl KrpanoMetadata {
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 enum TopLevelTags {
     Image(KrpanoImage),
     Scene(KrpanoMetadata),
