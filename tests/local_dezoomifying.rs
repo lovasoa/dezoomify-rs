@@ -27,6 +27,7 @@ pub async fn local_generic_tiles() {
 }
 
 #[allow(clippy::needless_lifetimes)]
+#[allow(clippy::field_reassign_with_default)]
 pub async fn dezoom_image<'a>(input: &str, expected: &'a str) -> Result<TmpFile<'a>, ZoomError> {
     let mut args: Arguments = Default::default();
     args.input_uri = Some(input.into());
