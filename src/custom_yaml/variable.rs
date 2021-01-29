@@ -150,9 +150,9 @@ impl Variables {
     pub fn new(vars: Vec<VarOrConst>) -> Variables {
         Variables(vars)
     }
-    pub fn iter_contexts<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = Result<HashMapContext, BadVariableError>> + 'a {
+    pub fn iter_contexts(
+        &self,
+    ) -> impl Iterator<Item = Result<HashMapContext, BadVariableError>> + '_ {
         self.0
             .iter()
             .map(|variable| variable.into_iter().map(move |val| (variable.name(), val)))
