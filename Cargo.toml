@@ -46,6 +46,7 @@ fixedbitset = "0.3"
 [dev-dependencies]
 criterion = "0.3"
 img_hash = "3"
+tempdir = "0.3"
 
 [[bench]]
 name = "local_dezoomifying"
