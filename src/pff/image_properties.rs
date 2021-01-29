@@ -2,7 +2,6 @@ use std::num::ParseIntError;
 use std::str::FromStr;
 
 use serde::{Serialize, Deserialize, Deserializer};
-use serde::export::fmt::Debug;
 
 use custom_error::custom_error;
 

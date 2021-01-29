@@ -44,7 +44,7 @@ fn load_from_properties(url: &str, contents: &[u8])
     let image_properties: KrpanoMetadata = serde_xml_rs::from_reader(remove_bom(contents))?;
     let base_url = &Arc::from(url);
 
-    Ok(image_properties.image.into_iter().flat_map(move |image| {
+    Ok(image_properties.into_image_iter().flat_map(move |image| {
         let root_tile_size = image.tilesize.map(Vec2d::square);
         let base_index = image.baseindex;
         image.level.into_iter().flat_map(move |level| {

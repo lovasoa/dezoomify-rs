@@ -1,7 +1,7 @@
 use std::convert::TryFrom;
 use std::ffi::OsString;
 use std::fs::OpenOptions;
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
 
 use log::info;
 use sanitize_filename_reader_friendly::sanitize;
@@ -13,7 +13,12 @@ pub fn reserve_output_file(path: &PathBuf) -> Result<(), ZoomError> {
     Ok(())
 }
 
-pub fn get_outname(outfile: &Option<PathBuf>, zoom_name: &Option<String>, size: Option<Vec2d>) -> PathBuf {
+pub fn get_outname(
+    outfile: &Option<PathBuf>,
+    zoom_name: &Option<String>,
+    base_dir: &Path,
+    size: Option<Vec2d>,
+) -> PathBuf {
     // An image can be encoded as JPEG only if both its dimensions can be encoded as u16
     let fits_in_jpg = size
         .map(|Vec2d { x, y }| u16::try_from(x.max(y)).is_ok());
@@ -32,7 +37,7 @@ pub fn get_outname(outfile: &Option<PathBuf>, zoom_name: &Option<String>, size: 
             .map(|s| sanitize(s))
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "dezoomified".into());
-        let mut path = PathBuf::from(base).with_extension(extension);
+        let mut path = base_dir.join(base).with_extension(extension);
 
         // append a suffix (_1,_2,..) to `outname` if  the file already exists
         let filename = path.file_stem().map(OsString::from).unwrap_or_default();
@@ -52,39 +57,33 @@ pub fn get_outname(outfile: &Option<PathBuf>, zoom_name: &Option<String>, size: 
 #[allow(clippy::expect_fun_call)]
 #[cfg(test)]
 mod tests {
-    use std::env::{current_dir, set_current_dir, temp_dir};
+    use std::env::{current_dir, set_current_dir};
     use std::error::Error;
-    use std::fs::{create_dir, File, remove_dir_all, remove_file};
-    use std::io::ErrorKind::AlreadyExists;
-    use std::panic::{catch_unwind, RefUnwindSafe};
-    use std::process::id;
-    use std::time::{Duration, Instant};
+    use std::fs::{File, remove_file};
+    use std::path::Path;
 
     use super::*;
+    use std::sync::Mutex;
+    use tempdir::TempDir;
 
-    fn in_tmp_dir<T, F: RefUnwindSafe + Fn(&PathBuf) -> T>(f: F) -> T {
-        let tmp = temp_dir().join(format!("dezoomify-rs-lock-{}", id()));
-        let start = Instant::now();
-        while create_dir(&tmp).map_err(|e| e.kind()) == Err(AlreadyExists) {
-            // Wait for the lock to be free
-            if Instant::now() - start > Duration::from_secs(10) {
-                let _ = remove_dir_all(&tmp);
-                panic!("Unable to lock {:?}", tmp);
-            }
+    fn in_tmp_dir<T, F: Fn(&Path) -> T>(f: F) -> T {
+        lazy_static::lazy_static! {
+            static ref CWD_MUTEX: Mutex<()> = Mutex::new(());
         }
-        let res = catch_unwind(|| {
-            let cwd = current_dir().expect("Unable to getcwd");
-            set_current_dir(&tmp).expect(&format!("Unable to cd into {:?}", &tmp));
-            let res = f(&tmp);
-            set_current_dir(&cwd).expect(&format!("Unable to cd into {:?}", &cwd));
-            res
-        });
-        remove_dir_all(&tmp).expect("Unable to remove dezoomify-rs test dir");
-        res.unwrap()
+        let tmp = tempdir::TempDir::new("dezoomify-rs-tests")
+            .expect("Unable to create a temporary directory to run the tests in");
+        let lock = CWD_MUTEX.lock().unwrap(); // prevents multiple threads from changing cwd at once
+        let cwd = current_dir().expect("Unable to getcwd");
+        set_current_dir(&tmp).expect(&format!("Unable to cd into {:?}", &tmp));
+        let res = f(tmp.as_ref());
+        set_current_dir(&cwd).expect(&format!("Unable to cd into {:?}", &cwd));
+        drop(lock);
+        res
     }
 
     fn assert_filename_ok(filename: &str) -> Result<(), Box<dyn Error>> {
-        let outname = get_outname(&None, &Some(filename.to_string()), None);
+        let base_dir = TempDir::new("dezoomify-rs-test-filename")?;
+        let outname = get_outname(&None, &Some(filename.to_string()), base_dir.as_ref(), None);
         assert_eq!(false, outname.exists(), "get_outname cannot overwrite {:?}", outname);
         File::create(&outname)
             .expect(&format!("Could not to create a file named {:?} for input {:?}", outname, filename));
@@ -102,9 +101,7 @@ mod tests {
             "", // test empty name
         ];
         for filename in filenames {
-            in_tmp_dir(|_| {
-                assert_filename_ok(filename).expect(&format!("Invalid filename {}", filename))
-            });
+            assert_filename_ok(filename).expect(&format!("Invalid filename {}", filename))
         }
         Ok(())
     }
@@ -120,19 +117,20 @@ mod tests {
 
     #[test]
     fn switch_to_png_for_large_files() {
+        let base_dir = TempDir::new("dezoomify-rs-test-png").unwrap();
+        let base = |s| base_dir.as_ref().join(s);
         let tests = vec![
             // outfile, zoom_name, size, expected_result
-            (None, Some("hello".to_string()), None, "hello.png"),
-            (None, Some("hello".to_string()), Some(Vec2d { x: 1000, y: 1000 }), "hello.jpg", ),
-            (None, Some(String::new()), None, "dezoomified.png", ),
-            (None, None, None, "dezoomified.png"),
-            (None, None, Some(Vec2d { x: 1000, y: 1000 }), "dezoomified.jpg"),
-            (Some("test.tiff".into()), Some("hello".to_string()), Some(Vec2d { x: 1000, y: 1000 }), "test.tiff"),
+            (None, Some("hello".to_string()), None, base("hello.png")),
+            (None, Some("hello".to_string()), Some(Vec2d { x: 1000, y: 1000 }), base("hello.jpg"), ),
+            (None, Some(String::new()), None, base("dezoomified.png"), ),
+            (None, None, None, base("dezoomified.png")),
+            (None, None, Some(Vec2d { x: 1000, y: 1000 }), base("dezoomified.jpg")),
+            (Some("test.tiff".into()), Some("hello".to_string()), Some(Vec2d { x: 1000, y: 1000 }), "test.tiff".into()),
         ];
         for (outfile, zoom_name, size, expected_result) in tests.into_iter() {
-            in_tmp_dir(|_| {
-                assert_eq!(get_outname(&outfile, &zoom_name, size), PathBuf::from(expected_result))
-            });
+            let outname = get_outname(&outfile, &zoom_name, base_dir.as_ref(), size);
+            assert_eq!(outname, expected_result);
         }
     }
 }

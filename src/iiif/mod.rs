@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use custom_error::custom_error;
 use log::{info, debug};
-use serde::export::Formatter;
 
 use tile_info::ImageInfo;
 
@@ -149,7 +148,7 @@ impl TilesRect for IIIFZoomLevel {
 struct TileSizeFormatter { w: u32, h: u32, format: TileSizeFormat }
 
 impl std::fmt::Display for TileSizeFormatter {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.format {
             TileSizeFormat::WidthHeight => write!(f, "{},{}", self.w, self.h),
             TileSizeFormat::Width => write!(f, "{},", self.w),

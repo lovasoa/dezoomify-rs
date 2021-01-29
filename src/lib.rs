@@ -23,7 +23,7 @@ use crate::encoder::tile_buffer::TileBuffer;
 use crate::output_file::reserve_output_file;
 use crate::dezoomer::PageContents;
 use std::error::Error;
-use serde::export::Formatter;
+use std::env::current_dir;
 
 mod arguments;
 mod encoder;
@@ -141,7 +141,8 @@ async fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
 
 pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
     let zoom_level = find_zoomlevel(&args).await?;
-    let outname = get_outname(&args.outfile, &zoom_level.title(), zoom_level.size_hint());
+    let base_dir = current_dir()?;
+    let outname = get_outname(&args.outfile, &zoom_level.title(), &base_dir,zoom_level.size_hint());
     let save_as = fs::canonicalize(outname.as_path()).unwrap_or_else(|_e| outname.clone());
     reserve_output_file(&save_as)?;
     let tile_buffer: TileBuffer = TileBuffer::new(save_as.clone(), args.compression).await?;
@@ -271,7 +272,7 @@ struct TileDownloadError {
 }
 
 impl fmt::Display for TileDownloadError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Unable to download tile '{}'. Cause: {}", self.tile_reference.url, self.cause)
     }
 }
