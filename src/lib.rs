@@ -84,7 +84,7 @@ async fn list_tiles(
 fn level_picker(mut levels: Vec<ZoomLevel>) -> Result<ZoomLevel, ZoomError> {
     println!("Found the following zoom levels:");
     for (i, level) in levels.iter().enumerate() {
-        println!("{}. {}", i, level.name());
+        println!("{: >2}. {}", i, level.name());
     }
     loop {
         println!("Which level do you want to download? ");
