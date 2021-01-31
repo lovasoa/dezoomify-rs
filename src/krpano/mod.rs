@@ -43,7 +43,7 @@ fn load_from_properties(url: &str, contents: &[u8])
                         -> Result<ZoomLevels, KrpanoError> {
     let image_properties: KrpanoMetadata = serde_xml_rs::from_reader(remove_bom(contents))?;
     let base_url = &Arc::from(url);
-
+    let title: &Arc<str> = &Arc::from(image_properties.get_title().unwrap_or(""));
     Ok(image_properties.into_image_iter().flat_map(move |ImageInfo { image, name }| {
         let root_tile_size = image.tilesize.map(Vec2d::square);
         let base_index = image.baseindex;
@@ -65,6 +65,8 @@ fn load_from_properties(url: &str, contents: &[u8])
                         let name = Arc::clone(&name);
                         url.all_sides(level).flat_map(move |(side_name, template)| {
                             let base_url = Arc::clone(base_url);
+                            let title = Arc::clone(title);
+                            let name = Arc::clone(&name);
                             tilesize.or(root_tile_size).map(|tile_size|
                                 Level {
                                     base_url,
@@ -74,7 +76,8 @@ fn load_from_properties(url: &str, contents: &[u8])
                                     template,
                                     shape_name,
                                     side_name,
-                                    name: Arc::clone(&name)
+                                    name,
+                                    title,
                                 })
                         })
                     })
@@ -92,7 +95,8 @@ struct Level {
     template: TemplateString<XY>,
     shape_name: &'static str,
     side_name: &'static str,
-    name: Arc<str>
+    name: Arc<str>,
+    title: Arc<str>,
 }
 
 impl TilesRect for Level {
@@ -118,6 +122,15 @@ impl TilesRect for Level {
             }
         }
         resolve_relative(&self.base_url, &result)
+    }
+
+    fn title(&self) -> Option<String> {
+        if self.title.is_empty() && self.name.is_empty() {
+            None
+        } else {
+            let title = [self.title.as_ref(), self.name.as_ref()].join(" ");
+            Some(title)
+        }
     }
 
     fn tile_ref(&self, pos: Vec2d) -> TileReference {

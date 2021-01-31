@@ -34,6 +34,10 @@ impl KrpanoMetadata {
     pub fn into_image_iter(self) -> impl Iterator<Item=ImageInfo> {
         self.into_image_iter_with_name(Arc::from(""))
     }
+
+    pub fn get_title(&self) -> Option<&str> {
+        self.children.iter().find_map(|child| child.get_title())
+    }
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -41,6 +45,10 @@ impl KrpanoMetadata {
 enum TopLevelTags {
     Image(KrpanoImage),
     Scene(KrpanoMetadata),
+    SourceDetails {
+        #[serde(default)] subject: String,
+    },
+    Data(String),
     #[serde(other, deserialize_with = "deserialize_ignore_any")]
     Other,
 }
@@ -58,10 +66,24 @@ impl TopLevelTags {
                 Box::new(std::iter::once(ImageInfo { name, image })),
             Self::Scene(s) =>
                 Box::new(s.into_image_iter_with_name(name)),
-            Self::Other =>
+            _ =>
                 Box::new(std::iter::empty())
         }
     }
+    fn get_title(&self) -> Option<&str> {
+        match self {
+            Self::SourceDetails { subject } => Some(subject),
+            Self::Data(bytes) =>
+                serde_json::from_str::<KrpanoMetaData>(&bytes).ok()
+                    .map(|m| m.title),
+            _ => None
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct KrpanoMetaData<'a> {
+    title: &'a str
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -328,6 +350,27 @@ mod test {
             }]);
     }
 
+    #[test]
+    fn get_title_json_metadata() {
+        let parsed: KrpanoMetadata = serde_xml_rs::from_str(r#"
+        <krpano version="1.18"  bgcolor="0xFFFFFF">
+            <data name="metadata"><![CDATA[
+                {"id":"xxx", "title":"yyy"}
+            ]]></data>
+        </krpano>
+        "#).unwrap();
+        assert_eq!(parsed.get_title(), Some("yyy"));
+    }
+
+    #[test]
+    fn get_title_source_details() {
+        let parsed: KrpanoMetadata = serde_xml_rs::from_str(r#"
+        <krpano version="1.18"  bgcolor="0xFFFFFF">
+            <source_details subject="the subject"/>
+        </krpano>
+        "#).unwrap();
+        assert_eq!(parsed.get_title(), Some("the subject"));
+    }
 
     #[test]
     fn parse_xml_old_cube() {
