@@ -13,9 +13,26 @@ pub struct KrpanoMetadata {
     name: String,
 }
 
+#[derive(Debug, PartialEq)]
+pub struct ImageInfo {
+    pub image: KrpanoImage,
+    pub name: Arc<str>,
+}
+
 impl KrpanoMetadata {
-    pub fn into_image_iter(self) -> impl Iterator<Item=KrpanoImage> {
-        self.children.into_iter().flat_map(|t| t.into_image_iter())
+    fn into_image_iter_with_name(self, name: Arc<str>) -> impl Iterator<Item=ImageInfo> {
+        let name: Arc<str> = if name.is_empty() {
+            Arc::from(self.name)
+        } else {
+            let s = [name.as_ref(), &self.name].join(" ");
+            Arc::from(s)
+        };
+        self.children.into_iter()
+            .flat_map(move |t| t.into_image_iter_with_name(name.clone()))
+    }
+
+    pub fn into_image_iter(self) -> impl Iterator<Item=ImageInfo> {
+        self.into_image_iter_with_name(Arc::from(""))
     }
 }
 
@@ -35,11 +52,14 @@ fn deserialize_ignore_any<'de, D: Deserializer<'de>>(deserializer: D) -> Result<
 }
 
 impl TopLevelTags {
-    fn into_image_iter(self) -> Box<dyn Iterator<Item=KrpanoImage>> {
+    fn into_image_iter_with_name(self, name: Arc<str>) -> Box<dyn Iterator<Item=ImageInfo>> {
         match self {
-            Self::Image(image) => Box::new(std::iter::once(image)),
-            Self::Scene(s) => Box::new(s.into_image_iter()),
-            Self::Other => Box::new(std::iter::empty())
+            Self::Image(image) =>
+                Box::new(std::iter::once(ImageInfo { name, image })),
+            Self::Scene(s) =>
+                Box::new(s.into_image_iter_with_name(name)),
+            Self::Other =>
+                Box::new(std::iter::empty())
         }
     }
 }
@@ -256,12 +276,11 @@ pub enum XY { X, Y }
 
 #[cfg(test)]
 mod test {
-    use super::KrpanoLevel::{Left, Mobile, Cube, Cylinder};
-    use super::TopLevelTags::{Image, Scene};
+    use super::*;
+    use super::KrpanoLevel::{Cube, Cylinder, Left, Mobile};
     use super::TemplateStringPart::{Literal, Variable};
     use super::TemplateVariable::{LevelIndex, X, Y};
-
-    use super::*;
+    use super::TopLevelTags::{Image, Scene};
 
     fn str(s: &str) -> TemplateStringPart<TemplateVariable> { Literal(Arc::from(s)) }
 
@@ -285,24 +304,28 @@ mod test {
             </image>
         </krpano>
         "#).unwrap();
-        let images: Vec<KrpanoImage> = parsed.into_image_iter().collect();
-        assert_eq!(images, vec![KrpanoImage {
-            baseindex: 1,
-            tilesize: Some(512),
-            level: vec![
-                KrpanoLevel::Level(LevelAttributes {
-                    tiledimagewidth: 31646,
-                    tiledimageheight: 38234,
-                    shape: vec![KrpanoLevel::Cylinder(ShapeDesc {
-                        url: TemplateString(vec![
-                            str("monomane.tiles/l7/"), y(1), str("/l7_"),
-                            y(1), str("_"), x(1), str(".jpg"),
-                        ]),
-                        multires: None,
-                    })],
-                }),
-            ],
-        }]);
+        let images: Vec<ImageInfo> = parsed.into_image_iter().collect();
+        assert_eq!(images, vec![
+            ImageInfo {
+                name: Arc::from(""),
+                image: KrpanoImage {
+                    baseindex: 1,
+                    tilesize: Some(512),
+                    level: vec![
+                        KrpanoLevel::Level(LevelAttributes {
+                            tiledimagewidth: 31646,
+                            tiledimageheight: 38234,
+                            shape: vec![KrpanoLevel::Cylinder(ShapeDesc {
+                                url: TemplateString(vec![
+                                    str("monomane.tiles/l7/"), y(1), str("/l7_"),
+                                    y(1), str("_"), x(1), str(".jpg"),
+                                ]),
+                                multires: None,
+                            })],
+                        }),
+                    ],
+                },
+            }]);
     }
 
 
@@ -424,7 +447,10 @@ mod test {
         // See https://github.com/lovasoa/dezoomify-rs/issues/100#issuecomment-767048175
         let f = std::fs::File::open("testdata/krpano/krpano_scenes.xml").unwrap();
         let parsed: KrpanoMetadata = serde_xml_rs::from_reader(f).unwrap();
-        assert_eq!(parsed.into_image_iter().count(), 3);
+        let infos: Vec<ImageInfo> = parsed.into_image_iter().collect();
+        assert_eq!(infos.len(), 3);
+        let names: Vec<String> = infos.iter().map(|i| String::from(i.name.as_ref())).collect();
+        assert_eq!(names, ["scene_Color", "scene_3D", "scene_3Dcolor"])
     }
 
     #[test]
@@ -432,9 +458,9 @@ mod test {
         // title: St George Hotel Dubai Tip Top English Disco by 360emirates
         let f = std::fs::File::open("testdata/krpano/krpano_360cities.xml").unwrap();
         let parsed: KrpanoMetadata = serde_xml_rs::from_reader(f).unwrap();
-        let images: Vec<KrpanoImage> = parsed.into_image_iter().collect();
-        assert_eq!(images.len(), 1);
-        assert_eq!(images[0].level.len(), 4);
+        let infos: Vec<ImageInfo> = parsed.into_image_iter().collect();
+        assert_eq!(infos.len(), 1);
+        assert_eq!(infos[0].image.level.len(), 4);
     }
 
     #[test]

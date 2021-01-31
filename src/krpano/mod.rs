@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
+use custom_error::custom_error;
 use itertools::Itertools;
 use log::warn;
 
-use custom_error::custom_error;
 use krpano_metadata::{KrpanoMetadata, TemplateString, TemplateStringPart, XY};
 
 use crate::dezoomer::*;
-use crate::krpano::krpano_metadata::LevelDesc;
+use crate::krpano::krpano_metadata::{ImageInfo, LevelDesc};
 use crate::network::{remove_bom, resolve_relative};
 
 mod krpano_metadata;
@@ -44,11 +44,13 @@ fn load_from_properties(url: &str, contents: &[u8])
     let image_properties: KrpanoMetadata = serde_xml_rs::from_reader(remove_bom(contents))?;
     let base_url = &Arc::from(url);
 
-    Ok(image_properties.into_image_iter().flat_map(move |image| {
+    Ok(image_properties.into_image_iter().flat_map(move |ImageInfo { image, name }| {
         let root_tile_size = image.tilesize.map(Vec2d::square);
         let base_index = image.baseindex;
         image.level.into_iter().flat_map(move |level| {
+            let name = Arc::clone(&name);
             level.level_descriptions(None).into_iter().flat_map(move |level_desc| {
+                let name = Arc::clone(&name);
                 level_desc
                     .map_err(|err| warn!("bad krpano level: {}", err))
                     .into_iter()
@@ -60,6 +62,7 @@ fn load_from_properties(url: &str, contents: &[u8])
                                         level_index,
                                     }| {
                         let level = level_index + base_index as usize;
+                        let name = Arc::clone(&name);
                         url.all_sides(level).flat_map(move |(side_name, template)| {
                             let base_url = Arc::clone(base_url);
                             tilesize.or(root_tile_size).map(|tile_size|
@@ -71,6 +74,7 @@ fn load_from_properties(url: &str, contents: &[u8])
                                     template,
                                     shape_name,
                                     side_name,
+                                    name: Arc::clone(&name)
                                 })
                         })
                     })
@@ -88,6 +92,7 @@ struct Level {
     template: TemplateString<XY>,
     shape_name: &'static str,
     side_name: &'static str,
+    name: Arc<str>
 }
 
 impl TilesRect for Level {
@@ -125,7 +130,7 @@ impl TilesRect for Level {
 
 impl std::fmt::Debug for Level {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let parts = ["Krpano", self.shape_name, self.side_name];
+        let parts = ["Krpano", self.shape_name, self.side_name, &self.name];
         write!(f, "{}", parts.iter().filter(|s| !s.is_empty()).join(" "))
     }
 }
