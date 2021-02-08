@@ -6,6 +6,7 @@ use crate::dezoomer::{TilesRect, Dezoomer, DezoomerInput, ZoomLevels, DezoomerEr
 use std::convert::TryFrom;
 use std::iter::successors;
 use std::fmt::Debug;
+use regex::Regex;
 
 /// A dezoomer for krpano images
 /// See https://iipimage.sourceforge.io/documentation/protocol/
@@ -23,7 +24,8 @@ impl Dezoomer for IIPImage {
             let iter = iter_levels(uri, contents).map_err(DezoomerError::wrap)?;
             Ok(iter.into_zoom_levels())
         } else {
-            self.assert(data.uri.contains("?FIF="))?;
+            let re = Regex::new("(?i)\\?FIF").unwrap();
+            self.assert(re.is_match(&data.uri))?;
             let mut meta_uri: String = data.uri.chars().take_while(|&c| c != '&').collect();
             meta_uri += META_REQUEST_PARAMS;
             Err(DezoomerError::NeedsData { uri: meta_uri })
@@ -133,6 +135,18 @@ custom_error! {#[derive(PartialEq)] pub IIPError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dezoomer::PageContents;
+
+    #[test]
+    fn test_lowercase() {
+        let uri = "https://publications-images.artic.edu/fcgi-bin/iipsrv.fcgi?fif=osci/Renoir_11/Color_Corrected/G39094sm2.ptif&jtl=4,11".to_string();
+        let metadata_uri = "https://publications-images.artic.edu/fcgi-bin/iipsrv.fcgi?fif=osci/Renoir_11/Color_Corrected/G39094sm2.ptif&OBJ=Max-size&OBJ=Tile-size&OBJ=Resolution-number";
+        let data = DezoomerInput { uri, contents: PageContents::Unknown };
+        match IIPImage::default().zoom_levels(&data) {
+            Err(DezoomerError::NeedsData { uri }) => assert_eq!(uri, metadata_uri),
+            _ => panic!("Unexpected result")
+        }
+    }
 
     #[test]
     fn test_parse_metadata() {
