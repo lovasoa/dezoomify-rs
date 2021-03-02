@@ -1,7 +1,7 @@
 use std::convert::TryFrom;
 use std::ffi::OsString;
 use std::fs::OpenOptions;
-use std::path::{PathBuf, Path};
+use std::path::{Path, PathBuf};
 
 use log::info;
 use sanitize_filename_reader_friendly::sanitize;
@@ -61,10 +61,11 @@ mod tests {
     use std::error::Error;
     use std::fs::{File, remove_file};
     use std::path::Path;
+    use std::sync::Mutex;
+
+    use tempdir::TempDir;
 
     use super::*;
-    use std::sync::Mutex;
-    use tempdir::TempDir;
 
     fn in_tmp_dir<T, F: Fn(&Path) -> T>(f: F) -> T {
         lazy_static::lazy_static! {
@@ -92,7 +93,7 @@ mod tests {
     }
 
     #[test]
-    fn test_special_chars() -> Result<(), Box<dyn Error>> {
+    fn test_special_chars() {
         // See https://github.com/lovasoa/dezoomify-rs/issues/29
         let filenames = vec![
             "? [Question Mark] Australian WWI Poster",
@@ -103,7 +104,6 @@ mod tests {
         for filename in filenames {
             assert_filename_ok(filename).expect(&format!("Invalid filename {}", filename))
         }
-        Ok(())
     }
 
     #[test]

@@ -42,7 +42,7 @@ impl Dezoomer for IIIF {
 
 fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
     match serde_json::from_slice(raw_info) {
-        Ok(info) => zoom_levels_from_info(url, info),
+        Ok(info) => Ok(zoom_levels_from_info(url, info)),
         Err(e) => {
             // Due to the very fault-tolerant way we parse iiif manifests, a single javascript
             // object with a 'width' and a 'height' field is enough to be detected as an IIIF level
@@ -57,7 +57,7 @@ fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
                     }
                     keep
                 })
-                .flat_map(|info| zoom_levels_from_info(url, info).into_iter().flatten())
+                .flat_map(|info| zoom_levels_from_info(url, info))
                 .collect();
             if levels.is_empty() {
                 Err(e.into())
@@ -71,7 +71,7 @@ fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
     }
 }
 
-fn zoom_levels_from_info(url: &str, mut image_info: ImageInfo) -> Result<ZoomLevels, IIIFError> {
+fn zoom_levels_from_info(url: &str, mut image_info: ImageInfo) -> ZoomLevels {
     image_info.remove_test_id();
     let img = Arc::new(image_info);
     let tiles = img.tiles();
@@ -103,7 +103,7 @@ fn zoom_levels_from_info(url: &str, mut image_info: ImageInfo) -> Result<ZoomLev
                 })
         })
         .into_zoom_levels();
-    Ok(levels)
+    levels
 }
 
 struct IIIFZoomLevel {
