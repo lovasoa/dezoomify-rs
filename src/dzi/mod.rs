@@ -8,7 +8,7 @@ use dzi_file::DziFile;
 use crate::dezoomer::*;
 use crate::json_utils::all_json;
 use crate::network::remove_bom;
-
+use regex::Regex;
 mod dzi_file;
 
 /// A dezoomer for Deep Zoom Images
@@ -22,9 +22,16 @@ impl Dezoomer for DziDezoomer {
     }
 
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
-        let DezoomerInputWithContents { uri, contents } = data.with_contents()?;
-        let levels = load_from_properties(uri, contents)?;
-        Ok(levels)
+        let tile_re = Regex::new("_files/\\d+/\\d+_\\d+\\.(jpe?g|png)$").unwrap();
+        if let Some(m) = tile_re.find(&data.uri) {
+            let meta_uri = data.uri[..m.start()].to_string() + ".dzi";
+            debug!("'{}' looks like a dzi image tile URL. Trying to fetch the DZI file at '{}'.", data.uri, meta_uri);
+            Err(DezoomerError::NeedsData { uri: meta_uri })
+        } else {
+            let DezoomerInputWithContents { uri, contents } = data.with_contents()?;
+            let levels = load_from_properties(uri, contents)?;
+            Ok(levels)
+        }
     }
 }
 
