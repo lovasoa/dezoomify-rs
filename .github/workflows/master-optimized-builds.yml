@@ -3,7 +3,7 @@ name: Master optimized builds
 on:
   push:
     branches: [ master ]
-    paths: [ 'src/**.rs' ]
+    paths: [ 'src/**.rs', '.github/workflows/master-optimized-builds.yml' ]
 
 jobs:
   build:
