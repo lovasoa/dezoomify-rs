@@ -8,7 +8,7 @@ use sanitize_filename_reader_friendly::sanitize;
 
 use crate::{Vec2d, ZoomError};
 
-pub fn reserve_output_file(path: &PathBuf) -> Result<(), ZoomError> {
+pub fn reserve_output_file(path: &Path) -> Result<(), ZoomError> {
     OpenOptions::new().write(true).create_new(true).open(path)?;
     Ok(())
 }

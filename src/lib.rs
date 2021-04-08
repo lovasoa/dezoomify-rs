@@ -1,3 +1,4 @@
+#![allow(clippy::upper_case_acronyms)]
 use std::{fs, fmt, io};
 use std::io::BufRead;
 use std::path::PathBuf;
