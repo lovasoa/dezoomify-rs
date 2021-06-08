@@ -47,11 +47,11 @@ pub fn decrypt(encrypted: Vec<u8>) -> Result<Vec<u8>, InvalidEncryptedImage> {
 fn aes_decrypt_buffer(encrypted: &mut [u8]) -> Result<&[u8], BlockModeError> {
     let key = [
         91, 99, 219, 17, 59, 122, 243, 224, 177, 67, 85, 86, 200, 249, 83, 12,
-    ].into();
+    ];
     let iv = [
         113, 231, 4, 5, 53, 58, 119, 139, 250, 111, 188, 48, 50, 27, 149, 146,
-    ].into();
-    let cipher = Aes128Cbc::new_fix(&key, &iv);
+    ];
+    let cipher = Aes128Cbc::new_from_slices(&key, &iv).unwrap();
     cipher.decrypt(encrypted)
 }
 
