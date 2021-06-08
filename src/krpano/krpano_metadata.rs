@@ -63,7 +63,7 @@ impl TopLevelTags {
     fn into_image_iter_with_name(self, name: Arc<str>) -> Box<dyn Iterator<Item=ImageInfo>> {
         match self {
             Self::Image(image) =>
-                Box::new(std::iter::once(ImageInfo { name, image })),
+                Box::new(std::iter::once(ImageInfo { image, name })),
             Self::Scene(s) =>
                 Box::new(s.into_image_iter_with_name(name)),
             _ =>

@@ -70,9 +70,9 @@ fn load_from_properties(url: &str, contents: &[u8])
                             tilesize.or(root_tile_size).map(|tile_size|
                                 Level {
                                     base_url,
-                                    base_index,
                                     size,
                                     tile_size,
+                                    base_index,
                                     template,
                                     shape_name,
                                     side_name,
