@@ -199,14 +199,14 @@ pub async fn dezoomify_level(
             progress.inc(1);
             let tile = match tile_result {
                 Ok(tile) => {
-                    progress.set_message(&format!("Downloaded tile at {}", tile.position()));
+                    progress.set_message(format!("Downloaded tile at {}", tile.position()));
                     tile_size.replace(tile.size());
                     last_successes += 1;
                     Some(tile)
                 }
                 Err(err) => {
                     // If a tile download fails, we replace it with an empty tile
-                    progress.set_message(&err.to_string());
+                    progress.set_message(err.to_string());
                     let position = err.tile_reference.position;
                     tile_size.and_then(|tile_size| {
                         zoom_level_iter.size_hint().map(|canvas_size| {

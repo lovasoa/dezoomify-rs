@@ -157,7 +157,7 @@ custom_error! {pub UrlTemplateError
 mod tests {
     use std::str::FromStr;
 
-    use evalexpr::Context;
+    use evalexpr::ContextWithMutableVariables;
 
     use crate::TileReference;
 
