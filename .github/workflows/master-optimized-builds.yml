@@ -16,7 +16,7 @@ jobs:
             binary_path: target/release/dezoomify-rs.exe
           - os: macos-latest
             binary_path: target/release/dezoomify-rs
-          - os: ubuntu-latest
+          - os: ubuntu-18.04
             binary_path: target/release/dezoomify-rs
     steps:
       - uses: actions/checkout@v2
