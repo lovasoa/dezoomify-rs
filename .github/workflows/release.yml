@@ -11,13 +11,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
+        # Use an older ubuntu to compile with an older glibc
+        os: [macos-latest, windows-latest, ubuntu-18.04]
         include:
           - os: windows-latest
             binary_path: target/release/dezoomify-rs.exe
           - os: macos-latest
             binary_path: target/release/dezoomify-rs
-          - os: ubuntu-latest
+          - os: ubuntu-18.04
             binary_path: target/release/dezoomify-rs
     steps:
       - uses: actions/checkout@v2
@@ -33,7 +34,7 @@ jobs:
   create_release:
     name: Create Release
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-18.04
     steps:
       - name: Checkout code
         uses: actions/checkout@master
@@ -79,7 +80,7 @@ jobs:
           asset_content_type: application/octet-stream
 
       - uses: actions/download-artifact@v1
-        with: { name: dezoomify-rs ubuntu-latest, path: . }
+        with: { name: dezoomify-rs ubuntu-18.04, path: . }
       - run: chmod +x dezoomify-rs && tar --create --file dezoomify-rs-linux.tgz --gzip dezoomify-rs
       - name: Upload Linux binary
         uses: lovasoa/upload-release-asset@851d9cc59fe8113912edffbd8fddaa09470a5ac0
