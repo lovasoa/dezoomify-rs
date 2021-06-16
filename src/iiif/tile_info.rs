@@ -4,10 +4,10 @@ use std::collections::HashSet;
 use lazy_static::lazy_static;
 use log::info;
 use log::warn;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::Vec2d;
-use regex::Regex;
 
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ImageInfo {
@@ -104,26 +104,33 @@ impl ImageInfo {
     }
 
     pub fn tiles(&self) -> Vec<TileInfo> {
-        self.tiles.as_ref()
-            .and_then(|v|
-                if v.is_empty() {
-                    None
-                } else {
-                    Some(v.to_vec())
-                })
-            .unwrap_or_else(|| {
-                let mut info = TileInfo::default();
-                if let Some(width) = self.tile_width {
-                    info.width = width
-                }
-                if let Some(height) = self.tile_height {
-                    info.height = Some(height)
-                }
-                if let Some(scale_factors) = &self.scale_factors {
-                    info.scale_factors = scale_factors.clone()
-                }
-                vec![info]
-            })
+        let profile_info = self.profile_info();
+        let mut tiles = self.tiles.as_ref()
+            .map(|v| {
+                v.iter().flat_map(|info|
+                    if profile_info.tile_size_fits(info.size()) {
+                        Some(info.clone())
+                    } else { None }
+                ).collect()
+            }).unwrap_or_else(Vec::new);
+        // If no preset tile size covers the full-resolution image, add a new one
+        if !tiles.iter().any(|t| t.scale_factors.contains(&1)) {
+            let mut info = TileInfo::default();
+            if let Some(width) = self.tile_width {
+                info.width = width
+            }
+            if let Some(height) = self.tile_height {
+                info.height = Some(height)
+            }
+            let cropped_size = profile_info.crop_tile_size(info.size());
+            info.width = cropped_size.x;
+            info.height = Some(cropped_size.y);
+            if let Some(scale_factors) = &self.scale_factors {
+                info.scale_factors = scale_factors.clone()
+            }
+            tiles.push(info)
+        }
+        tiles
     }
 
     /// Because our parser is so tolerant, we need to evaluate the probability
@@ -157,6 +164,12 @@ pub struct TileInfo {
     pub scale_factors: Vec<u32>,
 }
 
+impl TileInfo {
+    pub fn size(&self) -> Vec2d {
+        Vec2d { x: self.width, y: self.height.unwrap_or(self.width) }
+    }
+}
+
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(untagged)]
@@ -177,6 +190,36 @@ pub struct ProfileInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(alias = "extraFeatures")]
     supports: Option<Vec<String>>,
+    #[serde(rename = "maxWidth")]
+    max_width: Option<u32>,
+    #[serde(rename = "maxHeight")]
+    max_height: Option<u32>,
+    #[serde(rename = "maxArea")]
+    max_area: Option<u64>,
+}
+
+impl ProfileInfo {
+    /// Takes a proposed tile_size as input and returns a potentially smaller tile size
+    /// that fits the tile size limits defined in the profile information
+    fn crop_tile_size(&self, mut size: Vec2d) -> Vec2d {
+        if let Some(max_width) = self.max_width {
+            size.x = size.x.min(max_width);
+            let max_height = self.max_height.unwrap_or(max_width);
+            size.y = size.y.min(max_height);
+        }
+        if let Some(max_area) = self.max_area {
+            if max_area > size.area() {
+                let sqrt = ((max_area as f64).sqrt()) as u32;
+                size.y = sqrt.min(size.y);
+                size.x = sqrt.min(size.x);
+            }
+        }
+        size
+    }
+    /// Whether the given tile size fits the maximum size constraints in the profile
+    fn tile_size_fits(&self, size: Vec2d) -> bool {
+        self.crop_tile_size(size) == size
+    }
 }
 
 lazy_static! {
@@ -202,16 +245,32 @@ impl Profile {
                 let mut formats = vec![];
                 let mut qualities = vec![];
                 let mut supports = vec![];
+                let mut max_width = None;
+                let mut max_height = None;
+                let mut max_area = None;
+                fn update_max<T: Ord + Copy>(target: &mut Option<T>, new: Option<T>) {
+                    if let Some(new) = new {
+                        *target = Some(
+                            if let Some(old) = target { new.min(*old) } else { new }
+                        )
+                    }
+                }
                 for profile in profiles.iter().flat_map(|x| x.iter()) {
                     let p = profile.profile_info();
                     if let Some(x) = &p.formats { formats.extend_from_slice(x) }
                     if let Some(x) = &p.qualities { qualities.extend_from_slice(x) }
                     if let Some(x) = &p.supports { supports.extend_from_slice(x) }
+                    update_max(&mut max_width, p.max_width);
+                    update_max(&mut max_height, p.max_height);
+                    update_max(&mut max_area, p.max_area);
                 }
                 Cow::Owned(ProfileInfo {
                     formats: Some(formats),
                     qualities: Some(qualities),
                     supports: Some(supports),
+                    max_width,
+                    max_height,
+                    max_area,
                 })
             },
         }
@@ -257,19 +316,26 @@ fn test_profile_info() {
     let profiles = Profile::Multiple(Some(vec![
         Profile::Reference("http://iiif.io/api/image/2/level0.json".into()),
         Profile::Info(ProfileInfo {
-            formats: None,
-            qualities: None,
             supports: Some(vec!["sizeByWh".into()]),
+            max_width: Some(56),
+            ..Default::default()
+        }),
+        Profile::Info(ProfileInfo {
+            max_width: Some(78),
+            max_height: Some(94),
+            ..Default::default()
         })
     ]));
-    use std::ops::Deref;
-    assert_eq!(profiles.profile_info().deref(), &ProfileInfo {
+    assert_eq!(*profiles.profile_info(), ProfileInfo {
         formats: Some(vec!["jpg".into()]), // from level0
         qualities: Some(vec!["default".into()]), // from level0
         supports: Some(vec![
             "sizeByWhListed".into(), // from level0
             "sizeByWh".into(), // from the second profile
         ]),
+        max_width: Some(56),
+        max_height: Some(94),
+        ..Default::default()
     })
 }
 

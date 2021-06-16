@@ -79,10 +79,7 @@ fn zoom_levels_from_info(url: &str, mut image_info: ImageInfo) -> ZoomLevels {
     let levels = tiles
         .iter()
         .flat_map(|tile_info| {
-            let tile_size = Vec2d {
-                x: tile_info.width,
-                y: tile_info.height.unwrap_or(tile_info.width),
-            };
+            let tile_size = tile_info.size();
             let quality = Arc::from(img.best_quality());
             let format = Arc::from(img.best_format());
             let size_format = img.preferred_size_format();
