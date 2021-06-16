@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use custom_error::custom_error;
-use log::{info, debug};
+use log::{debug, info};
 
 use tile_info::ImageInfo;
 
@@ -199,6 +199,31 @@ fn test_tiles() {
     assert_eq!(tiles, vec![
         "http://www.asmilano.it/fast/iipsrv.fcgi?IIIF=/opt/divenire/files/./tifs/05/36/536765.tif/0,0,15001,32768/234,512/0/default.jpg",
         "http://www.asmilano.it/fast/iipsrv.fcgi?IIIF=/opt/divenire/files/./tifs/05/36/536765.tif/0,32768,15001,15234/234,238/0/default.jpg",
+    ])
+}
+
+
+#[test]
+fn test_tiles_max_area_filter() {
+    // Predefined tile size (1024x1024) is over maxArea (262144 = 512x512).
+    // See https://github.com/lovasoa/dezoomify-rs/issues/107#issuecomment-862225501
+    let data = br#"{
+      "width" : 1024,
+      "height" : 1024,
+      "tiles" : [{ "width" : 1024, "scaleFactors" : [ 1 ] }],
+      "profile" :  [ { "maxArea": 262144 } ]
+    }"#;
+    let mut levels = zoom_levels("http://ophir.dev/info.json", data).unwrap();
+    let tiles: Vec<String> = levels[0]
+        .next_tiles(None)
+        .into_iter()
+        .map(|t| t.url)
+        .collect();
+    assert_eq!(tiles, vec![
+        "http://ophir.dev/0,0,512,512/512,512/0/default.jpg",
+        "http://ophir.dev/512,0,512,512/512,512/0/default.jpg",
+        "http://ophir.dev/0,512,512,512/512,512/0/default.jpg",
+        "http://ophir.dev/512,512,512,512/512,512/0/default.jpg",
     ])
 }
 

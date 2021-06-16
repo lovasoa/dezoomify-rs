@@ -208,7 +208,7 @@ impl ProfileInfo {
             size.y = size.y.min(max_height);
         }
         if let Some(max_area) = self.max_area {
-            if max_area > size.area() {
+            if size.area() > max_area {
                 let sqrt = ((max_area as f64).sqrt()) as u32;
                 size.y = sqrt.min(size.y);
                 size.x = sqrt.min(size.x);
