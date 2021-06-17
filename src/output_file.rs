@@ -85,7 +85,7 @@ mod tests {
     fn assert_filename_ok(filename: &str) -> Result<(), Box<dyn Error>> {
         let base_dir = TempDir::new("dezoomify-rs-test-filename")?;
         let outname = get_outname(&None, &Some(filename.to_string()), base_dir.as_ref(), None);
-        assert_eq!(false, outname.exists(), "get_outname cannot overwrite {:?}", outname);
+        assert!(!outname.exists(), "get_outname cannot overwrite {:?}", outname);
         File::create(&outname)
             .expect(&format!("Could not to create a file named {:?} for input {:?}", outname, filename));
         remove_file(&outname)?;
