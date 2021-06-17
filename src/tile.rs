@@ -1,4 +1,4 @@
-use image::{GenericImageView, DynamicImage};
+use image::{DynamicImage, GenericImageView};
 
 use crate::{Vec2d, ZoomError};
 use crate::dezoomer::{PostProcessFn, TileReference};
@@ -29,9 +29,7 @@ impl Tile {
                 let transformed_bytes =
                     if let PostProcessFn::Fn(post_process) = post_process_fn {
                         post_process(&tile_reference, bytes)
-                            .map_err(|e|
-                                BufferToImageError::PostProcessing { e }
-                            )?
+                            .map_err(|e| BufferToImageError::PostProcessing { e })?
                     } else {
                         bytes
                     };
