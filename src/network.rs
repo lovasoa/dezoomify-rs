@@ -1,13 +1,21 @@
-use log::debug;
-use reqwest::{Client, header};
 use std::collections::HashMap;
 use std::iter::once;
 use std::path::PathBuf;
+use std::sync::Arc;
+
+use image::DynamicImage;
+use log::{debug, warn};
+use reqwest::{Client, header};
+use sanitize_filename_reader_friendly::sanitize;
 use tokio::fs;
+use tokio::time::Duration;
 use url::Url;
 
+use crate::{TileDownloadError, ZoomError};
 use crate::arguments::Arguments;
-use crate::ZoomError;
+use crate::dezoomer::{PostProcessFn, TileReference};
+use crate::errors::BufferToImageError;
+use crate::tile::Tile;
 
 /// Fetch data, either from an URL or a path to a local file.
 /// If uri doesnt start with "http(s)://", it is considered to be a path
@@ -31,6 +39,103 @@ pub async fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
     }
 }
 
+
+pub struct TileDownloader {
+    pub http_client: reqwest::Client,
+    pub post_process_fn: PostProcessFn,
+    pub retries: usize,
+    pub retry_delay: Duration,
+    pub tile_storage_folder: Option<PathBuf>,
+}
+
+
+impl TileDownloader {
+    pub async fn download_tile(
+        &self,
+        tile_reference: TileReference,
+    ) -> Result<Tile, TileDownloadError> {
+        // The initial delay after which a failed request is retried depends on the position of the tile
+        // in order to avoid sending repeated "bursts" of requests to a server that is struggling
+        let n = 100;
+        let idx: f64 = ((tile_reference.position.x + tile_reference.position.y) % n).into();
+        let tile_reference = Arc::new(tile_reference);
+        let mut wait_time = self.retry_delay + Duration::from_secs_f64(idx * self.retry_delay.as_secs_f64() / n as f64);
+        let mut failures: usize = 0;
+        loop {
+            match self.load_image(Arc::clone(&tile_reference)).await {
+                Ok(image) => {
+                    return Ok(Tile { image, position: tile_reference.position })
+                },
+                Err(cause) => {
+                    if failures >= self.retries {
+                        return Err(TileDownloadError {
+                            tile_reference: Arc::try_unwrap(tile_reference)
+                                .expect("tile reference shouldn't leak"),
+                            cause,
+                        })
+                    }
+                    failures += 1;
+                    warn!("{}. Retrying tile download in {:?}.", cause, wait_time);
+                    tokio::time::sleep(wait_time).await;
+                    wait_time *= 2;
+                }
+            }
+        }
+    }
+
+    async fn load_image(
+        &self,
+        tile_reference: Arc<TileReference>,
+    ) -> Result<DynamicImage, ZoomError> {
+        let bytes =
+            if let Some(bytes) = self.read_from_tile_cache(&tile_reference.url).await {
+                bytes
+            } else {
+                let bytes = self.download_image_bytes(Arc::clone(&tile_reference)).await?;
+                self.write_to_tile_cache(&tile_reference.url, &bytes).await;
+                bytes
+            };
+        Ok(tokio::task::spawn_blocking(move || {
+            image::load_from_memory(&bytes)
+        }).await??)
+    }
+
+    async fn download_image_bytes(
+        &self,
+        tile_reference: Arc<TileReference>,
+    ) -> Result<Vec<u8>, ZoomError> {
+        let mut bytes = fetch_uri(&tile_reference.url, &self.http_client).await?;
+        if let PostProcessFn::Fn(post_process) = self.post_process_fn {
+            bytes = tokio::task::spawn_blocking(move || -> Result<_, BufferToImageError> {
+                post_process(&tile_reference, bytes)
+                    .map_err(|e| BufferToImageError::PostProcessing { e })
+            }).await??;
+        }
+        Ok(bytes)
+    }
+
+    async fn write_to_tile_cache(&self, uri: &str, contents: &[u8]) {
+        if let Some(root) = &self.tile_storage_folder {
+            match tokio::fs::write(root.join(&sanitize(uri)), contents).await {
+                Ok(_) => debug!("Wrote {} to tile cache ({} bytes)", uri, contents.len()),
+                Err(e) => warn!("Unable to write {} to the tile cache {:?}: {}", uri, root, e)
+            }
+        }
+    }
+
+    async fn read_from_tile_cache(&self, uri: &str) -> Option<Vec<u8>> {
+        if let Some(root) = &self.tile_storage_folder {
+            match tokio::fs::read(root.join(&sanitize(uri))).await {
+                Ok(d) => {
+                    debug!("{} read from tile cache", uri);
+                    return Some(d);
+                },
+                Err(e) => debug!("Unable to open {} from tile cache {:?}: {}", uri, root, e)
+            }
+        }
+        None
+    }
+}
 
 pub fn client<'a, I: Iterator<Item=(&'a String, &'a String)>>(
     headers: I,

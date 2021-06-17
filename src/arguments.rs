@@ -1,11 +1,12 @@
+use std::path::PathBuf;
+use std::time::Duration;
+
+use regex::Regex;
 use structopt::StructOpt;
 
 use crate::dezoomer::Dezoomer;
 
 use super::{auto, stdin_line, Vec2d, ZoomError};
-use std::time::Duration;
-use std::path::PathBuf;
-use regex::Regex;
 
 #[derive(StructOpt, Debug)]
 #[structopt(author, about)]
@@ -92,8 +93,14 @@ pub struct Arguments {
     pub connect_timeout: Duration,
 
     /// Level of logging verbosity. Set it to "debug" to get all logging messages.
-    #[structopt(long, default_value="warn")]
+    #[structopt(long, default_value = "warn")]
     pub logging: String,
+
+    /// A place to store the image tiles when after they are downloaded and decrypted.
+    /// By default, tiles are not stored to disk (which is faster), but using a tile cache allows
+    /// retrying partially failed downloads, or stitching the tiles with an external program.
+    #[structopt(short = "c", long = "tile-cache")]
+    pub tile_storage_folder: Option<PathBuf>,
 }
 
 impl Default for Arguments {
@@ -115,6 +122,7 @@ impl Default for Arguments {
             timeout: Duration::from_secs(30),
             connect_timeout: Duration::from_secs(6),
             logging: "warn".to_string(),
+            tile_storage_folder: None
         }
     }
 }

@@ -83,6 +83,15 @@ Each image format encoder has a distinct set of features and limitations :
    A file called `viewer.html` will be created inside this folder,
    which you can open in your browser to view the image.
 
+## Tile cache
+
+By default, dezoomify-rs works entirely in memory, which is very fast.
+However, the latest versions added the possibility to use a "tile cache".
+When you launch dezoomify-rs from the commandline with `dezoomify-rs --tile-cache my_caching_folder http://myurl.com`,
+it will save all the image tiles it downloads to the specified folder.
+If the download is interrupted before the end, you will be able to resume it later by specifying the same tile cache folder.
+A tile cache also allows you to manually get the individual tiles if you want to stitch them manually.
+
 ## Dezoomers
 
 ### Google Arts Culture
@@ -245,6 +254,10 @@ OPTIONS:
         --retry-delay <retry-delay>
             Amount of time to wait before retrying a request that failed. Applies only to the first retry. Subsequent
             retries follow an exponential backoff strategy: each one is twice as long as the previous one [default: 2s]
+    -c, --tile-cache <tile-storage-folder>
+            A place to store the image tiles when after they are downloaded and decrypted. By default, tiles are not
+            stored to disk (which is faster), but using a tile cache allows retrying partially failed downloads, or
+            stitching the tiles with an external program
         --timeout <timeout>
             Maximum time between the beginning of a request and the end of a response before the request should be
             interrupted and considered failed [default: 30s]
