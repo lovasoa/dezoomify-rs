@@ -99,15 +99,21 @@ impl FromStr for UrlTemplate {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         lazy_static! {
-            static ref RE: Regex = Regex::new(r"\{\{.*?}}").unwrap();
+            static ref EXPR_RE: Regex = Regex::new(r"\{\{.*?}}").unwrap();
+            static ref ZERO_RE: Regex = Regex::new(r":0(\d+)$").unwrap();
         }
         let mut parts = vec![];
         let mut cursor = 0usize;
-        for m in RE.find_iter(s) {
+        for m in EXPR_RE.find_iter(s) {
             let prev = &s[cursor..m.start()];
             parts.push(UrlPart::Constant(String::from(prev)));
-            let expr_src = &s[m.start() + 2..m.end() - 2];
-            parts.push(UrlPart::expression(expr_src)?);
+            let mut expression = &s[m.start() + 2..m.end() - 2];
+            let mut min_width: usize = 0;
+            if let Some(c) = ZERO_RE.captures(expression) {
+                expression = &expression[..expression.len() - c[0].len()];
+                min_width = c[1].parse().expect("regex matches only numbers");
+            }
+            parts.push(UrlPart::expression(expression, min_width)?);
             cursor = m.end();
         }
         parts.push(UrlPart::constant(&s[cursor..]));
@@ -128,20 +134,21 @@ impl<'de> Deserialize<'de> for UrlTemplate {
 #[derive(Debug)]
 enum UrlPart {
     Constant(String),
-    Expression(IntTemplate),
+    Expression { expression: IntTemplate, min_width: usize },
 }
 
 impl UrlPart {
     fn constant<T: Into<String>>(s: T) -> UrlPart {
         UrlPart::Constant(s.into())
     }
-    fn expression(s: &str) -> Result<UrlPart, UrlTemplateError> {
-        s.parse().map(UrlPart::Expression)
+    fn expression(s: &str, min_width: usize) -> Result<UrlPart, UrlTemplateError> {
+        Ok(UrlPart::Expression { expression: s.parse()?, min_width })
     }
     fn eval<C: evalexpr::Context>(&self, context: &C) -> Result<String, UrlTemplateError> {
         match self {
             UrlPart::Constant(s) => Ok(s.clone()),
-            UrlPart::Expression(expr) => Ok(format!("{}", expr.eval(context)?)),
+            UrlPart::Expression { expression, min_width } =>
+                Ok(format!("{:0width$}", expression.eval(context)?, width = min_width)),
         }
     }
 }
@@ -171,6 +178,16 @@ mod tests {
         ctx.set_value("x".into(), 0.into())?;
         ctx.set_value("y".into(), 10.into())?;
         assert_eq!(tpl.eval(&ctx)?, "a 0 b 10 c");
+        Ok(())
+    }
+
+    #[test]
+    fn url_template_evaluation_leading_zeroes() -> Result<(), UrlTemplateError> {
+        let tpl = UrlTemplate::from_str("{{x:03}} {{ x + y/2 :02}}")?;
+        let mut ctx = evalexpr::HashMapContext::new();
+        ctx.set_value("x".into(), 0.into())?;
+        ctx.set_value("y".into(), 10.into())?;
+        assert_eq!(tpl.eval(&ctx)?, "000 05");
         Ok(())
     }
 
