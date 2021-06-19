@@ -237,7 +237,8 @@ pub async fn dezoomify_level(
     if successful_tiles == 0 { return Err(ZoomError::NoTile); }
 
     if last_successes < last_count {
-        Err(ZoomError::PartialDownload { successful_tiles, total_tiles })
+        let destination = canvas.destination().to_string_lossy().to_string();
+        Err(ZoomError::PartialDownload { successful_tiles, total_tiles, destination })
     } else {
         Ok(())
     }

@@ -19,6 +19,7 @@ pub enum TileBuffer {
         compression: u8,
     },
     Writing {
+        destination: PathBuf,
         tile_sender: mpsc::Sender<TileBufferMsg>,
         error_receiver: mpsc::Receiver<std::io::Error>,
     },
@@ -39,11 +40,12 @@ impl TileBuffer {
     pub async fn set_size(&mut self, size: Vec2d) -> Result<(), ZoomError> {
         let next_state = match self {
             TileBuffer::Buffering { buffer, destination, compression } => {
+                let destination = std::mem::take(destination);
                 debug!("Creating a tile writer for an image of size {}", size);
-                let mut e = encoder_for_name(destination.clone(), size, *compression)?;
+                let mut encoder = encoder_for_name(destination.clone(), size, *compression)?;
                 debug!("Adding buffered tiles: {:?}", buffer);
-                for tile in buffer.drain(..) { e.add_tile(tile)?; }
-                buffer_tiles(e).await
+                for tile in buffer.drain(..) { encoder.add_tile(tile)?; }
+                buffer_tiles(encoder, destination).await
             }
             TileBuffer::Writing { .. } => unreachable!("The size of the image can be set only once")
         };
@@ -75,12 +77,19 @@ impl TileBuffer {
         }
         let (tile_sender, error_receiver) = match self {
             TileBuffer::Buffering { .. } => unreachable!("Just set the size"),
-            TileBuffer::Writing { tile_sender, error_receiver } => (tile_sender, error_receiver)
+            TileBuffer::Writing { tile_sender, error_receiver, .. } => (tile_sender, error_receiver)
         };
         tile_sender.send(TileBufferMsg::Close).await?;
         debug!("Waiting for the image encoding task to finish");
         if let Some(err) = error_receiver.recv().await { return Err(err.into()) }
         Ok(())
+    }
+
+    pub fn destination(&self) -> &PathBuf {
+        match self {
+            TileBuffer::Buffering { destination, .. } => destination,
+            TileBuffer::Writing { destination, .. } => destination,
+        }
     }
 }
 
@@ -90,7 +99,7 @@ pub enum TileBufferMsg {
     Close,
 }
 
-async fn buffer_tiles(mut encoder: Box<dyn Encoder>) -> TileBuffer {
+async fn buffer_tiles(mut encoder: Box<dyn Encoder>, destination: PathBuf) -> TileBuffer {
     let (tile_sender, mut tile_receiver) = mpsc::channel(1024);
     let (error_sender, error_receiver) = mpsc::channel(1);
     tokio::spawn(async move {
@@ -116,5 +125,6 @@ async fn buffer_tiles(mut encoder: Box<dyn Encoder>) -> TileBuffer {
     TileBuffer::Writing {
         tile_sender,
         error_receiver,
+        destination
     }
 }

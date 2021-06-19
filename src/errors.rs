@@ -11,9 +11,9 @@ custom_error! {
     Dezoomer{source: DezoomerError} = "Dezoomer error: {source}",
     NoLevels = "A zoomable image was found, but it did not contain any zoom level",
     NoTile = "Could not get any tile for the image",
-    PartialDownload{successful_tiles: u64, total_tiles: u64} =
+    PartialDownload{successful_tiles: u64, total_tiles: u64, destination: String} =
         "Only {successful_tiles} tiles out of {total_tiles} could be downloaded. \
-        The resulting image was still created.",
+        The resulting image was still created in '{destination}'.",
     Image{source: image::ImageError} = "invalid image error: {source}",
     PostProcessing{source: Box<dyn Error>} = "unable to process the downloaded tile: {source}",
     Io{source: std::io::Error} = "Input/Output error: {source}",
