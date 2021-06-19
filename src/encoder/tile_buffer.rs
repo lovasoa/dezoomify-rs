@@ -81,8 +81,10 @@ impl TileBuffer {
         };
         tile_sender.send(TileBufferMsg::Close).await?;
         debug!("Waiting for the image encoding task to finish");
-        if let Some(err) = error_receiver.recv().await { return Err(err.into()) }
-        Ok(())
+        let mut result = Ok(());
+        // Wait for the encoder to terminate even if some tiles raised errors
+        while let Some(err) = error_receiver.recv().await { result = Err(err.into()) }
+        result
     }
 
     pub fn destination(&self) -> &PathBuf {
