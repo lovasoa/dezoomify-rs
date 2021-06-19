@@ -34,6 +34,9 @@ struct CustomYamlTiles {
     tile_set: tile_set::TileSet,
     #[serde(default = "default_headers")]
     headers: HashMap<String, String>,
+    title: Option<String>,
+    width: Option<u32>,
+    height: Option<u32>,
 }
 
 impl std::fmt::Debug for CustomYamlTiles {
@@ -47,14 +50,22 @@ impl TileProvider for CustomYamlTiles {
         if previous.is_some() {
             return vec![];
         }
-        let tiles_result:Result<Vec<_>, _> = self.tile_set.into_iter().collect();
-        match tiles_result{
+        let tiles_result: Result<Vec<_>, _> = self.tile_set.into_iter().collect();
+        match tiles_result {
             Ok(tiles) => tiles,
             Err(err) => {
                 log::error!("Invalid tiles.yaml file: {}\n", err);
                 vec![]
             }
         }
+    }
+
+    fn title(&self) -> Option<String> { self.title.clone() }
+
+    fn size_hint(&self) -> Option<Vec2d> {
+        if let (Some(x), Some(y)) = (self.width, self.height) {
+            Some(Vec2d { x, y })
+        } else { None }
     }
 
     fn http_headers(&self) -> HashMap<String, String> {

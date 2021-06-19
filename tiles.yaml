@@ -4,11 +4,26 @@
 
 # The url of individual tiles, where {{ expressions }} will be evaluated using the variables below
 url_template: "https://openseadragon.github.io/example-images/highsmith/highsmith_zdata/TileGroup0/3-{{x}}-{{y}}.jpg"
+
+# x_template and y_template tell dezoomify-rs where to place a tile on the canvas once it has been downloaded
+# Here, for instance, the tile at (x=1, y=1) goes to position (256, 256)
 x_template: "x * tile_size"
 y_template: "y * tile_size"
+
 variables:
   - { name: x, from: 0, to: 3 } # Image width, in tiles
   - { name: y, from: 0, to: 4 } # Image height, in tiles
   - { name: tile_size, value: 256 }
+
 headers:
+  # Specifying a Referer makes the server believe we come from that URL.
   Referer: "https://openseadragon.github.io/examples/tilesource-zoomify/"
+
+# Specifying the width and height of the full image is not mandatory,
+# But giving them allows dezoomify-rs to work more efficiently.
+width: 878
+height: 1153
+
+# The title is not mandatory either, but it makes dezoomify-rs
+# create a file with an appropriate filename
+title: "A Palace"
