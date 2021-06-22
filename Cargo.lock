@@ -289,9 +289,9 @@ checksum = "ea221b5284a47e40033bf9b66f35f984ec0ea2931eb03505246cd27a963f981b"
 
 [[package]]
 name = "cpufeatures"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed00c67cb5d0a7d64a44f6ad2668db7e7530311dd53ea79bcd4fb022c64911c8"
+checksum = "66c99696f6c9dd7f35d486b9d04d7e6e202aa3e8c40d553f2fdf5e7e0c6a71ef"
 dependencies = [
  "libc",
 ]
@@ -557,9 +557,9 @@ dependencies = [
 
 [[package]]
 name = "evalexpr"
-version = "6.1.0"
+version = "6.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b14ef45aaec64a3f4891c74f0aa6013660f6ce063729f36daa78da375d459b33"
+checksum = "4fa69e450c8aa62261092d545359075fe92a611ab2af7709cbb232fac5ebc6c1"
 
 [[package]]
 name = "fake-simd"
@@ -1305,9 +1305,9 @@ checksum = "28988d872ab76095a6e6ac88d99b54fd267702734fd7ffe610ca27f533ddb95a"
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.64"
+version = "0.9.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "209efc2fe0e980c8849efacdb567f975a1c80245c4f6980d6f012733bfa851af"
+checksum = "7a7907e3bfa08bb85105209cdfcb6c63d109f8f6c1ed6ca318fff5c1853fbc1d"
 dependencies = [
  "autocfg",
  "cc",
@@ -1662,9 +1662,9 @@ dependencies = [
 
 [[package]]
 name = "reqwest"
-version = "0.11.3"
+version = "0.11.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2296f2fac53979e8ccbc4a1136b25dcefd37be9ed7e4a1f6b05a6029c84ff124"
+checksum = "246e9f61b9bb77df069a947682be06e31ac43ea37862e244a69f177694ea6d22"
 dependencies = [
  "async-compression",
  "base64",
@@ -2305,9 +2305,9 @@ dependencies = [
 
 [[package]]
 name = "vcpkg"
-version = "0.2.14"
+version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70455df2fdf4e9bf580a92e443f1eb0303c390d682e2ea817312c9e81f8c3399"
+checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "vec_map"
