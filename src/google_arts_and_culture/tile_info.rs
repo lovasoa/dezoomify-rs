@@ -139,6 +139,16 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_html_2021_06_30() {
+        // See: https://github.com/lovasoa/dezoomify/issues/556
+        let info: PageInfo = parse_html_file("page_source_2021-06-30.html");
+        let base_url =
+            "https://lh3.googleusercontent.com/uHsSuY7ZkqoUY5xOkiRO2THfT7i9yLT9TXjlxr4IufwA3eO33QvjWDmWkldtINkh";
+        assert_eq!(info.base_url, base_url);
+        assert_eq!(info.token, "7jSbhbZBiRhB4YLYrYIMQJQ6uxE");
+    }
+
+    #[test]
     fn test_parse_html_null() {
         // See: https://github.com/lovasoa/dezoomify/issues/315
         let info: PageInfo = parse_html_file("page_source_null.html");
