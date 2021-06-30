@@ -41,7 +41,7 @@ impl FromStr for PageInfo {
 
     /// Parses a google arts project HTML page
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let re = Regex::new(r#"]\r?\n,"(//[^"/]+/[^"/]+)",(?:"([^"]+)"|null)"#).unwrap();
+        let re = Regex::new(r#"]\r?\n?,"(//[^"/]+/[^"/]+)",(?:"([^"]+)"|null)"#).unwrap();
         let mat = re.captures(s).ok_or(PageParseError::NoToken)?;
         let base_url = format!("https:{}", &mat[1]);
         let token = mat
