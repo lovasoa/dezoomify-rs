@@ -1,6 +1,6 @@
 [package]
 name = "dezoomify-rs"
-version = "2.7.1"
+version = "2.7.2"
 authors = ["lovasoa"]
 edition = "2018"
 license-file = "LICENSE"
@@ -39,7 +39,7 @@ sanitize-filename-reader-friendly = "2"
 colour = "0.6"
 human-panic = "1"
 log = "0.4"
-env_logger = "0.8"
+env_logger = "0.9"
 url = "2"
 fixedbitset = "0.4"
 
