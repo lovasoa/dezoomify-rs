@@ -117,7 +117,7 @@ impl<T: TileSaver> Retiler<T> {
                     cur_tile_size,
                     self.original_size,
                     scale_factor,
-                    &scaled_tile)?;
+                    scaled_tile)?;
                 if let Some(tile_img) = finished {
                     self.tile_save(cur_pos, cur_tile_size, tile_img)?;
                     self.tiles.insert(cur_pos, None);

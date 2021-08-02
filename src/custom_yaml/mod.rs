@@ -22,7 +22,7 @@ impl Dezoomer for CustomDezoomer {
         self.assert(data.uri.ends_with("tiles.yaml"))?;
         let contents = data.with_contents()?.contents;
         let dezoomer: CustomYamlTiles =
-            serde_yaml::from_slice(&contents).map_err(DezoomerError::wrap)?;
+            serde_yaml::from_slice(contents).map_err(DezoomerError::wrap)?;
         single_level(dezoomer)
     }
 }

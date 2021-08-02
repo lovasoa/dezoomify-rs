@@ -142,7 +142,7 @@ async fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
 }
 
 pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
-    let zoom_level = find_zoomlevel(&args).await?;
+    let zoom_level = find_zoomlevel(args).await?;
     let base_dir = current_dir()?;
     let outname = get_outname(&args.outfile, &zoom_level.title(), &base_dir,zoom_level.size_hint());
     let save_as = fs::canonicalize(outname.as_path()).unwrap_or_else(|_e| outname.clone());
@@ -160,7 +160,7 @@ pub async fn dezoomify_level(
 ) -> Result<(), ZoomError> {
     let level_headers = zoom_level.http_headers();
     let downloader = TileDownloader {
-        http_client: client(level_headers.iter().chain(args.headers()), &args, None)?,
+        http_client: client(level_headers.iter().chain(args.headers()), args, None)?,
         post_process_fn: zoom_level.post_process_fn(),
         retries: args.retries,
         retry_delay: args.retry_delay,

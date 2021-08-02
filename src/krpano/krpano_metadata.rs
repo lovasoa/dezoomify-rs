@@ -74,7 +74,7 @@ impl TopLevelTags {
         match self {
             Self::SourceDetails { subject } => Some(subject),
             Self::Data(bytes) =>
-                serde_json::from_str::<KrpanoMetaData>(&bytes).ok()
+                serde_json::from_str::<KrpanoMetaData>(bytes).ok()
                     .map(|m| m.title),
             _ => None
         }
