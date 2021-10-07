@@ -17,7 +17,7 @@ impl PngEncoder {
     pub fn new(destination: PathBuf, size: Vec2d, compression: u8) -> Result<Self, ZoomError> {
         let file = OpenOptions::new().write(true).create(true).open(destination)?;
         let mut encoder = png::Encoder::new(file, size.x, size.y);
-        encoder.set_color(png::ColorType::RGB);
+        encoder.set_color(png::ColorType::Rgb);
         encoder.set_depth(png::BitDepth::Eight);
         encoder.set_compression(match compression {
             0 => png::Compression::Rle,
@@ -27,7 +27,7 @@ impl PngEncoder {
             _ => png::Compression::Best,
         });
         let writer = encoder.write_header()?
-            .into_stream_writer_with_size(128 * 1024);
+            .into_stream_writer_with_size(128 * 1024)?;
         let pixel_streamer = Some(PixelStreamer::new(writer, size));
         Ok(PngEncoder { pixel_streamer, size })
     }
@@ -45,8 +45,9 @@ impl Encoder for PngEncoder {
         let mut pixel_streamer = self.pixel_streamer
             .take().expect("Tried to finalize an image twice");
         pixel_streamer.finalize()?;
-        let writer = pixel_streamer.into_writer();
-        writer.finish()?;
+        // Disabled because of https://github.com/image-rs/image-png/issues/307
+        // let writer = pixel_streamer.into_writer();
+        // writer.finish()?;
         Ok(())
     }
 
@@ -71,7 +72,7 @@ mod tests {
         let mut encoder = PngEncoder::new(destination.clone(), size, 1).unwrap();
 
         encoder.add_tile(Tile {
-            position: Vec2d { x: 1, y: 1 },
+            position: Vec2d { x: 0, y: 1 },
             image: DynamicImage::ImageRgb8(
                 ImageBuffer::from_raw(1, 1, vec![1, 2, 3, ]).unwrap()
             ),
@@ -82,7 +83,10 @@ mod tests {
         let empty = Rgb::from([0u8, 0, 0]);
         assert_eq!(
             final_image.to_rgb8().pixels().copied().collect_vec(),
-            vec![empty, empty, empty, Rgb::from([1, 2, 3])]
+            vec![
+                empty, empty,
+                Rgb::from([1, 2, 3]), empty,
+            ]
         );
     }
 }

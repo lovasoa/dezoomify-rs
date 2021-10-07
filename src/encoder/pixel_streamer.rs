@@ -82,7 +82,8 @@ impl<W: Write> PixelStreamer<W> {
         Ok(())
     }
 
-    pub fn into_writer(self) -> W { self.writer }
+    // https://github.com/image-rs/image-png/issues/307
+    // pub fn into_writer(self) -> W { self.writer }
 }
 
 struct ImageStrip {
