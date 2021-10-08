@@ -44,7 +44,7 @@ fn test_compute_url() {
 
 #[test]
 fn test_compute_url_flowers() {
-    // From https://artsandculture.google.com/asset/wildflower-painting-of-red-grevillea/wwEzEHEBAqxv4w
+    // From https://artsandculture.google.com/asset/abel-salazar-in-el-barón-del-terror-the-brainiac-alfredo-ruvalcaba/vgEZF1idI26m_w
     let path =
         "https://lh5.ggpht.com/D0sqZ0sJbzoQeYFoySoXLJqgLMfXhi8-gGVGRqD_UEYUqkqk9Eqdxx5NNaw".into();
     let token = "mcOPEQJmk1514hP_dJkpwVwIhPU".into();
