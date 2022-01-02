@@ -49,7 +49,7 @@ static QUALITY_ORDER: [&str; 5] = ["bitonal", "gray", "color", "native", "defaul
 
 // Image formats, from least favorite to favorite
 // webp is the least favorite because of this bug: https://github.com/image-rs/image/issues/939
-static FORMAT_ORDER: [&str; 7] = ["webp", "gif", "bmp", "tif", "png", "jpg", "jpeg"];
+static FORMAT_ORDER: [&str; 7] = ["webp", "gif", "bmp", "tif", "jpg", "jpeg", "png"];
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum TileSizeFormat { WidthHeight, Width }
