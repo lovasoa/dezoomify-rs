@@ -234,7 +234,7 @@ impl Profile {
         match self {
             Profile::Reference(s) => {
                 PROFILE_REFERENCES.get(s)
-                    .map(|x| Cow::Borrowed(x))
+                    .map(Cow::Borrowed)
                     .unwrap_or_else(|| {
                         warn!("Unknown IIIF profile reference: {}", s);
                         Cow::Owned(ProfileInfo::default())

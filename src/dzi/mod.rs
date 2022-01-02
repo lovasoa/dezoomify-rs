@@ -135,7 +135,10 @@ impl TilesRect for DziLevel {
     }
 
     fn title(&self) -> Option<String> {
-        let suffix = self.base_url.rsplitn(2, '/').next().unwrap_or("");
+        let suffix = match self.base_url.rsplit_once( '/') {
+            None => "",
+            Some((_, suffix)) => suffix,
+        };
         let name = suffix.trim_end_matches("_files");
         Some(name.to_string())
     }
