@@ -142,7 +142,7 @@ pub fn client<'a, I: Iterator<Item=(&'a String, &'a String)>>(
     args: &Arguments,
     uri: Option<&str>,
 ) -> Result<reqwest::Client, ZoomError> {
-    let referer = uri.or_else(|| args.input_uri.as_deref()).unwrap_or("").to_string();
+    let referer = uri.or(args.input_uri.as_deref()).unwrap_or("").to_string();
     let header_map = default_headers()
         .iter()
         .chain(once((&"Referer".to_string(), &referer)))
