@@ -215,7 +215,7 @@ impl TmpTile {
             .unwrap_or_else(|_| image::DynamicImage::new_rgb8(scaled_size.x, scaled_size.y));
         debug_assert_eq!(scaled_size, tile_img.dimensions().into());
         let sub_tile_img = crop_image_for_tile(tile, scaled_self_position, scaled_size);
-        tile_img.copy_from(&sub_tile_img, top_left.x, top_left.y).map_err(|_err| {
+        tile_img.copy_from(&*sub_tile_img, top_left.x, top_left.y).map_err(|_err| {
             io::Error::new(io::ErrorKind::InvalidData, "tile too large for image")
         })?;
 

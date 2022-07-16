@@ -1,13 +1,7 @@
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-
-use aes::Aes128;
-use block_modes::{BlockMode, BlockModeError, Cbc};
-use block_modes::block_padding::{Padding, PadError, UnpadError};
-
+use aes::cipher::{block_padding::NoPadding, KeyIvInit, BlockDecryptMut};
 use custom_error::custom_error;
-
-// create an alias for convenience
-type Aes128Cbc = Cbc<Aes128, NoPadding>;
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 
 /// Decrypt an encrypted image
 pub fn decrypt(encrypted: Vec<u8>) -> Result<Vec<u8>, InvalidEncryptedImage> {
@@ -44,15 +38,16 @@ pub fn decrypt(encrypted: Vec<u8>) -> Result<Vec<u8>, InvalidEncryptedImage> {
     Ok(decrypted)
 }
 
-fn aes_decrypt_buffer(encrypted: &mut [u8]) -> Result<&[u8], BlockModeError> {
+fn aes_decrypt_buffer(encrypted: &mut[u8]) -> Result<&[u8], InvalidEncryptedImage> {
     let key = [
         91, 99, 219, 17, 59, 122, 243, 224, 177, 67, 85, 86, 200, 249, 83, 12,
     ];
     let iv = [
         113, 231, 4, 5, 53, 58, 119, 139, 250, 111, 188, 48, 50, 27, 149, 146,
     ];
-    let cipher = Aes128Cbc::new_from_slices(&key, &iv).unwrap();
-    cipher.decrypt(encrypted)
+    Aes128CbcDec::new(&key.into(), &iv.into())
+        .decrypt_padded_mut::<NoPadding>(encrypted)
+        .map_err(|_| InvalidEncryptedImage::DecryptError)
 }
 
 #[inline]
@@ -63,6 +58,7 @@ fn read_u32_as_u64_le<T: Read>(buf: &mut T) -> std::io::Result<u64> {
     Ok(u64::from(result))
 }
 
+/// Reads "size" bytes from "c" and writes them to "dest".
 fn read_size<T: Read>(c: T, dest: &mut Vec<u8>, size: u64) -> Result<T, std::io::Error> {
     let mut wrapper = c.take(size);
     wrapper.read_to_end(dest)?;
@@ -73,20 +69,8 @@ fn read_size<T: Read>(c: T, dest: &mut Vec<u8>, size: u64) -> Result<T, std::io:
 custom_error! {pub InvalidEncryptedImage
     BadHeaderSize{header_size:u64} = "The size of the unencrypted header ({}) is invalid.",
     BadEncryptedSize{encrypted_size:u64} = "The size of the encrypted data ({}) is invalid.",
-    DecryptError{source: BlockModeError} = "Unable to decrypt the encrypted data: {}",
+    DecryptError = "Unable to decrypt the encrypted data",
     IO{source: std::io::Error} = "Unable to read from the buffer: {}",
-}
-
-pub enum NoPadding {}
-
-impl Padding for NoPadding {
-    fn pad_block(_block: &mut [u8], _pos: usize) -> Result<(), PadError> {
-        Ok(())
-    }
-
-    fn unpad(data: &[u8]) -> Result<&[u8], UnpadError> {
-        Ok(data)
-    }
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use std::path::{PathBuf, Path};
 use std::io;
-use image::{GenericImage, ImageBuffer, Pixel, ImageResult};
+use image::{GenericImage, ImageBuffer, ImageResult, PixelWithColorType, Rgba};
 use log::debug;
 
 use crate::Vec2d;
@@ -11,12 +11,12 @@ use std::io::BufWriter;
 use std::fs::File;
 
 type SubPix = u8;
-type Pix = image::Rgba<SubPix>;
+type Pix = Rgba<SubPix>;
 type CanvasBuffer = ImageBuffer<Pix, Vec<SubPix>>;
 
 
 fn empty_buffer(size: Vec2d) -> CanvasBuffer {
-    ImageBuffer::from_fn(size.x, size.y, |_, _| Pix::from_channels(0, 0, 0, 0))
+    ImageBuffer::from_fn(size.x, size.y, |_, _| Pix::from([0, 0, 0, 0]))
 }
 
 pub struct Canvas {
@@ -41,7 +41,7 @@ impl Encoder for Canvas {
         let sub_tile = crop_tile(&tile, self.size());
         let Vec2d { x, y } = tile.position();
         debug!("Copying tile data from {:?}", tile);
-        self.image.copy_from(&sub_tile, x, y).map_err(|_err| {
+        self.image.copy_from(&*sub_tile, x, y).map_err(|_err| {
             io::Error::new(io::ErrorKind::InvalidData, "tile too large for image")
         })
     }

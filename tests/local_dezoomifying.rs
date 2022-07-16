@@ -4,7 +4,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use image::{self, DynamicImage, GenericImageView};
-use img_hash::HasherConfig;
+use image_hasher::HasherConfig;
 
 use dezoomify_rs::{Arguments, dezoomify, ZoomError};
 

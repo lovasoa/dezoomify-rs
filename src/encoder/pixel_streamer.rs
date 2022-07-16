@@ -3,7 +3,7 @@ use std::convert::TryFrom;
 use std::io::{self, Write};
 
 use log::debug;
-use image::{Pixel, Rgb, GenericImageView, Rgba};
+use image::{Pixel, Rgb, DynamicImage, SubImage, GenericImageView};
 
 use crate::{Vec2d, max_size_in_rect};
 use crate::tile::Tile;
@@ -102,7 +102,7 @@ impl ImageStrip {
         let position = self.source.position + Vec2d { x: 0, y: self.line };
         (position.y as usize) * (image_size.x as usize) + (position.x as usize)
     }
-    pub fn cropped(&self, image_size: Vec2d) -> impl GenericImageView<Pixel=Rgba<u8>> + '_ {
+    pub fn cropped(&self, image_size: Vec2d) -> SubImage<&DynamicImage> {
         crop_tile(&self.source, image_size)
     }
     /// Length of the strip in pixels
