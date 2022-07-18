@@ -28,6 +28,7 @@ impl Dezoomer for GAPDezoomer {
             None => {
                 let page_source = std::str::from_utf8(contents).map_err(DezoomerError::wrap)?;
                 let info: PageInfo = page_source.parse().map_err(DezoomerError::wrap)?;
+                log::debug!("Decoded google arts page info: {:?}", info);
                 let uri = info.tile_info_url();
                 self.page_info = Some(Arc::new(info));
                 Err(DezoomerError::NeedsData { uri })

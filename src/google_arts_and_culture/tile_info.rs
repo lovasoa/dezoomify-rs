@@ -21,6 +21,7 @@ pub struct PyramidLevel {
     pub empty_pels_y: u32,
 }
 
+#[derive(Debug)]
 pub struct PageInfo {
     pub base_url: String,
     pub token: String,
@@ -32,7 +33,9 @@ impl PageInfo {
         self.base_url.clone() + "=g"
     }
     pub fn path(&self) -> &str {
-        self.base_url.rsplit('/').next().unwrap()
+        // The base url is something like "https://lh3.googleusercontent.com/ci/xxx",
+        // and we need to extract the "ci/xxx" part.
+        self.base_url.splitn(4, '/').nth(3).expect("Google Arts base_url is malformed")
     }
 }
 
