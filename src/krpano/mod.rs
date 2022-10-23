@@ -86,7 +86,7 @@ fn load_from_properties(url: &str, contents: &[u8])
     }).into_zoom_levels())
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 struct Level {
     base_url: Arc<str>,
     size: Vec2d,

@@ -4,7 +4,7 @@ use log::{info, warn};
 use crate::dezoomer::Vec2d;
 use std::convert::TryInto;
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct ImageProperties {
     #[serde(rename = "WIDTH", default)]
     pub width: u32,
@@ -90,7 +90,7 @@ impl ImageProperties {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ZoomLevelInfo {
     pub size: Vec2d,
     pub tile_size: Vec2d,

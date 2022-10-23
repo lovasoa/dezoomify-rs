@@ -5,7 +5,7 @@ use serde::{de, Deserialize, Deserializer};
 
 use crate::Vec2d;
 
-#[derive(Debug, Deserialize, PartialEq, Default)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Default)]
 pub struct KrpanoMetadata {
     #[serde(rename = "$value")]
     children: Vec<TopLevelTags>,
@@ -13,7 +13,7 @@ pub struct KrpanoMetadata {
     name: String,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ImageInfo {
     pub image: KrpanoImage,
     pub name: Arc<str>,
@@ -40,7 +40,7 @@ impl KrpanoMetadata {
     }
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum TopLevelTags {
     Image(KrpanoImage),
@@ -86,7 +86,7 @@ struct KrpanoMetaData<'a> {
     title: &'a str
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct KrpanoImage {
     pub tilesize: Option<u32>,
     #[serde(default = "default_base_index")]
@@ -105,13 +105,13 @@ pub struct LevelDesc {
     pub level_index: usize,
 }
 
-#[derive(Deserialize, PartialEq, Debug)]
+#[derive(Deserialize, PartialEq, Eq, Debug)]
 pub struct ShapeDesc {
     url: TemplateString<TemplateVariable>,
     multires: Option<String>,
 }
 
-#[derive(Deserialize, PartialEq, Debug)]
+#[derive(Deserialize, PartialEq, Eq, Debug)]
 pub struct LevelAttributes {
     tiledimagewidth: u32,
     tiledimageheight: u32,
@@ -119,7 +119,7 @@ pub struct LevelAttributes {
     shape: Vec<KrpanoLevel>,
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum KrpanoLevel {
     Level(LevelAttributes),
@@ -204,7 +204,7 @@ fn parse_multires(s: &str) -> impl Iterator<Item=Result<(Vec2d, Vec2d), &'static
     })
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct TemplateString<T>(pub Vec<TemplateStringPart<T>>);
 
 impl<'de> Deserialize<'de> for TemplateString<TemplateVariable> {
@@ -262,7 +262,7 @@ impl TemplateString<TemplateVariable> {
 }
 
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum TemplateStringPart<T> {
     Literal(Arc<str>),
     Variable { padding: usize, variable: T },
@@ -290,10 +290,10 @@ impl TemplateStringPart<TemplateVariable> {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum TemplateVariable { X, Y, Side, LevelIndex }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum XY { X, Y }
 
 #[cfg(test)]

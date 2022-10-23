@@ -6,14 +6,14 @@ use serde::Deserialize;
 
 use custom_error::custom_error;
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct TileInfo {
     pub tile_width: u32,
     pub tile_height: u32,
     pub pyramid_level: Vec<PyramidLevel>,
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct PyramidLevel {
     pub num_tiles_x: u32,
     pub num_tiles_y: u32,

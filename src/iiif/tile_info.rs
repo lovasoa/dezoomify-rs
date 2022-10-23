@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vec2d;
 
-#[derive(Default, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ImageInfo {
     #[serde(rename = "@context", skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
@@ -51,7 +51,7 @@ static QUALITY_ORDER: [&str; 5] = ["bitonal", "gray", "color", "native", "defaul
 // webp is the least favorite because of this bug: https://github.com/image-rs/image/issues/939
 static FORMAT_ORDER: [&str; 7] = ["webp", "gif", "bmp", "tif", "jpg", "jpeg", "png"];
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TileSizeFormat { WidthHeight, Width }
 
 impl ImageInfo {
@@ -155,7 +155,7 @@ impl ImageInfo {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct TileInfo {
     pub width: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -171,7 +171,7 @@ impl TileInfo {
 }
 
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 #[serde(untagged)]
 pub enum Profile {
     Reference(String),
@@ -179,7 +179,7 @@ pub enum Profile {
     Multiple(Option<Vec<Profile>>),
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Default)]
 pub struct ProfileInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(alias = "extraFormats")]

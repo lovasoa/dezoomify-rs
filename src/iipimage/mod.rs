@@ -49,7 +49,7 @@ fn iter_levels(uri: &str, contents: &[u8])
     Ok(levels)
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 struct Level {
     metadata: Arc<Metadata>,
     base: Arc<str>,
@@ -80,7 +80,7 @@ impl TilesRect for Level {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Metadata {
     size: Vec2d,
     tile_size: Vec2d,
@@ -127,7 +127,7 @@ impl TryFrom<&[u8]> for Metadata {
     }
 }
 
-custom_error! {#[derive(PartialEq)] pub IIPError
+custom_error! {#[derive(PartialEq, Eq)] pub IIPError
     MissingKey{key: &'static str} = "missing key '{key}' in the IIPImage metadata file",
     Utf8{source: std::str::Utf8Error} = "Invalid IIPImage metadata file: {source}",
 }

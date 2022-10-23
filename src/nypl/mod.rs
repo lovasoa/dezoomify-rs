@@ -74,7 +74,7 @@ fn iter_levels(uri: &str, contents: &[u8])
     Ok(levels)
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 struct Level {
     metadata: Arc<Metadata>,
     base: Arc<str>,
@@ -117,12 +117,12 @@ impl TilesRect for Level {
     }
 }
 
-#[derive(Debug, PartialEq, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize)]
 pub struct MetadataRoot {
     configs: HashMap<String, Metadata>,
 }
 
-#[derive(Debug, PartialEq, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize)]
 pub struct Metadata {
     size: MetadataSize,
     #[serde(alias = "tilesize", deserialize_with = "number_or_string")]
@@ -145,7 +145,7 @@ impl From<MetadataSize> for Vec2d {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize)]
 struct MetadataSize {
     #[serde(deserialize_with = "number_or_string")]
     width: u32,

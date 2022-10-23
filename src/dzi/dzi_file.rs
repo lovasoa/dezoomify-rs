@@ -8,7 +8,7 @@ use crate::Vec2d;
 
 use super::DziError;
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct DziFile {
     #[serde(rename = "Overlap", deserialize_with = "number_or_string", default)]
     pub overlap: u32,
@@ -50,7 +50,7 @@ fn log2(n: u32) -> u32 {
     32 - (n - 1).leading_zeros()
 }
 
-#[derive(Debug, Deserialize, PartialEq, Default)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Default)]
 pub struct Size {
     #[serde(rename = "Width", deserialize_with = "number_or_string", default)]
     pub width: u32,

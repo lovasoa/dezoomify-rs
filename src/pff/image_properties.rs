@@ -5,7 +5,7 @@ use serde::{Serialize, Deserialize, Deserializer};
 
 use custom_error::custom_error;
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct Reply<T: FromStr> where <T as FromStr>::Err: ToString {
     #[serde(deserialize_with = "deserialize_from_string")]
     pub reply_data: T,
@@ -18,7 +18,7 @@ fn deserialize_from_string<'d, D: Deserializer<'d>, T: FromStr>(de: D) -> Result
         .map_err(|e: <T as FromStr>::Err| serde::de::Error::custom(e.to_string()))
 }
 
-#[derive(Debug, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
 pub struct PffHeader {
     #[serde(rename = "WIDTH", default)]
     pub width: u32,
@@ -121,7 +121,7 @@ impl FromStr for TileIndices {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum RequestType {
     TileImage = 0,
@@ -129,7 +129,7 @@ pub enum RequestType {
     TileIndices = 2,
 }
 
-#[derive(Deserialize, Serialize, PartialEq, Debug)]
+#[derive(Deserialize, Serialize, PartialEq, Eq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ServletRequestParams {
     //pff file version number
@@ -150,14 +150,14 @@ impl ServletRequestParams {
     }
 }
 
-#[derive(Deserialize, Serialize, PartialEq, Debug)]
+#[derive(Deserialize, Serialize, PartialEq, Eq, Debug)]
 pub struct FullServletRequestParams<'a> {
     file: &'a str,
     #[serde(flatten)]
     params: ServletRequestParams,
 }
 
-#[derive(Deserialize, Serialize, PartialEq, Debug)]
+#[derive(Deserialize, Serialize, PartialEq, Eq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct InitialServletRequestParams {
     //the path to the pff file

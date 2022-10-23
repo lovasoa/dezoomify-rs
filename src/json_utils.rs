@@ -83,7 +83,7 @@ fn test_iterjson() {
 
 #[test]
 fn test_alljson() {
-    #[derive(Deserialize, Debug, PartialEq)]
+    #[derive(Deserialize, Debug, PartialEq, Eq)]
     struct S { x: u8 }
     let actual: Vec<S> = all_json(&br#"{{  "x":1}{-}--{{{"x":2}}"#[..]).collect();
     assert_eq!(actual, vec![S { x: 1 }, S { x: 2 }]);
