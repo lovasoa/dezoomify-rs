@@ -26,8 +26,8 @@ impl Vec2d {
     }
     pub fn ceil_div<T: Into<Vec2d>>(self, other: T) -> Vec2d {
         let other = other.into();
-        let x: u32 = self.x / other.x + (self.x % other.x == 0) as u32;
-        let y: u32 = self.y / other.y + (self.y % other.y == 0) as u32;
+        let x: u32 = self.x / other.x + (self.x % other.x != 0) as u32;
+        let y: u32 = self.y / other.y + (self.y % other.y != 0) as u32;
         Vec2d { x, y }
     }
 
