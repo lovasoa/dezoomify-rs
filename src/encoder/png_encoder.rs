@@ -20,9 +20,7 @@ impl PngEncoder {
         encoder.set_color(png::ColorType::Rgb);
         encoder.set_depth(png::BitDepth::Eight);
         encoder.set_compression(match compression {
-            0 => png::Compression::Rle,
-            1..=9 => png::Compression::Huffman,
-            10..=19 => png::Compression::Fast,
+            0..=19 => png::Compression::Fast,
             20..=60 => png::Compression::Default,
             _ => png::Compression::Best,
         });

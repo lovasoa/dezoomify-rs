@@ -156,9 +156,9 @@ struct MetadataSize {
 custom_error! {pub NYPLError
     JsonError{resp: String} = "Failed to parse NYPL Image meta as json, \
         got content(blank shows the site has no zoom function for this one):\n {resp}",
-    Utf8{source: std::str::Utf8Error} = "Invalid NYPL metadata file: {}",
-    NoIdInUrl{url: String} = "Unable to extract an image id from {:?}",
-    BadMetadata{source: serde_json::Error} = "Invalid nypl metadata: {}",
+    Utf8{source: std::str::Utf8Error} = "Invalid NYPL metadata file: {source}",
+    NoIdInUrl{url: String} = "Unable to extract an image id from {url:?}",
+    BadMetadata{source: serde_json::Error} = "Invalid nypl metadata: {source}",
     NoMetadata = "No metadata found. This image is probably not tiled, \
     and you can download it directly by right-clicking on it from \
     your browser without any external tool.",

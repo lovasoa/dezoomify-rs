@@ -5,19 +5,19 @@ use crate::errors::DezoomerError::NeedsData;
 
 pub fn all_dezoomers(include_generic: bool) -> Vec<Box<dyn Dezoomer>> {
     let mut dezoomers: Vec<Box<dyn Dezoomer>> = vec![
-        Box::new(crate::custom_yaml::CustomDezoomer::default()),
-        Box::new(crate::google_arts_and_culture::GAPDezoomer::default()),
-        Box::new(crate::zoomify::ZoomifyDezoomer::default()),
-        Box::new(crate::iiif::IIIF::default()),
-        Box::new(crate::dzi::DziDezoomer::default()),
-        Box::new(crate::generic::GenericDezoomer::default()),
-        Box::new(crate::pff::PFF::default()),
-        Box::new(crate::krpano::KrpanoDezoomer::default()),
-        Box::new(crate::iipimage::IIPImage::default()),
-        Box::new(crate::nypl::NYPLImage::default()),
+        Box::<crate::custom_yaml::CustomDezoomer>::default(),
+        Box::<crate::google_arts_and_culture::GAPDezoomer>::default(),
+        Box::<crate::zoomify::ZoomifyDezoomer>::default(),
+        Box::<crate::iiif::IIIF>::default(),
+        Box::<crate::dzi::DziDezoomer>::default(),
+        Box::<crate::generic::GenericDezoomer>::default(),
+        Box::<crate::pff::PFF>::default(),
+        Box::<crate::krpano::KrpanoDezoomer>::default(),
+        Box::<crate::iipimage::IIPImage>::default(),
+        Box::<crate::nypl::NYPLImage>::default(),
     ];
     if include_generic {
-        dezoomers.push(Box::new(AutoDezoomer::default()))
+        dezoomers.push(Box::<AutoDezoomer>::default())
     }
     dezoomers
 }

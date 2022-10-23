@@ -46,7 +46,7 @@ impl Dichotomy2d {
             },
             Dichotomy2d::Orientation { diagonal } => {
                 let dichotomy = Dichotomy {
-                    min: *diagonal + if previous_success { 1 } else { 0 },
+                    min: *diagonal + previous_success as u32,
                     max: None,
                 };
                 let best = dichotomy.best_guess();

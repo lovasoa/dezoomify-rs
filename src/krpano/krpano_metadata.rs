@@ -281,7 +281,7 @@ impl TemplateStringPart<TemplateVariable> {
                     Y => Variable { padding, variable: XY::Y },
                     Side => Literal(Arc::from(&side[..1])),
                     LevelIndex => {
-                        let idx_str = format!("{v:0padding$}", v = level, padding = padding as usize);
+                        let idx_str = format!("{v:0padding$}", v = level, padding = padding);
                         Literal(Arc::from(idx_str))
                     }
                 }

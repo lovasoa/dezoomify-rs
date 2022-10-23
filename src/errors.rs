@@ -28,9 +28,9 @@ custom_error! {
     InvalidHeaderName{source: header::InvalidHeaderName} = "Invalid header name: {source}",
     InvalidHeaderValue{source: header::InvalidHeaderValue} = "Invalid header value: {source}",
     AsyncError{source: tokio::task::JoinError} = "Unable get the result from a thread: {source}",
-    BufferToImage{source: BufferToImageError} = "{}",
-    WriteError{source: SendError<TileBufferMsg>} = "Unable to write tile {:?}",
-    PngError{source: png::EncodingError} = "PNG encoding error: {}",
+    BufferToImage{source: BufferToImageError} = "{source}",
+    WriteError{source: SendError<TileBufferMsg>} = "Unable to write tile {source:?}",
+    PngError{source: png::EncodingError} = "PNG encoding error: {source}",
 }
 
 custom_error! {

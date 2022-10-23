@@ -103,7 +103,7 @@ pub struct TileIndices {
 
 custom_error! {#[derive(PartialEq, Eq)] pub ParseTileIndicesError
     TooShort = "Missing a part of tile indices string",
-    BadNum{source: ParseIntError} = "Invalid tile index: {}",
+    BadNum{source: ParseIntError} = "Invalid tile index: {source}",
 }
 
 impl FromStr for TileIndices {

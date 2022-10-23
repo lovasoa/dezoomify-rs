@@ -129,7 +129,7 @@ impl TryFrom<&[u8]> for Metadata {
 
 custom_error! {#[derive(PartialEq)] pub IIPError
     MissingKey{key: &'static str} = "missing key '{key}' in the IIPImage metadata file",
-    Utf8{source: std::str::Utf8Error} = "Invalid IIPImage metadata file: {}",
+    Utf8{source: std::str::Utf8Error} = "Invalid IIPImage metadata file: {source}",
 }
 
 #[cfg(test)]

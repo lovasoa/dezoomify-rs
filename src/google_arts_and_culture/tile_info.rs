@@ -54,7 +54,7 @@ impl FromStr for PageInfo {
         let name = Regex::new(r#""name":"([^"]+)"#)
             .unwrap()
             .captures(s)
-            .map(|c| (&c[1]).to_string())
+            .map(|c| (c[1]).to_string())
             .unwrap_or_else(|| "Google Arts and culture image".into());
 
         Ok(PageInfo {

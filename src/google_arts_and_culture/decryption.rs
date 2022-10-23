@@ -67,10 +67,10 @@ fn read_size<T: Read>(c: T, dest: &mut Vec<u8>, size: u64) -> Result<T, std::io:
 }
 
 custom_error! {pub InvalidEncryptedImage
-    BadHeaderSize{header_size:u64} = "The size of the unencrypted header ({}) is invalid.",
-    BadEncryptedSize{encrypted_size:u64} = "The size of the encrypted data ({}) is invalid.",
+    BadHeaderSize{header_size:u64} = "The size of the unencrypted header ({header_size}) is invalid.",
+    BadEncryptedSize{encrypted_size:u64} = "The size of the encrypted data ({encrypted_size}) is invalid.",
     DecryptError = "Unable to decrypt the encrypted data",
-    IO{source: std::io::Error} = "Unable to read from the buffer: {}",
+    IO{source: std::io::Error} = "Unable to read from the buffer: {source}",
 }
 
 #[test]
