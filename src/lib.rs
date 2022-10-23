@@ -126,6 +126,7 @@ fn progress_bar(n: usize) -> ProgressBar {
     progress.set_style(
         ProgressStyle::default_bar()
             .template("[ETA:{eta}] {bar:40.cyan/blue} {pos:>4}/{len:4} {msg}")
+            .expect("Invalid indicatif progress bar template")
             .progress_chars("##-"),
     );
     progress
@@ -170,7 +171,7 @@ pub async fn dezoomify_level(
     info!("Creating canvas");
     let mut canvas = tile_buffer;
 
-    let progress = progress_bar(0);
+    let progress = progress_bar(10);
     let mut total_tiles = 0u64;
     let mut successful_tiles = 0u64;
 
