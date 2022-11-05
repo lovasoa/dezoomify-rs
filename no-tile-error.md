@@ -1,5 +1,4 @@
 ---
-layout: page
 title: 'What to do when dezoomify-rs says "Could not get any tile for the image"'
 permalink: /no-tile-error
 ---
@@ -21,6 +20,13 @@ When dezoomify-rs tries downloading all the small tiles that compose a large ima
  - `--retries 5` to retry each tile download 5 times before giving up
  - `--retry-delay 5s` to wait 5s when a tile download fails before retrying
  - `--timeout 60s` to not give up tile a tile download before having stayed at least 60s without answer from the web server  
+
+
+In your terminal, you can run
+
+```commandline
+/path/to/dezoomify-rs --parallelism 1 --retries 5 --retry-delay 5s --timeout 60s https://example.com/your-image-url
+```
 
 #### If you are using the *Generic Dezoomer*
 
