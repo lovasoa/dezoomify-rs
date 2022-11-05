@@ -89,21 +89,18 @@ impl TileProvider for ZoomLevel {
                 self.done.insert((x, y));
                 vec![self.tile_ref_at(x, y)]
             } else if !self.done.is_empty() {
-                let mut res = vec![];
                 let last_tile_pos = Vec2d {
                     x: self.last_tile.0,
                     y: self.last_tile.1,
                 };
                 self.image_size = self.tile_size.map(|s| s * last_tile_pos + s);
-                for y in 0..=last_tile_pos.y {
-                    for x in 0..=last_tile_pos.x {
-                        if !self.done.contains(&(x, y)) {
-                            res.push(self.tile_ref_at(x, y));
-                        }
-                    }
-                }
                 self.done.clear();
-                res
+                (0..=last_tile_pos.y).flat_map(|y|
+                    (0..=last_tile_pos.x).map(move |x|
+                        (x, y)))
+                    .filter(|pos| !self.done.contains(pos))
+                    .map(|(x, y)| self.tile_ref_at(x, y))
+                    .collect()
             } else {
                 vec![]
             }
