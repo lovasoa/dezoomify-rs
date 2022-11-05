@@ -10,7 +10,7 @@ custom_error! {
     Networking{source: reqwest::Error} = "network error: {source}",
     Dezoomer{source: DezoomerError} = "Dezoomer error: {source}",
     NoLevels = "A zoomable image was found, but it did not contain any zoom level",
-    NoTile = "Could not get any tile for the image",
+    NoTile = "Could not get any tile for the image. See https://dezoomify-rs.ophir.dev/no-tile-error",
     PartialDownload{successful_tiles: u64, total_tiles: u64, destination: String} =
         "Only {successful_tiles} tiles out of {total_tiles} could be downloaded. \
         The resulting image was still created in '{destination}'.",

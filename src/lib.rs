@@ -231,11 +231,12 @@ pub async fn dezoomify_level(
         });
     }
 
+    if successful_tiles == 0 { return Err(ZoomError::NoTile); }
+
     progress.set_message("Downloaded all tiles. Finalizing the image file.");
     canvas.finalize().await?;
 
     progress.finish_with_message("Finished tile download");
-    if successful_tiles == 0 { return Err(ZoomError::NoTile); }
 
     if last_successes < last_count {
         let destination = canvas.destination().to_string_lossy().to_string();
