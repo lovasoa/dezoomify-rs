@@ -1,8 +1,8 @@
 [package]
 name = "dezoomify-rs"
-version = "2.9.3"
+version = "2.9.4"
 authors = ["lovasoa"]
-edition = "2018"
+edition = "2021"
 license-file = "LICENSE"
 description = "Allows downloading zoomable images. Supports several different formats such as zoomify, iiif, and deep zoom images."
 documentation = "https://docs.rs/dezoomify-rs"
@@ -14,7 +14,6 @@ keywords = ["image", "download"]
 [dependencies]
 image = "0.24"
 png = "0.17"
-reqwest = { version = "0.11", features = ["gzip"] }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 custom_error = "1.7"
@@ -42,6 +41,13 @@ log = "0.4"
 env_logger = "0.9"
 url = "2"
 fixedbitset = "0.4"
+
+# See https://github.com/lovasoa/dezoomify-rs/issues/191
+[target.'cfg(target_os = "linux")'.dependencies]
+reqwest = { version = "0.11", features = ["gzip", "rustls-tls-native-roots"], default-features = false }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+reqwest = { version = "0.11", features = ["gzip"] }
 
 [dev-dependencies]
 criterion = "0.4"
