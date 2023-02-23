@@ -51,11 +51,15 @@ impl FromStr for PageInfo {
             .get(2)
             .map_or_else(Default::default, |s| s.as_str().into());
 
-        let name = Regex::new(r#""name":"([^"]+)"#)
+        let name = Regex::new(r#"<h1 class="[^"]+">([^<]+)</h1><h2 class="[^"]+"><span class="[^"]+"><a href="[^"]+">([^"]+) ([^"]+)</a></span><span class="[^"]+">([^<]+)</span></h2>"#)
             .unwrap()
             .captures(s)
-            .map(|c| (c[1]).to_string())
-            .unwrap_or_else(|| "Google Arts and culture image".into());
+            .map(|c| format!("{}, {}; {}; {}",
+                (c[3]).to_string(),
+                (c[2]).to_string(),
+                (c[1]).to_string(),
+                (c[4]).to_string()))
+            .unwrap_or_else(|| "Google Arts and Culture Image".into());
 
         Ok(PageInfo {
             base_url,
