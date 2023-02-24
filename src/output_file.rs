@@ -37,7 +37,11 @@ pub fn get_outname(
             .map(|s| sanitize(s))
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "dezoomified".into());
-        let mut path = base_dir.join(base).with_extension(extension);
+        let mut path = base_dir.to_path_buf();
+        let mut base_with_ext = OsString::from(&base);
+        base_with_ext.push(".");
+        base_with_ext.push(&extension);
+        path = path.join(base_with_ext);
 
         // append a suffix (_1,_2,..) to `outname` if  the file already exists
         let filename = path.file_stem().map(OsString::from).unwrap_or_default();
