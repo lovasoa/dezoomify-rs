@@ -39,6 +39,32 @@ impl PageInfo {
     }
 }
 
+fn get_name_from_gap_html(html: &str) -> String {
+    let name = Regex::new(r#"<h1 class="[^"]+">([^<]+)</h1><h2 class="[^"]+"><span class="[^"]+"><a href="[^"]+">([^"]+) ([^"]+)</a></span><span class="[^"]+">([^<]+)</span></h2>"#)
+        .unwrap()
+        .captures(html)
+        .map(|c| format!("{}, {}; {}; {}",
+            &(c[3]),
+            &(c[2]),
+            &(c[1]),
+            &(c[4])));
+
+    if let Some(result) = name {
+        return result
+    }
+
+    let name = Regex::new(r#""name":"([^"]+)"#)
+        .unwrap()
+        .captures(html)
+        .map(|c| (c[1]).to_string());
+
+    if let Some(result) = name {
+        return result
+    }
+
+    "Google Arts and Culture Image".into()
+}
+
 impl FromStr for PageInfo {
     type Err = PageParseError;
 
@@ -51,15 +77,7 @@ impl FromStr for PageInfo {
             .get(2)
             .map_or_else(Default::default, |s| s.as_str().into());
 
-        let name = Regex::new(r#"<h1 class="[^"]+">([^<]+)</h1><h2 class="[^"]+"><span class="[^"]+"><a href="[^"]+">([^"]+) ([^"]+)</a></span><span class="[^"]+">([^<]+)</span></h2>"#)
-            .unwrap()
-            .captures(s)
-            .map(|c| format!("{}, {}; {}; {}",
-                (c[3]).to_string(),
-                (c[2]).to_string(),
-                (c[1]).to_string(),
-                (c[4]).to_string()))
-            .unwrap_or_else(|| "Google Arts and Culture Image".into());
+        let name = get_name_from_gap_html(s);
 
         Ok(PageInfo {
             base_url,

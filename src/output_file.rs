@@ -40,7 +40,7 @@ pub fn get_outname(
         let mut path = base_dir.to_path_buf();
         let mut base_with_ext = OsString::from(&base);
         base_with_ext.push(".");
-        base_with_ext.push(&extension);
+        base_with_ext.push(extension);
         path = path.join(base_with_ext);
 
         // append a suffix (_1,_2,..) to `outname` if  the file already exists
