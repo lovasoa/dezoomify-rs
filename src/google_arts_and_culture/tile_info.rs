@@ -53,16 +53,11 @@ fn get_name_from_gap_html(html: &str) -> String {
         return result
     }
 
-    let name = Regex::new(r#""name":"([^"]+)"#)
+    Regex::new(r#""name":"([^"]+)"#)
         .unwrap()
         .captures(html)
-        .map(|c| (c[1]).to_string());
-
-    if let Some(result) = name {
-        return result
-    }
-
-    "Google Arts and Culture Image".into()
+        .map(|c| (c[1]).to_string())
+        .unwrap_or_else(||"Google Arts and Culture Image".into())
 }
 
 impl FromStr for PageInfo {
