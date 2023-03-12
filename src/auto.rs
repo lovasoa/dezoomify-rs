@@ -21,7 +21,6 @@ pub fn all_dezoomers(include_generic: bool) -> Vec<Box<dyn Dezoomer>> {
     }
     dezoomers
 }
-
 pub struct AutoDezoomer {
     dezoomers: Vec<Box<dyn Dezoomer>>,
     errors: Vec<(&'static str, DezoomerError)>,

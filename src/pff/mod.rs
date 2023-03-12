@@ -16,12 +16,12 @@ mod image_properties;
 
 /// Dezoomer for Zoomify PFF.
 /// Takes an URL to a pff file
+#[derive(Default)]
 pub enum PFF {
+    #[default]
     Init,
     WithHeader(HeaderInfo),
 }
-
-impl Default for PFF { fn default() -> Self { PFF::Init } }
 
 custom_error! {pub PffError
     DecodeError{source: serde_urlencoded::de::Error} = "Invalid meta information file: {source}",
