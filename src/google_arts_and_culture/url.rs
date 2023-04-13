@@ -5,6 +5,7 @@ use sha1::Sha1;
 
 use super::PageInfo;
 use std::ops::Deref;
+use base64::Engine;
 
 type HmacSha1 = SimpleHmac<Sha1>;
 
@@ -22,7 +23,7 @@ pub fn compute_url(page: &PageInfo, x: u32, y: u32, z: usize) -> String {
 }
 
 fn custom_base64(digest: &[u8]) -> String {
-    base64::encode_config(digest, base64::URL_SAFE_NO_PAD).replace('-', "_")
+    base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(digest).replace('-', "_")
 }
 
 fn mac_digest(b: &[u8]) -> impl Deref<Target=[u8]> {
