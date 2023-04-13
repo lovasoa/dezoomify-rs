@@ -23,35 +23,25 @@ jobs:
           - os: ubuntu-latest
             binary_path: target/debug/dezoomify-rs
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: Cache cargo dependencies
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - uses: actions-rs/toolchain@v1
-        with: {toolchain: stable, override: true}
-      - name: build
-        uses: actions-rs/cargo@v1
-        with: { command: build, args: "--locked" }
-      - uses: actions/upload-artifact@v1
+      - run: cargo build --locked
+      - uses: actions/upload-artifact@v3
         with:
           name: dezoomify-rs ${{ matrix.os }}
           path: ${{ matrix.binary_path }}
-      - name: test
-        uses: actions-rs/cargo@v1
-        with: { command: test }
+      - run: cargo test
         env:
           RUST_BACKTRACE: 1
-      - name: bench
-        uses: actions-rs/cargo@v1
-        with: { command: bench }
+      - run: cargo bench
         env:
           RUST_BACKTRACE: 1
       - run: rustup component add clippy
-      - name: clippy
-        uses: actions-rs/cargo@v1
-        with: { command: clippy, args: --tests -- -D warnings }
+      - run: cargo clippy --tests -- -D warnings
