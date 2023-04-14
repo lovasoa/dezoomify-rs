@@ -53,5 +53,5 @@ jobs:
           prerelease: ${{ startsWith(github.ref, 'refs/tags/v') }}
           files: |
             dezoomify-rs windows-latest/dezoomify-rs.exe
-            dezoomify-rs ubuntu-latest/dezoomify-rs-linux.tgz
+            dezoomify-rs ubuntu-20.04/dezoomify-rs-linux.tgz
             dezoomify-rs macos-latest/dezoomify-rs-macos.tgz
