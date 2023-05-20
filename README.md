@@ -210,6 +210,10 @@ If you are having troubles understanding the tutorial or adapting it to your use
 When using dezoomify-rs from the command-line
 
 ```
+dezoomify-rs 2.11.0
+lovasoa
+Allows downloading zoomable images. Supports several different formats such as zoomify, iiif, and deep zoom images.
+
 USAGE:
     dezoomify-rs [FLAGS] [OPTIONS] [--] [ARGS]
 
@@ -244,6 +248,10 @@ OPTIONS:
     -w, --max-width <max-width>
             If several zoom levels are available, then select the one with the largest width that is inferior to max-
             width
+        --min-interval <min-interval>
+            Minimum amount of time to wait between two consequent requests. This throttles the flow of image tile
+            requests coming from your computer, reducing the risk of crashing the remote server of getting banned for
+            making too many requests in a short succession [default: 0s]
     -n, --parallelism <parallelism>
             Degree of parallelism to use. At most this number of tiles will be downloaded at the same time [default: 16]
 

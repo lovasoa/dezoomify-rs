@@ -1,10 +1,10 @@
 #![allow(clippy::upper_case_acronyms)]
 
-use std::{fmt, fs, io};
 use std::env::current_dir;
 use std::error::Error;
 use std::io::BufRead;
 use std::path::PathBuf;
+use std::{fmt, fs, io};
 
 use futures::stream::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -13,9 +13,9 @@ use log::{debug, info};
 use reqwest::Client;
 
 pub use arguments::Arguments;
-use dezoomer::{TileFetchResult, ZoomLevel, ZoomLevelIter};
-use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
 use dezoomer::TileReference;
+use dezoomer::{Dezoomer, DezoomerError, DezoomerInput, ZoomLevels};
+use dezoomer::{TileFetchResult, ZoomLevel, ZoomLevelIter};
 pub use errors::ZoomError;
 use network::{client, fetch_uri};
 use output_file::get_outname;
@@ -28,13 +28,13 @@ use crate::network::TileDownloader;
 use crate::output_file::reserve_output_file;
 
 mod arguments;
-mod encoder;
 pub mod dezoomer;
+mod encoder;
+mod errors;
+mod network;
+mod output_file;
 pub mod tile;
 mod vec2d;
-mod errors;
-mod output_file;
-mod network;
 
 pub mod auto;
 pub mod custom_yaml;
@@ -42,12 +42,13 @@ pub mod dzi;
 pub mod generic;
 pub mod google_arts_and_culture;
 pub mod iiif;
-pub mod pff;
-pub mod zoomify;
-pub mod krpano;
-pub mod nypl;
 pub mod iipimage;
 mod json_utils;
+pub mod krpano;
+pub mod nypl;
+pub mod pff;
+mod throttler;
+pub mod zoomify;
 
 fn stdin_line() -> Result<String, ZoomError> {
     let stdin = std::io::stdin();
@@ -145,7 +146,12 @@ async fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
 pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
     let zoom_level = find_zoomlevel(args).await?;
     let base_dir = current_dir()?;
-    let outname = get_outname(&args.outfile, &zoom_level.title(), &base_dir,zoom_level.size_hint());
+    let outname = get_outname(
+        &args.outfile,
+        &zoom_level.title(),
+        &base_dir,
+        zoom_level.size_hint(),
+    );
     let save_as = fs::canonicalize(outname.as_path()).unwrap_or_else(|_e| outname.clone());
     reserve_output_file(&save_as)?;
     let tile_buffer: TileBuffer = TileBuffer::new(save_as.clone(), args.compression).await?;
@@ -167,14 +173,13 @@ pub async fn dezoomify_level(
         retry_delay: args.retry_delay,
         tile_storage_folder: args.tile_storage_folder.clone(),
     };
-
+    let mut throttler = throttler::Throttler::new(args.min_interval);
     info!("Creating canvas");
     let mut canvas = tile_buffer;
 
     let progress = progress_bar(10);
     let mut total_tiles = 0u64;
     let mut successful_tiles = 0u64;
-
 
     progress.set_message("Computing the URLs of the image tiles...");
 
@@ -221,7 +226,10 @@ pub async fn dezoomify_level(
                     })
                 }
             };
-            if let Some(tile) = tile { canvas.add_tile(tile).await; }
+            if let Some(tile) = tile {
+                canvas.add_tile(tile).await;
+            }
+            throttler.wait().await;
         }
         successful_tiles += last_successes;
         zoom_level_iter.set_fetch_result(TileFetchResult {
@@ -231,7 +239,9 @@ pub async fn dezoomify_level(
         });
     }
 
-    if successful_tiles == 0 { return Err(ZoomError::NoTile); }
+    if successful_tiles == 0 {
+        return Err(ZoomError::NoTile);
+    }
 
     progress.set_message("Downloaded all tiles. Finalizing the image file.");
     canvas.finalize().await?;
@@ -240,7 +250,11 @@ pub async fn dezoomify_level(
 
     if last_successes < last_count {
         let destination = canvas.destination().to_string_lossy().to_string();
-        Err(ZoomError::PartialDownload { successful_tiles, total_tiles, destination })
+        Err(ZoomError::PartialDownload {
+            successful_tiles,
+            total_tiles,
+            destination,
+        })
     } else {
         Ok(())
     }
@@ -254,7 +268,11 @@ pub struct TileDownloadError {
 
 impl fmt::Display for TileDownloadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Unable to download tile '{}'. Cause: {}", self.tile_reference.url, self.cause)
+        write!(
+            f,
+            "Unable to download tile '{}'. Cause: {}",
+            self.tile_reference.url, self.cause
+        )
     }
 }
 

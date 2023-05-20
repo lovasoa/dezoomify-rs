@@ -83,6 +83,13 @@ pub struct Arguments {
     #[structopt(long)]
     pub accept_invalid_certs: bool,
 
+    /// Minimum amount of time to wait between two consequent requests.
+    /// This throttles the flow of image tile requests coming from your computer,
+    /// reducing the risk of crashing the remote server of getting banned for making too many
+    /// requests in a short succession.
+    #[structopt(long, default_value = "0s", parse(try_from_str = parse_duration))]
+    pub min_interval: Duration,
+
     /// Maximum time between the beginning of a request and the end of a response before
     ///the request should be interrupted and considered failed
     #[structopt(long, default_value = "30s", parse(try_from_str = parse_duration))]
@@ -119,10 +126,11 @@ impl Default for Arguments {
             headers: vec![],
             max_idle_per_host: 32,
             accept_invalid_certs: false,
+            min_interval: Default::default(),
             timeout: Duration::from_secs(30),
             connect_timeout: Duration::from_secs(6),
             logging: "warn".to_string(),
-            tile_storage_folder: None
+            tile_storage_folder: None,
         }
     }
 }
@@ -181,14 +189,14 @@ fn parse_duration(s: &str) -> Result<Duration, &'static str> {
     let caps = re.captures(s).ok_or(err_msg)?;
     let val: u64 = caps[1].parse().map_err(|_| err_msg)?;
     match &caps[2] {
-        "min" => Ok(Duration::from_secs(60 * val)),
+        "h" => Ok(Duration::from_secs(3600 * val)),
+        "min" | "m" => Ok(Duration::from_secs(60 * val)),
         "s" => Ok(Duration::from_secs(val)),
         "ms" => Ok(Duration::from_millis(val)),
         "ns" => Ok(Duration::from_nanos(val)),
-        _ => Err(err_msg)
+        _ => Err(err_msg),
     }
 }
-
 
 #[test]
 fn test_headers_and_input() -> Result<(), structopt::clap::Error> {
