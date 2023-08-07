@@ -21,7 +21,7 @@ structopt = "0.3"
 evalexpr = "11"
 regex = "1"
 lazy_static = "1.4"
-itertools = "0.10"
+itertools = "0.11"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 serde-xml-rs = "0.6"
