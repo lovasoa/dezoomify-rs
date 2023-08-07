@@ -142,7 +142,7 @@ mod tests {
         let uri = "https://publications-images.artic.edu/fcgi-bin/iipsrv.fcgi?fif=osci/Renoir_11/Color_Corrected/G39094sm2.ptif&jtl=4,11".to_string();
         let metadata_uri = "https://publications-images.artic.edu/fcgi-bin/iipsrv.fcgi?fif=osci/Renoir_11/Color_Corrected/G39094sm2.ptif&OBJ=Max-size&OBJ=Tile-size&OBJ=Resolution-number";
         let data = DezoomerInput { uri, contents: PageContents::Unknown };
-        match IIPImage::default().zoom_levels(&data) {
+        match IIPImage.zoom_levels(&data) {
             Err(DezoomerError::NeedsData { uri }) => assert_eq!(uri, metadata_uri),
             _ => panic!("Unexpected result")
         }
