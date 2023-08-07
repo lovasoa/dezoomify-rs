@@ -50,7 +50,7 @@ reqwest = { version = "0.11", features = ["gzip", "rustls-tls-native-roots"], de
 reqwest = { version = "0.11", features = ["gzip"] }
 
 [dev-dependencies]
-criterion = "0.4"
+criterion = "0.5"
 image_hasher = "1"
 tempdir = "0.3"
 
