@@ -139,7 +139,7 @@ fn test_generic_dezoomer() {
         .next()
         .unwrap();
 
-    let existing_tiles = vec!["0,0", "1,0", "2,0", "0,1", "1,1", "2,1"];
+    let existing_tiles = ["0,0", "1,0", "2,0", "0,1", "1,1", "2,1"];
 
     let mut all_tiles = HashSet::new();
 

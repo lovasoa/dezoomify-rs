@@ -253,6 +253,8 @@ fn crop_image_for_tile(source_tile: &Tile, scaled_tile_pos: Vec2d, scaled_tile_s
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use image::ImageBuffer;
 
     use super::*;
@@ -269,19 +271,19 @@ mod tests {
 
     #[derive(Default)]
     struct TestTileSaver {
-        added: std::cell::RefCell<Vec<(Vec2d, Tile)>>
+        added: Mutex<Vec<(Vec2d, Tile)>>
     }
 
     impl TileSaver for TestTileSaver {
         fn save_tile(&self, size: Vec2d, tile: Tile) -> io::Result<()> {
-            self.added.borrow_mut().push((size, tile));
+            self.added.lock().unwrap().push((size, tile));
             Ok(())
         }
     }
 
     impl TestTileSaver {
         fn get_added(&self) -> Vec<(Vec2d, Tile)> {
-            self.added.borrow().clone()
+            self.added.lock().unwrap().clone()
         }
     }
 
