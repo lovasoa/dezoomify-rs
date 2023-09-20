@@ -534,7 +534,7 @@ checksum = "4f8a51dd197fa6ba5b4dc98a990a43cc13693c23eb0089ebb0fcc1f04152bca6"
 
 [[package]]
 name = "dezoomify-rs"
-version = "2.11.1"
+version = "2.11.2"
 dependencies = [
  "aes",
  "base64",

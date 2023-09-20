@@ -51,7 +51,10 @@ fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
                 .filter(|info| {
                     let keep = info.has_distinctive_iiif_properties();
                     if keep {
-                        debug!("keeping image info {:?} because it has distinctive IIIF properties", info)
+                        debug!(
+                            "keeping image info {:?} because it has distinctive IIIF properties",
+                            info
+                        )
                     } else {
                         info!("dropping level {:?}", info)
                     }
@@ -62,9 +65,12 @@ fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
             if levels.is_empty() {
                 Err(e.into())
             } else {
-                info!("No normal info.json parsing failed ({}), \
+                info!(
+                    "No normal info.json parsing failed ({}), \
                 but {} inline json5 zoom level(s) were found.",
-                      e, levels.len());
+                    e,
+                    levels.len()
+                );
                 Ok(levels)
             }
         }
@@ -73,6 +79,7 @@ fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
 
 fn zoom_levels_from_info(url: &str, mut image_info: ImageInfo) -> ZoomLevels {
     image_info.remove_test_id();
+    image_info.resolve_relative_urls(url);
     let img = Arc::new(image_info);
     let tiles = img.tiles();
     let base_url = &Arc::from(url.replace("/info.json", ""));
@@ -83,13 +90,13 @@ fn zoom_levels_from_info(url: &str, mut image_info: ImageInfo) -> ZoomLevels {
             let quality = Arc::from(img.best_quality());
             let format = Arc::from(img.best_format());
             let size_format = img.preferred_size_format();
-            info!("Chose the following image parameters: tile_size=({}) quality={} format={}",
-                  tile_size, quality, format);
+            info!(
+                "Chose the following image parameters: tile_size=({}) quality={} format={}",
+                tile_size, quality, format
+            );
             let page_info = &img; // Required to allow the move
-            tile_info
-                .scale_factors
-                .iter()
-                .map(move |&scale_factor| IIIFZoomLevel {
+            tile_info.scale_factors.iter().map(move |&scale_factor| {
+                let zoom_level = IIIFZoomLevel {
                     scale_factor,
                     tile_size,
                     page_info: Arc::clone(page_info),
@@ -97,7 +104,10 @@ fn zoom_levels_from_info(url: &str, mut image_info: ImageInfo) -> ZoomLevels {
                     quality: Arc::clone(&quality),
                     format: Arc::clone(&format),
                     size_format,
-                })
+                };
+                debug!("Found zoom level {zoom_level:?}: page_info: {page_info:?}, tile_size: {tile_size:?}, scale_factor: {scale_factor}, base_url: {base_url}, quality: {quality}, format: {format}, size_format: {size_format:?}");
+                zoom_level
+            })
         })
         .into_zoom_levels();
     levels
@@ -129,12 +139,20 @@ impl TilesRect for IIIFZoomLevel {
         let tile_size = scaled_tile_size / self.scale_factor;
         format!(
             "{base}/{x},{y},{img_w},{img_h}/{tile_size}/{rotation}/{quality}.{format}",
-            base = self.page_info.id.as_deref().unwrap_or_else(|| self.base_url.as_ref()),
+            base = self
+                .page_info
+                .id
+                .as_deref()
+                .unwrap_or_else(|| self.base_url.as_ref()),
             x = xy_pos.x,
             y = xy_pos.y,
             img_w = scaled_tile_size.x,
             img_h = scaled_tile_size.y,
-            tile_size = TileSizeFormatter { w: tile_size.x, h: tile_size.y, format: self.size_format },
+            tile_size = TileSizeFormatter {
+                w: tile_size.x,
+                h: tile_size.y,
+                format: self.size_format
+            },
             rotation = 0,
             quality = self.quality,
             format = self.format,
@@ -142,7 +160,11 @@ impl TilesRect for IIIFZoomLevel {
     }
 }
 
-struct TileSizeFormatter { w: u32, h: u32, format: TileSizeFormat }
+struct TileSizeFormatter {
+    w: u32,
+    h: u32,
+    format: TileSizeFormat,
+}
 
 impl std::fmt::Display for TileSizeFormatter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -202,7 +224,6 @@ fn test_tiles() {
     ])
 }
 
-
 #[test]
 fn test_tiles_max_area_filter() {
     // Predefined tile size (1024x1024) is over maxArea (262144 = 512x512).
@@ -219,12 +240,15 @@ fn test_tiles_max_area_filter() {
         .into_iter()
         .map(|t| t.url)
         .collect();
-    assert_eq!(tiles, vec![
-        "http://ophir.dev/0,0,512,512/512,512/0/default.jpg",
-        "http://ophir.dev/512,0,512,512/512,512/0/default.jpg",
-        "http://ophir.dev/0,512,512,512/512,512/0/default.jpg",
-        "http://ophir.dev/512,512,512,512/512,512/0/default.jpg",
-    ])
+    assert_eq!(
+        tiles,
+        vec![
+            "http://ophir.dev/0,0,512,512/512,512/0/default.jpg",
+            "http://ophir.dev/512,0,512,512/512,512/0/default.jpg",
+            "http://ophir.dev/0,512,512,512/512,512/0/default.jpg",
+            "http://ophir.dev/512,512,512,512/512,512/0/default.jpg",
+        ]
+    )
 }
 
 #[test]
@@ -259,7 +283,10 @@ fn test_false_positive() {
     };
     "#;
     let res = zoom_levels("https://orion2020v5b.spaceforeverybody.com/", data);
-    assert!(res.is_err(), "openseadragon zoomify image should not be misdetected");
+    assert!(
+        res.is_err(),
+        "openseadragon zoomify image should not be misdetected"
+    );
 }
 
 #[test]
@@ -279,11 +306,7 @@ fn test_qualities() {
     let mut levels = zoom_levels("test.com", data).unwrap();
     let level = &mut levels[0];
     assert_eq!(level.size_hint(), Some(Vec2d { x: 515, y: 381 }));
-    let tiles: Vec<String> = level
-        .next_tiles(None)
-        .into_iter()
-        .map(|t| t.url)
-        .collect();
+    let tiles: Vec<String> = level.next_tiles(None).into_iter().map(|t| t.url).collect();
     assert_eq!(tiles, vec![
         "https://images.britishart.yale.edu/iiif/fd470c3e-ead0-4878-ac97-d63295753f82/0,0,5156,3816/515,381/0/native.png",
     ])

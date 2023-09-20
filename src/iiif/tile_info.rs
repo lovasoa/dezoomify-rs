@@ -8,6 +8,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::Vec2d;
+use crate::network::resolve_relative;
 
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ImageInfo {
@@ -151,6 +152,12 @@ impl ImageInfo {
                 info!("Removing probably invalid IIIF id '{}'", id);
                 self.id = None;
             }
+        }
+    }
+
+    pub fn resolve_relative_urls(&mut self, base: &str) {
+        if let Some(id) = &self.id {
+            self.id = Some(resolve_relative(base, id))
         }
     }
 }
