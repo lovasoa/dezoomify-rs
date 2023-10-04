@@ -54,6 +54,8 @@ On some operating systems, you may have to authorize the application execution
 before being able to launch it. See how to do
 [in MacOS](https://support.apple.com/kb/ph25088?locale=en_US).
 
+### Install via Homebrew
+As an alternative to installing the binary directly, on macOS and Linux dezoomify-rs is available via the [Homebrew package manager](https://brew.sh/). It can be installed with the command <code>brew install dezoomify-rs</code>.
 
 ## Supported output image formats
 
