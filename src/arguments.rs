@@ -1,44 +1,52 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use clap::Parser;
 use regex::Regex;
-use structopt::StructOpt;
 
 use crate::dezoomer::Dezoomer;
 
 use super::{auto, stdin_line, Vec2d, ZoomError};
 
-#[derive(StructOpt, Debug)]
-#[structopt(author, about)]
+#[derive(Parser, Debug)]
+#[command(author, version, about, disable_help_flag = true)]
 pub struct Arguments {
-    /// Input URL or local file name
+    /// Displays this help message
+    #[arg(short = '?', long = "help", action = clap::ArgAction::Help)]
+    pub display_help: (),
+
+    /// Input URL or local file name. By default, the program will ask for it interactively.
     pub input_uri: Option<String>,
 
-    /// File to which the resulting image should be saved
-    #[structopt(parse(from_os_str))]
+    /// File to which the resulting image should be saved. By default the program will
+    /// generate a name based on the image metadata if available. Otherwise, it will
+    /// generate a name in the format "dezoomified[_N].{jpg,png}" depending on which
+    /// files already exist in the current directory, and whether the target image size fits
+    /// in a JPEG or not.
+    #[arg()]
     pub outfile: Option<PathBuf>,
 
     /// Name of the dezoomer to use
-    #[structopt(short, long, default_value = "auto")]
+    #[arg(short, long, default_value = "auto")]
     dezoomer: String,
 
     /// If several zoom levels are available, then select the largest one
-    #[structopt(short, long)]
+    #[arg(short, long)]
     pub largest: bool,
 
     /// If several zoom levels are available, then select the one with the largest width that
     /// is inferior to max-width.
-    #[structopt(short = "w", long = "max-width")]
+    #[arg(short = 'w', long = "max-width")]
     max_width: Option<u32>,
 
     /// If several zoom levels are available, then select the one with the largest height that
     /// is inferior to max-height.
-    #[structopt(short = "h", long = "max-height")]
+    #[arg(short = 'h', long = "max-height")]
     max_height: Option<u32>,
 
     /// Degree of parallelism to use. At most this number of
     /// tiles will be downloaded at the same time.
-    #[structopt(short = "n", long = "parallelism", default_value = "16")]
+    #[arg(short = 'n', long = "parallelism", default_value = "16")]
     pub parallelism: usize,
 
     /// Number of new attempts to make when a tile load fails
@@ -46,73 +54,74 @@ pub struct Arguments {
     /// generic dezoomer, which relies on failed tile loads to detect the
     /// dimensions of the image. On the contrary, if a server is not reliable,
     /// set this value to a higher number.
-    #[structopt(short = "r", long = "retries", default_value = "1")]
+    #[arg(short = 'r', long = "retries", default_value = "1")]
     pub retries: usize,
 
     /// Amount of time to wait before retrying a request that failed.
     /// Applies only to the first retry. Subsequent retries follow an
     /// exponential backoff strategy: each one is twice as long as
     /// the previous one.
-    #[structopt(long, default_value = "2s", parse(try_from_str = parse_duration))]
+    #[arg(long, default_value = "2s", value_parser = parse_duration)]
     pub retry_delay: Duration,
 
     /// A number between 0 and 100 expressing how much to compress the output image.
     /// For lossy output formats such as jpeg, this affects the quality of the resulting image.
     /// 0 means less compression, 100 means more compression.
     /// Currently affects only the JPEG and PNG encoders.
-    #[structopt(long, default_value = "20")]
+    #[arg(long, default_value = "20")]
     pub compression: u8,
 
     /// Sets an HTTP header to use on requests.
     /// This option can be repeated in order to set multiple headers.
     /// You can use `-H "Referer: URL"` where URL is the URL of the website's
     /// viewer page in order to let the site think you come from the legitimate viewer.
-    #[structopt(
-    short = "H",
+    #[arg(
+    short = 'H',
     long = "header",
-    parse(try_from_str = parse_header),
+    value_parser = parse_header,
     number_of_values = 1
     )]
     pub headers: Vec<(String, String)>,
 
     /// Maximum number of idle connections per host allowed at the same time
-    #[structopt(long, default_value = "32")]
+    #[arg(long, default_value = "32")]
     pub max_idle_per_host: usize,
 
     /// Whether to accept connecting to insecure HTTPS servers
-    #[structopt(long)]
+    #[arg(long)]
     pub accept_invalid_certs: bool,
 
     /// Minimum amount of time to wait between two consequent requests.
     /// This throttles the flow of image tile requests coming from your computer,
     /// reducing the risk of crashing the remote server of getting banned for making too many
     /// requests in a short succession.
-    #[structopt(long, default_value = "0s", parse(try_from_str = parse_duration))]
+    #[arg(short = 'i', long, default_value = "0s", value_parser = parse_duration)]
     pub min_interval: Duration,
 
     /// Maximum time between the beginning of a request and the end of a response before
     ///the request should be interrupted and considered failed
-    #[structopt(long, default_value = "30s", parse(try_from_str = parse_duration))]
+    #[arg(long, default_value = "30s", value_parser = parse_duration)]
     pub timeout: Duration,
 
     /// Time after which we should give up when trying to connect to a server
-    #[structopt(long = "connect-timeout", default_value = "6s", parse(try_from_str = parse_duration))]
+    #[arg(long = "connect-timeout", default_value = "6s", value_parser = parse_duration)]
     pub connect_timeout: Duration,
 
     /// Level of logging verbosity. Set it to "debug" to get all logging messages.
-    #[structopt(long, default_value = "warn")]
+    #[arg(long, default_value = "warn")]
     pub logging: String,
 
     /// A place to store the image tiles when after they are downloaded and decrypted.
     /// By default, tiles are not stored to disk (which is faster), but using a tile cache allows
     /// retrying partially failed downloads, or stitching the tiles with an external program.
-    #[structopt(short = "c", long = "tile-cache")]
+    #[arg(short = 'c', long = "tile-cache")]
     pub tile_storage_folder: Option<PathBuf>,
 }
 
 impl Default for Arguments {
     fn default() -> Self {
         Arguments {
+            display_help: (),
             input_uri: None,
             outfile: None,
             dezoomer: "auto".to_string(),
@@ -199,20 +208,21 @@ fn parse_duration(s: &str) -> Result<Duration, &'static str> {
 }
 
 #[test]
-fn test_headers_and_input() -> Result<(), structopt::clap::Error> {
-    let args: Arguments = StructOpt::from_iter_safe(
-        [
-            "dezoomify-rs",
-            "--header",
-            "Referer: http://test.com",
-            "--header",
-            "User-Agent: custom",
-            "--header",
-            "A:B",
-            "input-url",
-        ]
-        .iter(),
-    )?;
+fn test_headers_and_input() {
+    let args = Arguments::parse_from([
+        "dezoomify-rs",
+        //
+        "--header",
+        "Referer: http://test.com",
+        //
+        "--header",
+        "User-Agent: custom",
+        //
+        "--header",
+        "A:B",
+        //
+        "input-url",
+    ]);
     assert_eq!(args.input_uri, Some("input-url".into()));
     assert_eq!(
         args.headers,
@@ -222,7 +232,6 @@ fn test_headers_and_input() -> Result<(), structopt::clap::Error> {
             ("A".into(), "B".into()),
         ]
     );
-    Ok(())
 }
 
 #[test]

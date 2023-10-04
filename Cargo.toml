@@ -1,6 +1,6 @@
 [package]
 name = "dezoomify-rs"
-version = "2.11.2"
+version = "2.11.3"
 authors = ["lovasoa"]
 edition = "2021"
 license-file = "LICENSE"
@@ -17,7 +17,7 @@ png = "0.17"
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 custom_error = "1.7"
-structopt = "0.3"
+clap = { version = "4.4.6", features = ["derive"] }
 evalexpr = "11"
 regex = "1"
 lazy_static = "1.4"

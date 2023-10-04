@@ -1,6 +1,5 @@
 use colour::{green_ln, red_ln, yellow_ln};
 use human_panic::setup_panic;
-use structopt::StructOpt;
 
 use dezoomify_rs::{Arguments, dezoomify, ZoomError};
 
@@ -9,7 +8,7 @@ async fn main() {
     setup_panic!();
     let has_args = std::env::args_os().count() > 1;
     let mut has_errors = false;
-    let args: Arguments = Arguments::from_args();
+    let args: Arguments = clap::Parser::parse();
     init_log(&args);
 
     loop {
