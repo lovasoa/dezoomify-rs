@@ -95,7 +95,7 @@ pub struct Arguments {
     /// This throttles the flow of image tile requests coming from your computer,
     /// reducing the risk of crashing the remote server of getting banned for making too many
     /// requests in a short succession.
-    #[arg(short = 'i', long, default_value = "0s", value_parser = parse_duration)]
+    #[arg(short = 'i', long, default_value = "50ms", value_parser = parse_duration)]
     pub min_interval: Duration,
 
     /// Maximum time between the beginning of a request and the end of a response before
