@@ -212,69 +212,51 @@ If you are having troubles understanding the tutorial or adapting it to your use
 When using dezoomify-rs from the command-line
 
 ```
-dezoomify-rs 2.11.0
-lovasoa
 Allows downloading zoomable images. Supports several different formats such as zoomify, iiif, and deep zoom images.
 
-USAGE:
-    dezoomify-rs [FLAGS] [OPTIONS] [--] [ARGS]
+Usage: dezoomify-rs [OPTIONS] [INPUT_URI] [OUTFILE]
 
-FLAGS:
-        --accept-invalid-certs    Whether to accept connecting to insecure HTTPS servers
-        --help                    Prints help information
-    -l, --largest                 If several zoom levels are available, then select the largest one
-    -V, --version                 Prints version information
+Arguments:
+  [INPUT_URI]  Input URL or local file name. By default, the program will ask for it interactively
+  [OUTFILE]    File to which the resulting image should be saved. By default the program will generate a name based on the image metadata if available. Otherwise, it will generate a name in the format "dezoomified[_N].{jpg,png}" depending on which files already exist in the current directory, and whether the target image size fits in a JPEG or not
 
-OPTIONS:
-        --compression <compression>
-            A number between 0 and 100 expressing how much to compress the output image. For lossy output formats such
-            as jpeg, this affects the quality of the resulting image. 0 means less compression, 100 means more
-            compression. Currently affects only the JPEG and PNG encoders [default: 20]
-        --connect-timeout <connect-timeout>
-            Time after which we should give up when trying to connect to a server [default: 6s]
-
-    -d, --dezoomer <dezoomer>                      Name of the dezoomer to use [default: auto]
-    -H, --header <headers>...
-            Sets an HTTP header to use on requests. This option can be repeated in order to set multiple headers. You
-            can use `-H "Referer: URL"` where URL is the URL of the website's viewer page in order to let the site think
-            you come from the legitimate viewer
-        --logging <logging>
-            Level of logging verbosity. Set it to "debug" to get all logging messages [default: warn]
-
-    -h, --max-height <max-height>
-            If several zoom levels are available, then select the one with the largest height that is inferior to max-
-            height
-        --max-idle-per-host <max-idle-per-host>
-            Maximum number of idle connections per host allowed at the same time [default: 32]
-
-    -w, --max-width <max-width>
-            If several zoom levels are available, then select the one with the largest width that is inferior to max-
-            width
-        --min-interval <min-interval>
-            Minimum amount of time to wait between two consequent requests. This throttles the flow of image tile
-            requests coming from your computer, reducing the risk of crashing the remote server of getting banned for
-            making too many requests in a short succession [default: 0s]
-    -n, --parallelism <parallelism>
-            Degree of parallelism to use. At most this number of tiles will be downloaded at the same time [default: 16]
-
-    -r, --retries <retries>
-            Number of new attempts to make when a tile load fails before giving up. Setting this to 0 is useful to speed
-            up the generic dezoomer, which relies on failed tile loads to detect the dimensions of the image. On the
-            contrary, if a server is not reliable, set this value to a higher number [default: 1]
-        --retry-delay <retry-delay>
-            Amount of time to wait before retrying a request that failed. Applies only to the first retry. Subsequent
-            retries follow an exponential backoff strategy: each one is twice as long as the previous one [default: 2s]
-    -c, --tile-cache <tile-storage-folder>
-            A place to store the image tiles when after they are downloaded and decrypted. By default, tiles are not
-            stored to disk (which is faster), but using a tile cache allows retrying partially failed downloads, or
-            stitching the tiles with an external program
-        --timeout <timeout>
-            Maximum time between the beginning of a request and the end of a response before the request should be
-            interrupted and considered failed [default: 30s]
-
-ARGS:
-    <input-uri>    Input URL or local file name
-    <outfile>      File to which the resulting image should be saved
+Options:
+  -?, --help
+          Displays this help message
+  -d, --dezoomer <DEZOOMER>
+          Name of the dezoomer to use [default: auto]
+  -l, --largest
+          If several zoom levels are available, then select the largest one
+  -w, --max-width <MAX_WIDTH>
+          If several zoom levels are available, then select the one with the largest width that is inferior to max-width
+  -h, --max-height <MAX_HEIGHT>
+          If several zoom levels are available, then select the one with the largest height that is inferior to max-height
+  -n, --parallelism <PARALLELISM>
+          Degree of parallelism to use. At most this number of tiles will be downloaded at the same time [default: 16]
+  -r, --retries <RETRIES>
+          Number of new attempts to make when a tile load fails before giving up. Setting this to 0 is useful to speed up the generic dezoomer, which relies on failed tile loads to detect the dimensions of the image. On the contrary, if a server is not reliable, set this value to a higher number [default: 1]
+      --retry-delay <RETRY_DELAY>
+          Amount of time to wait before retrying a request that failed. Applies only to the first retry. Subsequent retries follow an exponential backoff strategy: each one is twice as long as the previous one [default: 2s]
+      --compression <COMPRESSION>
+          A number between 0 and 100 expressing how much to compress the output image. For lossy output formats such as jpeg, this affects the quality of the resulting image. 0 means less compression, 100 means more compression. Currently affects only the JPEG and PNG encoders [default: 20]
+  -H, --header <HEADERS>
+          Sets an HTTP header to use on requests. This option can be repeated in order to set multiple headers. You can use `-H "Referer: URL"` where URL is the URL of the website's viewer page in order to let the site think you come from the legitimate viewer
+      --max-idle-per-host <MAX_IDLE_PER_HOST>
+          Maximum number of idle connections per host allowed at the same time [default: 32]
+      --accept-invalid-certs
+          Whether to accept connecting to insecure HTTPS servers
+  -i, --min-interval <MIN_INTERVAL>
+          Minimum amount of time to wait between two consequent requests. This throttles the flow of image tile requests coming from your computer, reducing the risk of crashing the remote server of getting banned for making too many requests in a short succession [default: 50ms]
+      --timeout <TIMEOUT>
+          Maximum time between the beginning of a request and the end of a response before the request should be interrupted and considered failed [default: 30s]
+      --connect-timeout <CONNECT_TIMEOUT>
+          Time after which we should give up when trying to connect to a server [default: 6s]
+      --logging <LOGGING>
+          Level of logging verbosity. Set it to "debug" to get all logging messages [default: warn]
+  -c, --tile-cache <TILE_STORAGE_FOLDER>
+          A place to store the image tiles when after they are downloaded and decrypted. By default, tiles are not stored to disk (which is faster), but using a tile cache allows retrying partially failed downloads, or stitching the tiles with an external program
+  -V, --version
+          Print version
 ```
 
 ## Documentation
