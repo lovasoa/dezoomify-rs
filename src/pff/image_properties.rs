@@ -1,18 +1,23 @@
 use std::num::ParseIntError;
 use std::str::FromStr;
 
-use serde::{Serialize, Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use custom_error::custom_error;
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
-pub struct Reply<T: FromStr> where <T as FromStr>::Err: ToString {
+pub struct Reply<T: FromStr>
+where
+    <T as FromStr>::Err: ToString,
+{
     #[serde(deserialize_with = "deserialize_from_string")]
     pub reply_data: T,
 }
 
 fn deserialize_from_string<'d, D: Deserializer<'d>, T: FromStr>(de: D) -> Result<T, D::Error>
-    where <T as FromStr>::Err: ToString {
+where
+    <T as FromStr>::Err: ToString,
+{
     let as_str = String::deserialize(de)?;
     FromStr::from_str(&as_str)
         .map_err(|e: <T as FromStr>::Err| serde::de::Error::custom(e.to_string()))
@@ -33,7 +38,6 @@ pub struct PffHeader {
     #[serde(rename = "VERSION", default)]
     pub version: u32,
 }
-
 
 impl FromStr for PffHeader {
     type Err = serde_xml_rs::Error;
@@ -98,7 +102,7 @@ impl ImageInfo {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct TileIndices {
-    indices: Vec<u64>
+    indices: Vec<u64>,
 }
 
 custom_error! {#[derive(PartialEq, Eq)] pub ParseTileIndicesError
@@ -111,7 +115,10 @@ impl FromStr for TileIndices {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut parts = s.split(',');
-        let first: u64 = parts.next().ok_or(ParseTileIndicesError::TooShort)?.parse()?;
+        let first: u64 = parts
+            .next()
+            .ok_or(ParseTileIndicesError::TooShort)?
+            .parse()?;
         let rest_str: &str = parts.next().ok_or(ParseTileIndicesError::TooShort)?;
         let other_nums = rest_str.split_ascii_whitespace();
         let indices = other_nums
@@ -165,16 +172,28 @@ pub struct InitialServletRequestParams {
     pub request_type: u8,
 }
 
-
 #[cfg(test)]
 mod test {
     use super::*;
 
     #[test]
     fn test_parse_tile_indices() {
-        assert_eq!("10, 1 2 3".parse(), Ok(TileIndices { indices: vec![11, 12, 13] }));
-        assert_eq!("10,        0       20".parse(), Ok(TileIndices { indices: vec![10, 30] }));
-        assert_eq!("10".parse::<TileIndices>(), Err(ParseTileIndicesError::TooShort));
+        assert_eq!(
+            "10, 1 2 3".parse(),
+            Ok(TileIndices {
+                indices: vec![11, 12, 13]
+            })
+        );
+        assert_eq!(
+            "10,        0       20".parse(),
+            Ok(TileIndices {
+                indices: vec![10, 30]
+            })
+        );
+        assert_eq!(
+            "10".parse::<TileIndices>(),
+            Err(ParseTileIndicesError::TooShort)
+        );
     }
 
     #[test]
@@ -196,7 +215,11 @@ mod test {
         assert_eq!(header.num_tiles, 5541);
         assert_eq!(header.header_size, 15331);
         assert_eq!(header.version, 106);
-        let header_info = HeaderInfo { header, file: "x".into(), base_url: "http://x.com/".into() };
+        let header_info = HeaderInfo {
+            header,
+            file: "x".into(),
+            base_url: "http://x.com/".into(),
+        };
         assert_eq!(
             header_info.tiles_index_url(),
             "http://x.com/?file=x&vers=106&head=15331&begin=16391&end=60719&requestType=2"

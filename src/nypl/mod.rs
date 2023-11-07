@@ -1,13 +1,16 @@
-use std::sync::Arc;
-use std::iter::successors;
-use std::fmt::{Debug, Formatter};
 use std::collections::HashMap;
+use std::fmt::{Debug, Formatter};
+use std::iter::successors;
+use std::sync::Arc;
 
 use custom_error::custom_error;
 use regex::Regex;
 use serde::Deserialize;
 
-use crate::dezoomer::{TilesRect, Dezoomer, DezoomerInput, ZoomLevels, DezoomerError, IntoZoomLevels, DezoomerInputWithContents, TileReference};
+use crate::dezoomer::{
+    Dezoomer, DezoomerError, DezoomerInput, DezoomerInputWithContents, IntoZoomLevels,
+    TileReference, TilesRect, ZoomLevels,
+};
 use crate::json_utils::number_or_string;
 use crate::Vec2d;
 
@@ -20,25 +23,31 @@ const NYPL_META_PREFIX: &str = "https://access.nypl.org/image.php/";
 const NYPL_META_POSTFIX: &str = "/tiles/config.js";
 
 fn get_image_id_from_meta_url(meta_url: &str) -> String {
-    meta_url.replace(NYPL_META_PREFIX, "")
+    meta_url
+        .replace(NYPL_META_PREFIX, "")
         .replace(NYPL_META_POSTFIX, "")
 }
 
 fn parse_image_id(image_view_url: &str) -> Option<String> {
-    Regex::new(r"https://digitalcollections.nypl.org/items/([a-f0-9\-]+)").unwrap()
+    Regex::new(r"https://digitalcollections.nypl.org/items/([a-f0-9\-]+)")
+        .unwrap()
         .captures(image_view_url)
         .and_then(|cap| cap.get(1))
         .map(|m| m.as_str().to_string())
 }
 
 impl Dezoomer for NYPLImage {
-    fn name(&self) -> &'static str { "nypl" }
+    fn name(&self) -> &'static str {
+        "nypl"
+    }
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
         if data.uri.starts_with(NYPL_IMAGE_VIEW_PREFIX) {
             let image_view_url = data.uri.as_str();
-            let image_id = parse_image_id(image_view_url).ok_or_else(||
-                DezoomerError::wrap(NYPLError::NoIdInUrl { url: image_view_url.to_string() })
-            )?;
+            let image_id = parse_image_id(image_view_url).ok_or_else(|| {
+                DezoomerError::wrap(NYPLError::NoIdInUrl {
+                    url: image_view_url.to_string(),
+                })
+            })?;
             let meta_uri = format!("{}{}{}", NYPL_META_PREFIX, image_id, NYPL_META_POSTFIX);
             Err(DezoomerError::NeedsData { uri: meta_uri })
         } else {
@@ -50,27 +59,38 @@ impl Dezoomer for NYPLImage {
     }
 }
 
-fn arcs<T, U: ?Sized>(v: T) -> impl Iterator<Item=Arc<U>>
-    where Arc<U>: From<T> {
+fn arcs<T, U: ?Sized>(v: T) -> impl Iterator<Item = Arc<U>>
+where
+    Arc<U>: From<T>,
+{
     successors(Some(Arc::from(v)), |x| Some(Arc::clone(x)))
 }
 
-fn iter_levels(uri: &str, contents: &[u8])
-               -> Result<impl Iterator<Item=Level> + 'static, NYPLError> {
+fn iter_levels(
+    uri: &str,
+    contents: &[u8],
+) -> Result<impl Iterator<Item = Level> + 'static, NYPLError> {
     if contents.is_empty() {
         return Err(NYPLError::NoMetadata);
     }
     let base = get_image_id_from_meta_url(uri);
     let mut meta_map: MetadataRoot = serde_json::from_slice(contents)?;
-    let (_, meta) = meta_map.configs.drain()
+    let (_, meta) = meta_map
+        .configs
+        .drain()
         .find(|(k, _v)| k == "0")
         .ok_or(NYPLError::NoMetadata)?;
 
     let level_count: u32 = meta.level_count();
     let levels =
-        (0..=level_count).zip(arcs(base)).zip(arcs(meta))
-            .map(|((level, base), metadata)|
-                Level { metadata, base, level });
+        (0..=level_count)
+            .zip(arcs(base))
+            .zip(arcs(meta))
+            .map(|((level, base), metadata)| Level {
+                metadata,
+                base,
+                level,
+            });
     Ok(levels)
 }
 
@@ -93,15 +113,18 @@ impl TilesRect for Level {
         Vec2d::from(self.metadata.size) / 2_u32.pow(reverse_level)
     }
 
-    fn tile_size(&self) -> Vec2d { Vec2d::square(self.metadata.tile_size) }
+    fn tile_size(&self) -> Vec2d {
+        Vec2d::square(self.metadata.tile_size)
+    }
 
     fn tile_url(&self, Vec2d { x, y }: Vec2d) -> String {
-        format!("https://access.nypl.org/image.php/{id}/tiles/0/{level}/{x}_{y}.{format}",
-                id = self.base,
-                level = self.level,
-                x = x,
-                y = y,
-                format = self.metadata.format,
+        format!(
+            "https://access.nypl.org/image.php/{id}/tiles/0/{level}/{x}_{y}.{format}",
+            id = self.base,
+            level = self.level,
+            x = x,
+            y = y,
+            format = self.metadata.format,
         )
     }
 
@@ -141,7 +164,10 @@ impl Metadata {
 
 impl From<MetadataSize> for Vec2d {
     fn from(s: MetadataSize) -> Self {
-        Vec2d { x: s.width, y: s.height }
+        Vec2d {
+            x: s.width,
+            y: s.height,
+        }
     }
 }
 
@@ -211,15 +237,22 @@ mod tests {
             }
           }
         }
-        "#.as_bytes();
+        "#
+        .as_bytes();
         let base: Arc<String> = Arc::new("a28d6e6b-b317-f008-e040-e00a1806635d".into());
         let level: Level = iter_levels(&base, contents).unwrap().last().unwrap();
-        assert_eq!(level.metadata, Arc::new(Metadata {
-            size: MetadataSize { width: 2422, height: 3000 },
-            tile_size: 256,
-            format: "png".to_string(),
-            overlap: 2,
-        }));
+        assert_eq!(
+            level.metadata,
+            Arc::new(Metadata {
+                size: MetadataSize {
+                    width: 2422,
+                    height: 3000
+                },
+                tile_size: 256,
+                format: "png".to_string(),
+                overlap: 2,
+            })
+        );
         let expected_url = "https://access.nypl.org/image.php/\
             a28d6e6b-b317-f008-e040-e00a1806635d\
             /tiles/0/12/0_0.png";

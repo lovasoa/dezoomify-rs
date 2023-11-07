@@ -3,14 +3,15 @@ use std::sync::Arc;
 use custom_error::custom_error;
 /// Dezoomer for the zoomify PFF servlet API format
 /// See: https://github.com/lovasoa/pff-extract/wiki/Zoomify-PFF-file-format-documentation
-
 use serde_urlencoded as urlencoded;
 
 use image_properties::PffHeader;
 use image_properties::Reply;
 
 use crate::dezoomer::*;
-use crate::pff::image_properties::{HeaderInfo, ImageInfo, InitialServletRequestParams, RequestType, TileIndices};
+use crate::pff::image_properties::{
+    HeaderInfo, ImageInfo, InitialServletRequestParams, RequestType, TileIndices,
+};
 
 mod image_properties;
 
@@ -41,7 +42,10 @@ impl Dezoomer for PFF {
 
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
         let mut parts = data.uri.splitn(2, '?');
-        let base_url = parts.next().ok_or_else(|| self.wrong_dezoomer())?.to_string();
+        let base_url = parts
+            .next()
+            .ok_or_else(|| self.wrong_dezoomer())?
+            .to_string();
         let params_str = parts.next().ok_or_else(|| self.wrong_dezoomer())?;
         match self {
             PFF::Init => {
@@ -49,17 +53,26 @@ impl Dezoomer for PFF {
                     urlencoded::from_str(params_str).map_err(PffError::from)?;
                 let file = init_params.file;
                 if init_params.request_type != RequestType::Metadata as u8 {
-                    let uri = format!("{}?file={}&requestType={}", base_url, file, RequestType::Metadata as u8);
+                    let uri = format!(
+                        "{}?file={}&requestType={}",
+                        base_url,
+                        file,
+                        RequestType::Metadata as u8
+                    );
                     return Err(DezoomerError::NeedsData { uri });
                 }
                 let DezoomerInputWithContents { contents, .. } = data.with_contents()?;
                 let reply: Reply<PffHeader> =
                     serde_urlencoded::from_bytes(contents).map_err(PffError::from)?;
-                let header_info = HeaderInfo { base_url, file, header: reply.reply_data };
+                let header_info = HeaderInfo {
+                    base_url,
+                    file,
+                    header: reply.reply_data,
+                };
                 let uri = header_info.tiles_index_url();
                 *self = PFF::WithHeader(header_info);
                 Err(DezoomerError::NeedsData { uri })
-            },
+            }
             PFF::WithHeader(header_info) => {
                 let DezoomerInputWithContents { contents, .. } = data.with_contents()?;
                 let reply: Reply<TileIndices> =
@@ -76,7 +89,10 @@ impl Dezoomer for PFF {
 fn zoom_levels(info: ImageInfo) -> ZoomLevels {
     let info = Arc::new(info);
     let header = &info.header_info.header;
-    let mut size = Vec2d { x: header.width, y: header.height };
+    let mut size = Vec2d {
+        x: header.width,
+        y: header.height,
+    };
     let mut tiles_before = 0;
     let mut levels = vec![];
     while size.x >= header.tile_size && size.y >= header.tile_size {
@@ -99,7 +115,9 @@ struct PffZoomLevel {
 }
 
 impl TilesRect for PffZoomLevel {
-    fn size(&self) -> Vec2d { self.size }
+    fn size(&self) -> Vec2d {
+        self.size
+    }
 
     fn tile_size(&self) -> Vec2d {
         let size = self.image_info.header_info.header.tile_size;

@@ -6,9 +6,9 @@ Used to receive tiles asynchronously and provide them to the encoder
 use log::debug;
 use tokio::sync::mpsc;
 
-use crate::{Vec2d, ZoomError};
-use crate::encoder::{Encoder, encoder_for_name};
+use crate::encoder::{encoder_for_name, Encoder};
 use crate::tile::Tile;
+use crate::{Vec2d, ZoomError};
 use log::warn;
 
 /// Data structure used to store tiles until the final image size is known
@@ -39,15 +39,23 @@ impl TileBuffer {
 
     pub async fn set_size(&mut self, size: Vec2d) -> Result<(), ZoomError> {
         let next_state = match self {
-            TileBuffer::Buffering { buffer, destination, compression } => {
+            TileBuffer::Buffering {
+                buffer,
+                destination,
+                compression,
+            } => {
                 let destination = std::mem::take(destination);
                 debug!("Creating a tile writer for an image of size {}", size);
                 let mut encoder = encoder_for_name(destination.clone(), size, *compression)?;
                 debug!("Adding buffered tiles: {:?}", buffer);
-                for tile in buffer.drain(..) { encoder.add_tile(tile)?; }
+                for tile in buffer.drain(..) {
+                    encoder.add_tile(tile)?;
+                }
                 buffer_tiles(encoder, destination).await
             }
-            TileBuffer::Writing { .. } => unreachable!("The size of the image can be set only once")
+            TileBuffer::Writing { .. } => {
+                unreachable!("The size of the image can be set only once")
+            }
         };
         *self = next_state;
         Ok(())
@@ -56,12 +64,12 @@ impl TileBuffer {
     /// Add a tile to the image
     pub async fn add_tile(&mut self, tile: Tile) {
         match self {
-            TileBuffer::Buffering { buffer, .. } => {
-                buffer.push(tile)
-            }
+            TileBuffer::Buffering { buffer, .. } => buffer.push(tile),
             TileBuffer::Writing { tile_sender, .. } => {
-                tile_sender.send(TileBufferMsg::AddTile(tile))
-                    .await.expect("The tile writer ended unexpectedly");
+                tile_sender
+                    .send(TileBufferMsg::AddTile(tile))
+                    .await
+                    .expect("The tile writer ended unexpectedly");
             }
         }
     }
@@ -69,21 +77,27 @@ impl TileBuffer {
     /// To be called when no more tile will be added
     pub async fn finalize(&mut self) -> Result<(), ZoomError> {
         if let TileBuffer::Buffering { buffer, .. } = self {
-            let size = buffer.iter().map(|t| t.position + t.size()).fold(
-                Vec2d { x: 0, y: 0 },
-                Vec2d::max,
-            );
+            let size = buffer
+                .iter()
+                .map(|t| t.position + t.size())
+                .fold(Vec2d { x: 0, y: 0 }, Vec2d::max);
             self.set_size(size).await?;
         }
         let (tile_sender, error_receiver) = match self {
             TileBuffer::Buffering { .. } => unreachable!("Just set the size"),
-            TileBuffer::Writing { tile_sender, error_receiver, .. } => (tile_sender, error_receiver)
+            TileBuffer::Writing {
+                tile_sender,
+                error_receiver,
+                ..
+            } => (tile_sender, error_receiver),
         };
         tile_sender.send(TileBufferMsg::Close).await?;
         debug!("Waiting for the image encoding task to finish");
         let mut result = Ok(());
         // Wait for the encoder to terminate even if some tiles raised errors
-        while let Some(err) = error_receiver.recv().await { result = Err(err.into()) }
+        while let Some(err) = error_receiver.recv().await {
+            result = Err(err.into())
+        }
         result
     }
 
@@ -115,7 +129,9 @@ async fn buffer_tiles(mut encoder: Box<dyn Encoder>, destination: PathBuf) -> Ti
                         error_sender.send(err).await.expect("could not send error");
                     }
                 }
-                TileBufferMsg::Close => { break; }
+                TileBufferMsg::Close => {
+                    break;
+                }
             }
         }
         debug!("Finalizing the encoder");
@@ -127,6 +143,6 @@ async fn buffer_tiles(mut encoder: Box<dyn Encoder>, destination: PathBuf) -> Ti
     TileBuffer::Writing {
         tile_sender,
         error_receiver,
-        destination
+        destination,
     }
 }

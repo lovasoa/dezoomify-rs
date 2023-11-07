@@ -20,18 +20,19 @@ pub struct ImageInfo {
 }
 
 impl KrpanoMetadata {
-    fn into_image_iter_with_name(self, name: Arc<str>) -> impl Iterator<Item=ImageInfo> {
+    fn into_image_iter_with_name(self, name: Arc<str>) -> impl Iterator<Item = ImageInfo> {
         let name: Arc<str> = if name.is_empty() {
             Arc::from(self.name)
         } else {
             let s = [name.as_ref(), &self.name].join(" ");
             Arc::from(s)
         };
-        self.children.into_iter()
+        self.children
+            .into_iter()
             .flat_map(move |t| t.into_image_iter_with_name(name.clone()))
     }
 
-    pub fn into_image_iter(self) -> impl Iterator<Item=ImageInfo> {
+    pub fn into_image_iter(self) -> impl Iterator<Item = ImageInfo> {
         self.into_image_iter_with_name(Arc::from(""))
     }
 
@@ -46,13 +47,13 @@ enum TopLevelTags {
     Image(KrpanoImage),
     Scene(KrpanoMetadata),
     SourceDetails {
-        #[serde(default)] subject: String,
+        #[serde(default)]
+        subject: String,
     },
     Data(String),
     #[serde(other, deserialize_with = "deserialize_ignore_any")]
     Other,
 }
-
 
 fn deserialize_ignore_any<'de, D: Deserializer<'de>>(deserializer: D) -> Result<(), D::Error> {
     serde::de::IgnoredAny::deserialize(deserializer)?;
@@ -60,30 +61,27 @@ fn deserialize_ignore_any<'de, D: Deserializer<'de>>(deserializer: D) -> Result<
 }
 
 impl TopLevelTags {
-    fn into_image_iter_with_name(self, name: Arc<str>) -> Box<dyn Iterator<Item=ImageInfo>> {
+    fn into_image_iter_with_name(self, name: Arc<str>) -> Box<dyn Iterator<Item = ImageInfo>> {
         match self {
-            Self::Image(image) =>
-                Box::new(std::iter::once(ImageInfo { image, name })),
-            Self::Scene(s) =>
-                Box::new(s.into_image_iter_with_name(name)),
-            _ =>
-                Box::new(std::iter::empty())
+            Self::Image(image) => Box::new(std::iter::once(ImageInfo { image, name })),
+            Self::Scene(s) => Box::new(s.into_image_iter_with_name(name)),
+            _ => Box::new(std::iter::empty()),
         }
     }
     fn get_title(&self) -> Option<&str> {
         match self {
             Self::SourceDetails { subject } => Some(subject),
-            Self::Data(bytes) =>
-                serde_json::from_str::<KrpanoMetaData>(bytes).ok()
-                    .map(|m| m.title),
-            _ => None
+            Self::Data(bytes) => serde_json::from_str::<KrpanoMetaData>(bytes)
+                .ok()
+                .map(|m| m.title),
+            _ => None,
         }
     }
 }
 
 #[derive(Deserialize)]
 struct KrpanoMetaData<'a> {
-    title: &'a str
+    title: &'a str,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -95,7 +93,9 @@ pub struct KrpanoImage {
     pub level: Vec<KrpanoLevel>,
 }
 
-fn default_base_index() -> u32 { 1 }
+fn default_base_index() -> u32 {
+    1
+}
 
 pub struct LevelDesc {
     pub name: &'static str,
@@ -139,9 +139,19 @@ pub enum KrpanoLevel {
 impl KrpanoLevel {
     pub fn level_descriptions(self, size: Option<Vec2d>) -> Vec<Result<LevelDesc, &'static str>> {
         match self {
-            Self::Level(LevelAttributes { tiledimagewidth, tiledimageheight, shape }) => {
-                let size = Vec2d { x: tiledimagewidth, y: tiledimageheight };
-                shape.into_iter().flat_map(|level| level.level_descriptions(Some(size))).collect()
+            Self::Level(LevelAttributes {
+                tiledimagewidth,
+                tiledimageheight,
+                shape,
+            }) => {
+                let size = Vec2d {
+                    x: tiledimagewidth,
+                    y: tiledimageheight,
+                };
+                shape
+                    .into_iter()
+                    .flat_map(|level| level.level_descriptions(Some(size)))
+                    .collect()
             }
             Self::Cube(d) => shape_descriptions("Cube", d, size),
             Self::Cylinder(d) => shape_descriptions("Cylinder", d, size),
@@ -164,39 +174,50 @@ fn shape_descriptions(
 ) -> Vec<Result<LevelDesc, &'static str>> {
     let ShapeDesc { multires, url } = desc;
     if let Some(multires) = multires {
-        parse_multires(&multires).enumerate().map(|(level_index, result)|
-            result.map(|(size, tilesize)| LevelDesc {
-                name,
-                size,
-                tilesize: Some(tilesize),
-                url: url.clone(),
-                level_index,
+        parse_multires(&multires)
+            .enumerate()
+            .map(|(level_index, result)| {
+                result.map(|(size, tilesize)| LevelDesc {
+                    name,
+                    size,
+                    tilesize: Some(tilesize),
+                    url: url.clone(),
+                    level_index,
+                })
             })
-        ).collect()
+            .collect()
     } else if let Some(size) = size {
         let tilesize = None;
-        vec![Ok(LevelDesc { name, size, tilesize, url, level_index: 0 })]
+        vec![Ok(LevelDesc {
+            name,
+            size,
+            tilesize,
+            url,
+            level_index: 0,
+        })]
     } else {
         vec![Err("missing multires attribute")]
     }
 }
 
 /// Parse a multires string into a vector of (image size, tile_size)
-fn parse_multires(s: &str) -> impl Iterator<Item=Result<(Vec2d, Vec2d), &'static str>> + '_ {
+fn parse_multires(s: &str) -> impl Iterator<Item = Result<(Vec2d, Vec2d), &'static str>> + '_ {
     let mut parts = s.split(',');
-    let tilesize_x: Result<u32, _> = parts.next()
+    let tilesize_x: Result<u32, _> = parts
+        .next()
         .and_then(|x| x.parse().ok())
         .ok_or("missing tile size");
     parts.map(move |dim_str| {
         tilesize_x.and_then(|tilesize_x| {
             let mut dims = dim_str.split('x');
             let x: u32 = dims
-                .next().ok_or("missing width")?
-                .parse().map_err(|_| "invalid width")?;
-            let y: u32 = dims
-                .next().and_then(|x| x.parse().ok())
-                .unwrap_or(x);
-            let tilesize = dims.next()
+                .next()
+                .ok_or("missing width")?
+                .parse()
+                .map_err(|_| "invalid width")?;
+            let y: u32 = dims.next().and_then(|x| x.parse().ok()).unwrap_or(x);
+            let tilesize = dims
+                .next()
                 .and_then(|x| x.parse().ok())
                 .unwrap_or(tilesize_x);
             Ok((Vec2d { x, y }, Vec2d::square(tilesize)))
@@ -208,13 +229,16 @@ fn parse_multires(s: &str) -> impl Iterator<Item=Result<(Vec2d, Vec2d), &'static
 pub struct TemplateString<T>(pub Vec<TemplateStringPart<T>>);
 
 impl<'de> Deserialize<'de> for TemplateString<TemplateVariable> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, <D as Deserializer<'de>>::Error> where
-        D: Deserializer<'de> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, <D as Deserializer<'de>>::Error>
+    where
+        D: Deserializer<'de>,
+    {
         use de::Error;
-        String::deserialize(deserializer)?.parse().map_err(Error::custom)
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(Error::custom)
     }
 }
-
 
 impl FromStr for TemplateString<TemplateVariable> {
     type Err = String;
@@ -230,16 +254,30 @@ impl FromStr for TemplateString<TemplateVariable> {
             if !literal.is_empty() {
                 parts.push(Literal(Arc::from(literal)));
             }
-            if chars.next().is_none() { break; }
+            if chars.next().is_none() {
+                break;
+            }
             let padding = 1 + chars.take_while_ref(|&c| c == '0').count();
             parts.push(match chars.next() {
-                Some('h') | Some('x') | Some('u') | Some('c') => Variable { padding, variable: X },
-                Some('v') | Some('y') | Some('r') => Variable { padding, variable: Y },
-                Some('s') => Variable { padding, variable: Side },
-                Some('l') => Variable { padding, variable: LevelIndex },
+                Some('h') | Some('x') | Some('u') | Some('c') => Variable {
+                    padding,
+                    variable: X,
+                },
+                Some('v') | Some('y') | Some('r') => Variable {
+                    padding,
+                    variable: Y,
+                },
+                Some('s') => Variable {
+                    padding,
+                    variable: Side,
+                },
+                Some('l') => Variable {
+                    padding,
+                    variable: LevelIndex,
+                },
                 Some('%') => Literal(Arc::from("%")),
                 Some(x) => return Err(format!("Unknown template variable '{}' in '{}'", x, input)),
-                None => return Err(format!("Invalid templating syntax in '{}'", input))
+                None => return Err(format!("Invalid templating syntax in '{}'", input)),
             });
         }
         Ok(TemplateString(parts))
@@ -247,20 +285,32 @@ impl FromStr for TemplateString<TemplateVariable> {
 }
 
 impl TemplateString<TemplateVariable> {
-    pub fn all_sides(self, level: usize) -> impl Iterator<Item=(&'static str, TemplateString<XY>)> + 'static {
+    pub fn all_sides(
+        self,
+        level: usize,
+    ) -> impl Iterator<Item = (&'static str, TemplateString<XY>)> + 'static {
         let has_side = self.0.iter().any(|x| match x {
             TemplateStringPart::Variable { variable, .. } => *variable == TemplateVariable::Side,
-            _ => false
+            _ => false,
         });
-        let sides = if has_side { &["forward", "back", "left", "right", "up", "down"][..] } else { &[""] };
-        sides.iter().map(move |&side| (side, TemplateString(
-            self.0.iter().map(|part| {
-                part.with_side(side, level)
-            }).collect()
-        )))
+        let sides = if has_side {
+            &["forward", "back", "left", "right", "up", "down"][..]
+        } else {
+            &[""]
+        };
+        sides.iter().map(move |&side| {
+            (
+                side,
+                TemplateString(
+                    self.0
+                        .iter()
+                        .map(|part| part.with_side(side, level))
+                        .collect(),
+                ),
+            )
+        })
     }
 }
-
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum TemplateStringPart<T> {
@@ -277,8 +327,14 @@ impl TemplateStringPart<TemplateVariable> {
             Variable { padding, variable } => {
                 let padding = *padding;
                 match variable {
-                    X => Variable { padding, variable: XY::X },
-                    Y => Variable { padding, variable: XY::Y },
+                    X => Variable {
+                        padding,
+                        variable: XY::X,
+                    },
+                    Y => Variable {
+                        padding,
+                        variable: XY::Y,
+                    },
                     Side => Literal(Arc::from(&side[..1])),
                     LevelIndex => {
                         let idx_str = format!("{v:0padding$}", v = level, padding = padding);
@@ -291,26 +347,51 @@ impl TemplateStringPart<TemplateVariable> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum TemplateVariable { X, Y, Side, LevelIndex }
+pub enum TemplateVariable {
+    X,
+    Y,
+    Side,
+    LevelIndex,
+}
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum XY { X, Y }
+pub enum XY {
+    X,
+    Y,
+}
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use super::KrpanoLevel::{Cube, Cylinder, Left, Mobile};
     use super::TemplateStringPart::{Literal, Variable};
     use super::TemplateVariable::{LevelIndex, X, Y};
     use super::TopLevelTags::{Image, Scene};
+    use super::*;
 
-    fn str(s: &str) -> TemplateStringPart<TemplateVariable> { Literal(Arc::from(s)) }
+    fn str(s: &str) -> TemplateStringPart<TemplateVariable> {
+        Literal(Arc::from(s))
+    }
 
-    fn x(padding: usize) -> TemplateStringPart<TemplateVariable> { Variable { padding, variable: X } }
+    fn x(padding: usize) -> TemplateStringPart<TemplateVariable> {
+        Variable {
+            padding,
+            variable: X,
+        }
+    }
 
-    fn y(padding: usize) -> TemplateStringPart<TemplateVariable> { Variable { padding, variable: Y } }
+    fn y(padding: usize) -> TemplateStringPart<TemplateVariable> {
+        Variable {
+            padding,
+            variable: Y,
+        }
+    }
 
-    fn lvl(padding: usize) -> TemplateStringPart<TemplateVariable> { Variable { padding, variable: LevelIndex } }
+    fn lvl(padding: usize) -> TemplateStringPart<TemplateVariable> {
+        Variable {
+            padding,
+            variable: LevelIndex,
+        }
+    }
 
     #[test]
     fn parse_xml_cylinder() {
@@ -327,48 +408,59 @@ mod test {
         </krpano>
         "#).unwrap();
         let images: Vec<ImageInfo> = parsed.into_image_iter().collect();
-        assert_eq!(images, vec![
-            ImageInfo {
+        assert_eq!(
+            images,
+            vec![ImageInfo {
                 name: Arc::from(""),
                 image: KrpanoImage {
                     baseindex: 1,
                     tilesize: Some(512),
-                    level: vec![
-                        KrpanoLevel::Level(LevelAttributes {
-                            tiledimagewidth: 31646,
-                            tiledimageheight: 38234,
-                            shape: vec![KrpanoLevel::Cylinder(ShapeDesc {
-                                url: TemplateString(vec![
-                                    str("monomane.tiles/l7/"), y(1), str("/l7_"),
-                                    y(1), str("_"), x(1), str(".jpg"),
-                                ]),
-                                multires: None,
-                            })],
-                        }),
-                    ],
+                    level: vec![KrpanoLevel::Level(LevelAttributes {
+                        tiledimagewidth: 31646,
+                        tiledimageheight: 38234,
+                        shape: vec![KrpanoLevel::Cylinder(ShapeDesc {
+                            url: TemplateString(vec![
+                                str("monomane.tiles/l7/"),
+                                y(1),
+                                str("/l7_"),
+                                y(1),
+                                str("_"),
+                                x(1),
+                                str(".jpg"),
+                            ]),
+                            multires: None,
+                        })],
+                    }),],
                 },
-            }]);
+            }]
+        );
     }
 
     #[test]
     fn get_title_json_metadata() {
-        let parsed: KrpanoMetadata = serde_xml_rs::from_str(r#"
+        let parsed: KrpanoMetadata = serde_xml_rs::from_str(
+            r#"
         <krpano version="1.18"  bgcolor="0xFFFFFF">
             <data name="metadata"><![CDATA[
                 {"id":"xxx", "title":"yyy"}
             ]]></data>
         </krpano>
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         assert_eq!(parsed.get_title(), Some("yyy"));
     }
 
     #[test]
     fn get_title_source_details() {
-        let parsed: KrpanoMetadata = serde_xml_rs::from_str(r#"
+        let parsed: KrpanoMetadata = serde_xml_rs::from_str(
+            r#"
         <krpano version="1.18"  bgcolor="0xFFFFFF">
             <source_details subject="the subject"/>
         </krpano>
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         assert_eq!(parsed.get_title(), Some("the subject"));
     }
 
@@ -381,24 +473,30 @@ mod test {
             </level>
         </image>
         </krpano>"#).unwrap();
-        assert_eq!(parsed, KrpanoMetadata {
-            children: vec![Image(KrpanoImage {
-                baseindex: 0,
-                tilesize: Some(512),
-                level: vec![KrpanoLevel::Level(LevelAttributes {
-                    tiledimagewidth: 3280,
-                    tiledimageheight: 3280,
-                    shape: vec![
-                        Left(ShapeDesc {
+        assert_eq!(
+            parsed,
+            KrpanoMetadata {
+                children: vec![Image(KrpanoImage {
+                    baseindex: 0,
+                    tilesize: Some(512),
+                    level: vec![KrpanoLevel::Level(LevelAttributes {
+                        tiledimagewidth: 3280,
+                        tiledimageheight: 3280,
+                        shape: vec![Left(ShapeDesc {
                             url: TemplateString(vec![
-                                str("https://example.com/"), y(4), str("/"),
-                                x(5), str(".jpg")]),
+                                str("https://example.com/"),
+                                y(4),
+                                str("/"),
+                                x(5),
+                                str(".jpg")
+                            ]),
                             multires: None,
                         })],
+                    })],
                 })],
-            })],
-            ..Default::default()
-        })
+                ..Default::default()
+            }
+        )
     }
 
     #[test]
@@ -409,41 +507,52 @@ mod test {
             <flat url="https://example.com/" multires="512,768x554,1664x1202,3200x2310,6400x4618,12800x9234"/>
         </image>
         </krpano>"#).unwrap();
-        assert_eq!(parsed, KrpanoMetadata {
-            children: vec![Image(KrpanoImage {
-                baseindex: 1,
-                tilesize: None,
-                level: vec![KrpanoLevel::Flat(ShapeDesc {
-                    url: TemplateString(vec![str("https://example.com/"), ]),
-                    multires: Some("512,768x554,1664x1202,3200x2310,6400x4618,12800x9234".to_string()),
+        assert_eq!(
+            parsed,
+            KrpanoMetadata {
+                children: vec![Image(KrpanoImage {
+                    baseindex: 1,
+                    tilesize: None,
+                    level: vec![KrpanoLevel::Flat(ShapeDesc {
+                        url: TemplateString(vec![str("https://example.com/"),]),
+                        multires: Some(
+                            "512,768x554,1664x1202,3200x2310,6400x4618,12800x9234".to_string()
+                        ),
+                    })],
                 })],
-            })],
-            ..Default::default()
-        })
+                ..Default::default()
+            }
+        )
     }
 
     #[test]
     fn parse_xml_mobile() {
         // See https://github.com/lovasoa/dezoomify-rs/issues/58
-        let parsed: KrpanoMetadata = serde_xml_rs::from_str(r#"
+        let parsed: KrpanoMetadata = serde_xml_rs::from_str(
+            r#"
         <krpano>
         <image>
             <mobile>
                 <cube url="test.jpg" />
             </mobile>
         </image>
-        </krpano>"#).unwrap();
-        assert_eq!(parsed, KrpanoMetadata {
-            children: vec![Image(KrpanoImage {
-                baseindex: 1,
-                tilesize: None,
-                level: vec![Mobile(vec![Cube(ShapeDesc {
-                    url: TemplateString(vec![str("test.jpg")]),
-                    multires: None,
-                })])],
-            })],
-            ..Default::default()
-        })
+        </krpano>"#,
+        )
+        .unwrap();
+        assert_eq!(
+            parsed,
+            KrpanoMetadata {
+                children: vec![Image(KrpanoImage {
+                    baseindex: 1,
+                    tilesize: None,
+                    level: vec![Mobile(vec![Cube(ShapeDesc {
+                        url: TemplateString(vec![str("test.jpg")]),
+                        multires: None,
+                    })])],
+                })],
+                ..Default::default()
+            }
+        )
     }
 
     #[test]
@@ -458,31 +567,35 @@ mod test {
             </image>
         </scene>
         </krpano>"#).unwrap();
-        assert_eq!(parsed, KrpanoMetadata {
-            children: vec![Scene(KrpanoMetadata {
-                children: vec![Image(KrpanoImage {
-                    baseindex: 1,
-                    tilesize: Some(512),
-                    level: vec![
-                        KrpanoLevel::Level(LevelAttributes {
+        assert_eq!(
+            parsed,
+            KrpanoMetadata {
+                children: vec![Scene(KrpanoMetadata {
+                    children: vec![Image(KrpanoImage {
+                        baseindex: 1,
+                        tilesize: Some(512),
+                        level: vec![KrpanoLevel::Level(LevelAttributes {
                             tiledimagewidth: 7424,
                             tiledimageheight: 9590,
-                            shape: vec![
-                                Cylinder(ShapeDesc {
-                                    url: TemplateString(vec![
-                                        str("xxx/"), y(2), str("/l5_"),
-                                        y(2), str("_"), x(2), str(".jpg")
-                                    ]),
-                                    multires: None,
-                                })
-                            ],
-                        })
-                    ],
+                            shape: vec![Cylinder(ShapeDesc {
+                                url: TemplateString(vec![
+                                    str("xxx/"),
+                                    y(2),
+                                    str("/l5_"),
+                                    y(2),
+                                    str("_"),
+                                    x(2),
+                                    str(".jpg")
+                                ]),
+                                multires: None,
+                            })],
+                        })],
+                    })],
+                    name: "scene_Color".to_string()
                 })],
-                name: "scene_Color".to_string()
-            })],
-            ..Default::default()
-        })
+                ..Default::default()
+            }
+        )
     }
 
     #[test]
@@ -492,7 +605,10 @@ mod test {
         let parsed: KrpanoMetadata = serde_xml_rs::from_reader(f).unwrap();
         let infos: Vec<ImageInfo> = parsed.into_image_iter().collect();
         assert_eq!(infos.len(), 3);
-        let names: Vec<String> = infos.iter().map(|i| String::from(i.name.as_ref())).collect();
+        let names: Vec<String> = infos
+            .iter()
+            .map(|i| String::from(i.name.as_ref()))
+            .collect();
         assert_eq!(names, ["scene_Color", "scene_3D", "scene_3Dcolor"])
     }
 
@@ -513,15 +629,16 @@ mod test {
             Ok((Vec2d { x: 8, y: 8 }, Vec2d { x: 3, y: 3 })),
             Ok((Vec2d { x: 9, y: 1 }, Vec2d { x: 4, y: 4 })),
         ];
-        assert_eq!(expected, parse_multires("3,6x7,8x8,9x1x4").collect::<Vec<_>>())
+        assert_eq!(
+            expected,
+            parse_multires("3,6x7,8x8,9x1x4").collect::<Vec<_>>()
+        )
     }
 
     #[test]
     fn test_templatestring() {
         assert_eq!(
-            Ok(TemplateString(vec![
-                x(3), str("%"), y(2), lvl(1)
-            ])),
+            Ok(TemplateString(vec![x(3), str("%"), y(2), lvl(1)])),
             "%00x%%%0y%l".parse()
         );
     }

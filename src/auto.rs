@@ -51,7 +51,11 @@ impl Dezoomer for AutoDezoomer {
             let dezoomer = &mut self.dezoomers[i];
             let keep = match dezoomer.zoom_levels(data) {
                 Ok(mut levels) => {
-                    info!("dezoomer '{}' found {} zoom levels", dezoomer.name(), levels.len());
+                    info!(
+                        "dezoomer '{}' found {} zoom levels",
+                        dezoomer.name(),
+                        levels.len()
+                    );
                     self.successes.append(&mut levels);
                     false
                 }

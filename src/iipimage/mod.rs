@@ -1,12 +1,15 @@
+use crate::dezoomer::{
+    Dezoomer, DezoomerError, DezoomerInput, DezoomerInputWithContents, IntoZoomLevels, TilesRect,
+    ZoomLevels,
+};
 use crate::Vec2d;
-use std::str::FromStr;
 use custom_error::custom_error;
-use std::sync::Arc;
-use crate::dezoomer::{TilesRect, Dezoomer, DezoomerInput, ZoomLevels, DezoomerError, IntoZoomLevels, DezoomerInputWithContents};
-use std::convert::TryFrom;
-use std::iter::successors;
-use std::fmt::Debug;
 use regex::Regex;
+use std::convert::TryFrom;
+use std::fmt::Debug;
+use std::iter::successors;
+use std::str::FromStr;
+use std::sync::Arc;
 
 /// A dezoomer for krpano images
 /// See https://iipimage.sourceforge.io/documentation/protocol/
@@ -16,7 +19,9 @@ pub struct IIPImage;
 const META_REQUEST_PARAMS: &str = "&OBJ=Max-size&OBJ=Tile-size&OBJ=Resolution-number";
 
 impl Dezoomer for IIPImage {
-    fn name(&self) -> &'static str { "IIPImage" }
+    fn name(&self) -> &'static str {
+        "IIPImage"
+    }
 
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
         if data.uri.ends_with(META_REQUEST_PARAMS) {
@@ -33,19 +38,28 @@ impl Dezoomer for IIPImage {
     }
 }
 
-fn arcs<T, U: ?Sized>(v: T) -> impl Iterator<Item=Arc<U>>
-    where Arc<U>: From<T> {
+fn arcs<T, U: ?Sized>(v: T) -> impl Iterator<Item = Arc<U>>
+where
+    Arc<U>: From<T>,
+{
     successors(Some(Arc::from(v)), |x| Some(Arc::clone(x)))
 }
 
-fn iter_levels(uri: &str, contents: &[u8])
-               -> Result<impl Iterator<Item=Level> + 'static, IIPError> {
+fn iter_levels(
+    uri: &str,
+    contents: &[u8],
+) -> Result<impl Iterator<Item = Level> + 'static, IIPError> {
     let base = String::from(uri.trim_end_matches(META_REQUEST_PARAMS));
     let meta = Metadata::try_from(contents)?;
     let levels =
-        (0..meta.levels).zip(arcs(base)).zip(arcs(meta))
-            .map(|((level, base), metadata)|
-                Level { metadata, base, level });
+        (0..meta.levels)
+            .zip(arcs(base))
+            .zip(arcs(meta))
+            .map(|((level, base), metadata)| Level {
+                metadata,
+                base,
+                level,
+            });
     Ok(levels)
 }
 
@@ -68,14 +82,17 @@ impl TilesRect for Level {
         self.metadata.size / 2_u32.pow(reverse_level)
     }
 
-    fn tile_size(&self) -> Vec2d { self.metadata.tile_size }
+    fn tile_size(&self) -> Vec2d {
+        self.metadata.tile_size
+    }
 
     fn tile_url(&self, Vec2d { x, y }: Vec2d) -> String {
         let Vec2d { x: width, .. } = self.size().ceil_div(self.tile_size());
-        format!("{base}&JTL={level},{tile_index}",
-                base = self.base,
-                level = self.level,
-                tile_index = y * width + x
+        format!(
+            "{base}&JTL={level},{tile_index}",
+            base = self.base,
+            level = self.level,
+            tile_index = y * width + x
         )
     }
 }
@@ -94,7 +111,9 @@ impl FromStr for Metadata {
         use IIPError::*;
         let mut size = Err(MissingKey { key: "Max-size" });
         let mut tile_size = Err(MissingKey { key: "Tile-size" });
-        let mut levels = Err(MissingKey { key: "Resolution-number" });
+        let mut levels = Err(MissingKey {
+            key: "Resolution-number",
+        });
         for line in s.lines() {
             let mut parts = line.split(':');
             let key: &str = parts.next().unwrap_or("").trim();
@@ -111,10 +130,16 @@ impl FromStr for Metadata {
                     tile_size = Ok(Vec2d { x, y })
                 }
             } else if key.eq_ignore_ascii_case("resolution-number") {
-                if let Some(n) = n1 { levels = Ok(n) }
+                if let Some(n) = n1 {
+                    levels = Ok(n)
+                }
             }
         }
-        Ok(Metadata { size: size?, tile_size: tile_size?, levels: levels? })
+        Ok(Metadata {
+            size: size?,
+            tile_size: tile_size?,
+            levels: levels?,
+        })
     }
 }
 
@@ -141,10 +166,13 @@ mod tests {
     fn test_lowercase() {
         let uri = "https://publications-images.artic.edu/fcgi-bin/iipsrv.fcgi?fif=osci/Renoir_11/Color_Corrected/G39094sm2.ptif&jtl=4,11".to_string();
         let metadata_uri = "https://publications-images.artic.edu/fcgi-bin/iipsrv.fcgi?fif=osci/Renoir_11/Color_Corrected/G39094sm2.ptif&OBJ=Max-size&OBJ=Tile-size&OBJ=Resolution-number";
-        let data = DezoomerInput { uri, contents: PageContents::Unknown };
+        let data = DezoomerInput {
+            uri,
+            contents: PageContents::Unknown,
+        };
         match IIPImage.zoom_levels(&data) {
             Err(DezoomerError::NeedsData { uri }) => assert_eq!(uri, metadata_uri),
-            _ => panic!("Unexpected result")
+            _ => panic!("Unexpected result"),
         }
     }
 
@@ -153,28 +181,37 @@ mod tests {
         let contents = &b"Max-size:512 512\nTile-size:256 256\nResolution-number:2"[..];
         let base: Arc<str> = Arc::from("http://test.com/");
         let levels: Vec<Level> = iter_levels(&base, contents).unwrap().collect();
-        assert_eq!(&levels, &[
-            Level {
-                metadata: Arc::from(Metadata {
-                    size: Vec2d { x: 512, y: 512 },
-                    tile_size: Vec2d { x: 256, y: 256 },
-                    levels: 2,
-                }),
-                base: base.clone(),
-                level: 0,
-            },
-            Level {
-                metadata: Arc::from(Metadata {
-                    size: Vec2d { x: 512, y: 512 },
-                    tile_size: Vec2d { x: 256, y: 256 },
-                    levels: 2,
-                }),
-                base,
-                level: 1,
-            }
-        ]);
-        assert_eq!(levels[0].tile_url(Vec2d { x: 0, y: 0 }), "http://test.com/&JTL=0,0");
-        assert_eq!(levels[1].tile_url(Vec2d { x: 0, y: 1 }), "http://test.com/&JTL=1,2");
+        assert_eq!(
+            &levels,
+            &[
+                Level {
+                    metadata: Arc::from(Metadata {
+                        size: Vec2d { x: 512, y: 512 },
+                        tile_size: Vec2d { x: 256, y: 256 },
+                        levels: 2,
+                    }),
+                    base: base.clone(),
+                    level: 0,
+                },
+                Level {
+                    metadata: Arc::from(Metadata {
+                        size: Vec2d { x: 512, y: 512 },
+                        tile_size: Vec2d { x: 256, y: 256 },
+                        levels: 2,
+                    }),
+                    base,
+                    level: 1,
+                }
+            ]
+        );
+        assert_eq!(
+            levels[0].tile_url(Vec2d { x: 0, y: 0 }),
+            "http://test.com/&JTL=0,0"
+        );
+        assert_eq!(
+            levels[1].tile_url(Vec2d { x: 0, y: 1 }),
+            "http://test.com/&JTL=1,2"
+        );
     }
 
     #[test]
@@ -184,10 +221,13 @@ mod tests {
         Tile-size:256 256
         Resolution-number:9
     ";
-        assert_eq!(source.parse(), Ok(Metadata {
-            size: Vec2d { x: 23235, y: 23968 },
-            tile_size: Vec2d { x: 256, y: 256 },
-            levels: 9,
-        }))
+        assert_eq!(
+            source.parse(),
+            Ok(Metadata {
+                size: Vec2d { x: 23235, y: 23968 },
+                tile_size: Vec2d { x: 256, y: 256 },
+                levels: 9,
+            })
+        )
     }
 }

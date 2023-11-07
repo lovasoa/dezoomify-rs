@@ -20,15 +20,25 @@ impl Dichotomy {
             self.max = Some(last_guess)
         }
         let next_guess = self.best_guess();
-        if next_guess != last_guess { Some(next_guess) } else { None }
+        if next_guess != last_guess {
+            Some(next_guess)
+        } else {
+            None
+        }
     }
 }
 
 #[derive(Debug)]
 pub enum Dichotomy2d {
     Diagonal(Dichotomy),
-    Orientation { diagonal: u32 },
-    LastDim { diagonal: u32, is_landscape: bool, last_dim: Dichotomy },
+    Orientation {
+        diagonal: u32,
+    },
+    LastDim {
+        diagonal: u32,
+        is_landscape: bool,
+        last_dim: Dichotomy,
+    },
 }
 
 impl Dichotomy2d {
@@ -43,7 +53,7 @@ impl Dichotomy2d {
                     next = Some(Dichotomy2d::Orientation { diagonal });
                     Some((diagonal + 1, diagonal))
                 }
-            },
+            }
             Dichotomy2d::Orientation { diagonal } => {
                 let dichotomy = Dichotomy {
                     min: *diagonal + previous_success as u32,
@@ -60,14 +70,18 @@ impl Dichotomy2d {
                 } else {
                     Some((*diagonal, best))
                 }
-            },
-            Dichotomy2d::LastDim { diagonal, is_landscape, last_dim } => {
-                last_dim.next(previous_success).map(|next| if *is_landscape {
+            }
+            Dichotomy2d::LastDim {
+                diagonal,
+                is_landscape,
+                last_dim,
+            } => last_dim.next(previous_success).map(|next| {
+                if *is_landscape {
                     (next, *diagonal)
                 } else {
                     (*diagonal, next)
-                })
-            }
+                }
+            }),
         };
         if let Some(next) = next {
             *self = next;
@@ -91,8 +105,14 @@ fn test_dichotomy1d() {
             tries += 1;
             assert!(tries <= 20, "guessed {} on {}th try", prop, tries);
         }
-        assert_eq!(d.best_guess(), mystery,
-                   "Guessed {} instead of {} in {} tries", d.best_guess(), mystery, tries);
+        assert_eq!(
+            d.best_guess(),
+            mystery,
+            "Guessed {} instead of {} in {} tries",
+            d.best_guess(),
+            mystery,
+            tries
+        );
     }
 }
 
@@ -108,8 +128,14 @@ fn test_dichotomy2d() {
                 tries += 1;
                 assert!(tries <= 20, "guessed {:?} on {}th try", g, tries);
             }
-            assert_eq!(guess, (x, y),
-                       "Guessed {:?} instead of {:?} in {} tries", guess, (x, y), tries);
+            assert_eq!(
+                guess,
+                (x, y),
+                "Guessed {:?} instead of {:?} in {} tries",
+                guess,
+                (x, y),
+                tries
+            );
         }
     }
 }

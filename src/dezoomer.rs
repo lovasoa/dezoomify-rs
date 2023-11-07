@@ -8,8 +8,8 @@ pub use crate::errors::DezoomerError;
 
 pub use super::Vec2d;
 use super::ZoomError;
-use std::fmt;
 use crate::dezoomer::PageContents::Success;
+use std::fmt;
 
 pub enum PageContents {
     Unknown,
@@ -28,7 +28,7 @@ impl std::fmt::Debug for PageContents {
         match self {
             Self::Unknown => f.write_str("<not yet available>"),
             Success(contents) => f.write_str(&String::from_utf8_lossy(contents)),
-            PageContents::Error(e) => write!(f, "{}", e)
+            PageContents::Error(e) => write!(f, "{}", e),
         }
     }
 }
@@ -53,9 +53,7 @@ impl DezoomerInput {
                 uri: &self.uri,
                 contents,
             }),
-            PageContents::Error(e) => {
-                Err(DezoomerError::DownloadError{msg: e.to_string()})
-            }
+            PageContents::Error(e) => Err(DezoomerError::DownloadError { msg: e.to_string() }),
         }
     }
 }
@@ -141,7 +139,9 @@ pub trait TileProvider: Debug {
     }
 
     /// The title of the image
-    fn title(&self) -> Option<String> { None }
+    fn title(&self) -> Option<String> {
+        None
+    }
 
     /// The width and height of the image. Can be unknown when dezooming starts
     fn size_hint(&self) -> Option<Vec2d> {
@@ -163,13 +163,21 @@ pub struct ZoomLevelIter<'a> {
 
 impl<'a> ZoomLevelIter<'a> {
     pub fn new(zoom_level: &'a mut ZoomLevel) -> Self {
-        ZoomLevelIter { zoom_level, previous: None, waiting_results: false }
+        ZoomLevelIter {
+            zoom_level,
+            previous: None,
+            waiting_results: false,
+        }
     }
     pub fn next_tile_references(&mut self) -> Option<Vec<TileReference>> {
         assert!(!self.waiting_results);
         self.waiting_results = true;
         let tiles = self.zoom_level.next_tiles(self.previous);
-        if tiles.is_empty() { None } else { Some(tiles) }
+        if tiles.is_empty() {
+            None
+        } else {
+            Some(tiles)
+        }
     }
     pub fn set_fetch_result(&mut self, result: TileFetchResult) {
         assert!(self.waiting_results);
@@ -192,7 +200,9 @@ pub trait TilesRect: Debug {
     fn size(&self) -> Vec2d;
     fn tile_size(&self) -> Vec2d;
     fn tile_url(&self, pos: Vec2d) -> String;
-    fn title(&self) -> Option<String> { None }
+    fn title(&self) -> Option<String> {
+        None
+    }
     fn tile_ref(&self, pos: Vec2d) -> TileReference {
         TileReference {
             url: self.tile_url(pos),
@@ -240,7 +250,9 @@ impl<T: TilesRect> TileProvider for T {
         )
     }
 
-    fn title(&self) -> Option<String> { TilesRect::title(self) }
+    fn title(&self) -> Option<String> {
+        TilesRect::title(self)
+    }
 
     fn size_hint(&self) -> Option<Vec2d> {
         Some(self.size())
@@ -321,7 +333,7 @@ mod tests {
                 successes: 0,
                 tile_size: None,
             });
-        };
+        }
         assert_eq!(
             all_tiles,
             vec![

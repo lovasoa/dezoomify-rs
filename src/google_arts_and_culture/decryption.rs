@@ -1,4 +1,4 @@
-use aes::cipher::{block_padding::NoPadding, KeyIvInit, BlockDecryptMut};
+use aes::cipher::{block_padding::NoPadding, BlockDecryptMut, KeyIvInit};
 use custom_error::custom_error;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
@@ -38,7 +38,7 @@ pub fn decrypt(encrypted: Vec<u8>) -> Result<Vec<u8>, InvalidEncryptedImage> {
     Ok(decrypted)
 }
 
-fn aes_decrypt_buffer(encrypted: &mut[u8]) -> Result<&[u8], InvalidEncryptedImage> {
+fn aes_decrypt_buffer(encrypted: &mut [u8]) -> Result<&[u8], InvalidEncryptedImage> {
     let key = [
         91, 99, 219, 17, 59, 122, 243, 224, 177, 67, 85, 86, 200, 249, 83, 12,
     ];

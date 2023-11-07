@@ -20,12 +20,17 @@ pub fn get_outname(
     size: Option<Vec2d>,
 ) -> PathBuf {
     // An image can be encoded as JPEG only if both its dimensions can be encoded as u16
-    let fits_in_jpg = size
-        .map(|Vec2d { x, y }| u16::try_from(x.max(y)).is_ok());
-    let extension = if fits_in_jpg == Some(true) { "jpg" } else { "png" };
+    let fits_in_jpg = size.map(|Vec2d { x, y }| u16::try_from(x.max(y)).is_ok());
+    let extension = if fits_in_jpg == Some(true) {
+        "jpg"
+    } else {
+        "png"
+    };
     if let Some(path) = outfile {
         if let Some(forced_extension) = path.extension() {
-            if fits_in_jpg == Some(false) && (forced_extension == "jpg" || forced_extension == "jpeg") {
+            if fits_in_jpg == Some(false)
+                && (forced_extension == "jpg" || forced_extension == "jpeg")
+            {
                 log::error!("This file is too large to be saved as JPEG")
             }
             path.into()
@@ -33,7 +38,8 @@ pub fn get_outname(
             path.with_extension(extension)
         }
     } else {
-        let base = zoom_name.as_ref()
+        let base = zoom_name
+            .as_ref()
             .map(|s| sanitize(s))
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "dezoomified".into());
@@ -47,8 +53,13 @@ pub fn get_outname(
         let filename = path.file_stem().map(OsString::from).unwrap_or_default();
         let ext = path.extension().map(OsString::from).unwrap_or_default();
         for i in 1.. {
-            if !path.exists() { break; }
-            info!("File {:?} already exists. Trying another file name...", &path);
+            if !path.exists() {
+                break;
+            }
+            info!(
+                "File {:?} already exists. Trying another file name...",
+                &path
+            );
             let mut name = OsString::from(&filename);
             name.push(&format!("_{:04}.", i));
             name.push(&ext);
@@ -63,7 +74,7 @@ pub fn get_outname(
 mod tests {
     use std::env::{current_dir, set_current_dir};
     use std::error::Error;
-    use std::fs::{File, remove_file};
+    use std::fs::{remove_file, File};
     use std::path::Path;
     use std::sync::Mutex;
 
@@ -89,9 +100,15 @@ mod tests {
     fn assert_filename_ok(filename: &str) -> Result<(), Box<dyn Error>> {
         let base_dir = TempDir::new("dezoomify-rs-test-filename")?;
         let outname = get_outname(&None, &Some(filename.to_string()), base_dir.as_ref(), None);
-        assert!(!outname.exists(), "get_outname cannot overwrite {:?}", outname);
-        File::create(&outname)
-            .expect(&format!("Could not to create a file named {:?} for input {:?}", outname, filename));
+        assert!(
+            !outname.exists(),
+            "get_outname cannot overwrite {:?}",
+            outname
+        );
+        File::create(&outname).expect(&format!(
+            "Could not to create a file named {:?} for input {:?}",
+            outname, filename
+        ));
         remove_file(&outname)?;
         Ok(())
     }
@@ -126,11 +143,26 @@ mod tests {
         let tests = vec![
             // outfile, zoom_name, size, expected_result
             (None, Some("hello".to_string()), None, base("hello.png")),
-            (None, Some("hello".to_string()), Some(Vec2d { x: 1000, y: 1000 }), base("hello.jpg"), ),
-            (None, Some(String::new()), None, base("dezoomified.png"), ),
+            (
+                None,
+                Some("hello".to_string()),
+                Some(Vec2d { x: 1000, y: 1000 }),
+                base("hello.jpg"),
+            ),
+            (None, Some(String::new()), None, base("dezoomified.png")),
             (None, None, None, base("dezoomified.png")),
-            (None, None, Some(Vec2d { x: 1000, y: 1000 }), base("dezoomified.jpg")),
-            (Some("test.tiff".into()), Some("hello".to_string()), Some(Vec2d { x: 1000, y: 1000 }), "test.tiff".into()),
+            (
+                None,
+                None,
+                Some(Vec2d { x: 1000, y: 1000 }),
+                base("dezoomified.jpg"),
+            ),
+            (
+                Some("test.tiff".into()),
+                Some("hello".to_string()),
+                Some(Vec2d { x: 1000, y: 1000 }),
+                "test.tiff".into(),
+            ),
         ];
         for (outfile, zoom_name, size, expected_result) in tests.into_iter() {
             let outname = get_outname(&outfile, &zoom_name, base_dir.as_ref(), size);

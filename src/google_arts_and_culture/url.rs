@@ -1,8 +1,8 @@
 use std::io::Write;
 
-use hmac::{SimpleHmac, Mac};
-use sha1::Sha1;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use hmac::{Mac, SimpleHmac};
+use sha1::Sha1;
 
 use super::PageInfo;
 use std::ops::Deref;
@@ -26,7 +26,7 @@ fn custom_base64(digest: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(digest).replace('-', "_")
 }
 
-fn mac_digest(b: &[u8]) -> impl Deref<Target=[u8]> {
+fn mac_digest(b: &[u8]) -> impl Deref<Target = [u8]> {
     let key = &[123, 43, 78, 35, 222, 44, 197, 197];
     let mut mac = HmacSha1::new_from_slice(key).expect("HMac keys can have any length");
     mac.update(b);

@@ -134,7 +134,10 @@ impl<'de> Deserialize<'de> for UrlTemplate {
 #[derive(Debug)]
 enum UrlPart {
     Constant(String),
-    Expression { expression: IntTemplate, min_width: usize },
+    Expression {
+        expression: IntTemplate,
+        min_width: usize,
+    },
 }
 
 impl UrlPart {
@@ -142,13 +145,22 @@ impl UrlPart {
         UrlPart::Constant(s.into())
     }
     fn expression(s: &str, min_width: usize) -> Result<UrlPart, UrlTemplateError> {
-        Ok(UrlPart::Expression { expression: s.parse()?, min_width })
+        Ok(UrlPart::Expression {
+            expression: s.parse()?,
+            min_width,
+        })
     }
     fn eval<C: evalexpr::Context>(&self, context: &C) -> Result<String, UrlTemplateError> {
         match self {
             UrlPart::Constant(s) => Ok(s.clone()),
-            UrlPart::Expression { expression, min_width } =>
-                Ok(format!("{:0width$}", expression.eval(context)?, width = min_width)),
+            UrlPart::Expression {
+                expression,
+                min_width,
+            } => Ok(format!(
+                "{:0width$}",
+                expression.eval(context)?,
+                width = min_width
+            )),
         }
     }
 }

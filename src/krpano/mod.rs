@@ -39,51 +39,57 @@ impl From<KrpanoError> for DezoomerError {
     }
 }
 
-fn load_from_properties(url: &str, contents: &[u8])
-                        -> Result<ZoomLevels, KrpanoError> {
+fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, KrpanoError> {
     let image_properties: KrpanoMetadata = serde_xml_rs::from_reader(remove_bom(contents))?;
     let base_url = &Arc::from(url);
     let title: &Arc<str> = &Arc::from(image_properties.get_title().unwrap_or(""));
-    Ok(image_properties.into_image_iter().flat_map(move |ImageInfo { image, name }| {
-        let root_tile_size = image.tilesize.map(Vec2d::square);
-        let base_index = image.baseindex;
-        image.level.into_iter().flat_map(move |level| {
-            let name = Arc::clone(&name);
-            level.level_descriptions(None).into_iter().flat_map(move |level_desc| {
+    Ok(image_properties
+        .into_image_iter()
+        .flat_map(move |ImageInfo { image, name }| {
+            let root_tile_size = image.tilesize.map(Vec2d::square);
+            let base_index = image.baseindex;
+            image.level.into_iter().flat_map(move |level| {
                 let name = Arc::clone(&name);
-                level_desc
-                    .map_err(|err| warn!("bad krpano level: {}", err))
+                level
+                    .level_descriptions(None)
                     .into_iter()
-                    .flat_map(move |LevelDesc {
-                                        name: shape_name,
-                                        size,
-                                        tilesize,
-                                        url,
-                                        level_index,
-                                    }| {
-                        let level = level_index + base_index as usize;
+                    .flat_map(move |level_desc| {
                         let name = Arc::clone(&name);
-                        url.all_sides(level).flat_map(move |(side_name, template)| {
-                            let base_url = Arc::clone(base_url);
-                            let title = Arc::clone(title);
-                            let name = Arc::clone(&name);
-                            tilesize.or(root_tile_size).map(|tile_size|
-                                Level {
-                                    base_url,
-                                    size,
-                                    tile_size,
-                                    base_index,
-                                    template,
-                                    shape_name,
-                                    side_name,
-                                    name,
-                                    title,
-                                })
-                        })
+                        level_desc
+                            .map_err(|err| warn!("bad krpano level: {}", err))
+                            .into_iter()
+                            .flat_map(
+                                move |LevelDesc {
+                                          name: shape_name,
+                                          size,
+                                          tilesize,
+                                          url,
+                                          level_index,
+                                      }| {
+                                    let level = level_index + base_index as usize;
+                                    let name = Arc::clone(&name);
+                                    url.all_sides(level).flat_map(move |(side_name, template)| {
+                                        let base_url = Arc::clone(base_url);
+                                        let title = Arc::clone(title);
+                                        let name = Arc::clone(&name);
+                                        tilesize.or(root_tile_size).map(|tile_size| Level {
+                                            base_url,
+                                            size,
+                                            tile_size,
+                                            base_index,
+                                            template,
+                                            shape_name,
+                                            side_name,
+                                            name,
+                                            title,
+                                        })
+                                    })
+                                },
+                            )
                     })
             })
         })
-    }).into_zoom_levels())
+        .into_zoom_levels())
 }
 
 #[derive(PartialEq, Eq)]
@@ -100,24 +106,32 @@ struct Level {
 }
 
 impl TilesRect for Level {
-    fn size(&self) -> Vec2d { self.size }
+    fn size(&self) -> Vec2d {
+        self.size
+    }
 
-    fn tile_size(&self) -> Vec2d { self.tile_size }
+    fn tile_size(&self) -> Vec2d {
+        self.tile_size
+    }
 
     fn tile_url(&self, Vec2d { x, y }: Vec2d) -> String {
         use std::fmt::Write;
         let mut result = String::new();
         for part in self.template.0.iter() {
             match part {
-                TemplateStringPart::Literal(s) => { result += s }
+                TemplateStringPart::Literal(s) => result += s,
                 TemplateStringPart::Variable { padding, variable } => {
-                    write!(result, "{value:0padding$}",
-                           value = self.base_index + match variable {
-                               XY::X => x,
-                               XY::Y => y
-                           },
-                           padding = *padding
-                    ).unwrap();
+                    write!(
+                        result,
+                        "{value:0padding$}",
+                        value = self.base_index
+                            + match variable {
+                                XY::X => x,
+                                XY::Y => y,
+                            },
+                        padding = *padding
+                    )
+                    .unwrap();
                 }
             }
         }
@@ -163,9 +177,19 @@ fn test_cube() {
     assert_eq!(levels.len(), 6);
     assert_eq!(levels[0].size_hint(), Some(Vec2d { x: 1000, y: 100 }));
     assert_eq!(format!("{:?}", levels[0]), "Krpano Cube forward");
-    assert_eq!(levels[0].next_tiles(None), vec![
-        TileReference { url: "http://example.com/f/1/1.jpg".to_string(), position: Vec2d { x: 0, y: 0 } },
-        TileReference { url: "http://example.com/f/1/2.jpg".to_string(), position: Vec2d { x: 512, y: 0 } }]);
+    assert_eq!(
+        levels[0].next_tiles(None),
+        vec![
+            TileReference {
+                url: "http://example.com/f/1/1.jpg".to_string(),
+                position: Vec2d { x: 0, y: 0 }
+            },
+            TileReference {
+                url: "http://example.com/f/1/2.jpg".to_string(),
+                position: Vec2d { x: 512, y: 0 }
+            }
+        ]
+    );
 }
 
 #[test]
@@ -176,12 +200,24 @@ fn test_flat_multires() {
         <image>
             <flat url="level=%l x=%0x y=%0y" multires="1,2x3,3x4x3"/>
         </image>
-        </krpano>"#.as_bytes(),
-    ).unwrap();
+        </krpano>"#
+            .as_bytes(),
+    )
+    .unwrap();
     assert_eq!(levels.len(), 2);
     assert_eq!(levels[1].size_hint(), Some(Vec2d { x: 3, y: 4 }));
     assert_eq!(format!("{:?}", levels[0]), "Krpano Flat");
-    assert_eq!(levels[1].next_tiles(None), vec![
-        TileReference { url: "http://test.com/level=2%20x=01%20y=01".to_string(), position: Vec2d { x: 0, y: 0 } },
-        TileReference { url: "http://test.com/level=2%20x=01%20y=02".to_string(), position: Vec2d { x: 0, y: 3 } }]);
+    assert_eq!(
+        levels[1].next_tiles(None),
+        vec![
+            TileReference {
+                url: "http://test.com/level=2%20x=01%20y=01".to_string(),
+                position: Vec2d { x: 0, y: 0 }
+            },
+            TileReference {
+                url: "http://test.com/level=2%20x=01%20y=02".to_string(),
+                position: Vec2d { x: 0, y: 3 }
+            }
+        ]
+    );
 }

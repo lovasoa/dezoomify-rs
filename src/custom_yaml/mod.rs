@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use crate::network::default_headers;
 use crate::dezoomer::*;
+use crate::network::default_headers;
 use crate::TileReference;
 
 mod tile_set;
@@ -26,7 +26,6 @@ impl Dezoomer for CustomDezoomer {
         single_level(dezoomer)
     }
 }
-
 
 #[derive(Deserialize)]
 struct CustomYamlTiles {
@@ -60,12 +59,16 @@ impl TileProvider for CustomYamlTiles {
         }
     }
 
-    fn title(&self) -> Option<String> { self.title.clone() }
+    fn title(&self) -> Option<String> {
+        self.title.clone()
+    }
 
     fn size_hint(&self) -> Option<Vec2d> {
         if let (Some(x), Some(y)) = (self.width, self.height) {
             Some(Vec2d { x, y })
-        } else { None }
+        } else {
+            None
+        }
     }
 
     fn http_headers(&self) -> HashMap<String, String> {

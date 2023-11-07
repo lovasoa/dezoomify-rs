@@ -35,7 +35,10 @@ impl PageInfo {
     pub fn path(&self) -> &str {
         // The base url is something like "https://lh3.googleusercontent.com/ci/xxx",
         // and we need to extract the "ci/xxx" part.
-        self.base_url.splitn(4, '/').nth(3).expect("Google Arts base_url is malformed")
+        self.base_url
+            .splitn(4, '/')
+            .nth(3)
+            .expect("Google Arts base_url is malformed")
     }
 }
 
@@ -50,14 +53,14 @@ fn get_name_from_gap_html(html: &str) -> String {
             &(c[4])));
 
     if let Some(result) = name {
-        return result
+        return result;
     }
 
     Regex::new(r#""name":"([^"]+)"#)
         .unwrap()
         .captures(html)
         .map(|c| (c[1]).to_string())
-        .unwrap_or_else(||"Google Arts and Culture Image".into())
+        .unwrap_or_else(|| "Google Arts and Culture Image".into())
 }
 
 impl FromStr for PageInfo {
@@ -119,7 +122,7 @@ mod tests {
         let test_html = fs::read_to_string(test_source_path).unwrap();
         match test_html.parse() {
             Ok(info) => info,
-            Err(err) => panic!("Unable to parse '{}'. Error: {}", test_html, err)
+            Err(err) => panic!("Unable to parse '{}'. Error: {}", test_html, err),
         }
     }
 

@@ -25,7 +25,10 @@ impl Dezoomer for DziDezoomer {
         let tile_re = Regex::new("_files/\\d+/\\d+_\\d+\\.(jpe?g|png)$").unwrap();
         if let Some(m) = tile_re.find(&data.uri) {
             let meta_uri = data.uri[..m.start()].to_string() + ".dzi";
-            debug!("'{}' looks like a dzi image tile URL. Trying to fetch the DZI file at '{}'.", data.uri, meta_uri);
+            debug!(
+                "'{}' looks like a dzi image tile URL. Trying to fetch the DZI file at '{}'.",
+                data.uri, meta_uri
+            );
             Err(DezoomerError::NeedsData { uri: meta_uri })
         } else {
             let DezoomerInputWithContents { uri, contents } = data.with_contents()?;
@@ -48,7 +51,6 @@ impl From<DziError> for DezoomerError {
 }
 
 fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, DziError> {
-
     // Workaround for https://github.com/netvl/xml-rs/issues/155
     // which the original author seems unwilling to fix
     serde_xml_rs::from_reader::<_, DziFile>(remove_bom(contents))
@@ -59,7 +61,11 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, DziErr
                 .flat_map(|dzi| load_from_dzi(url, dzi))
                 .flatten()
                 .collect();
-            if levels.is_empty() { Err(e) } else { Ok(levels) }
+            if levels.is_empty() {
+                Err(e)
+            } else {
+                Ok(levels)
+            }
         })
 }
 
@@ -135,7 +141,7 @@ impl TilesRect for DziLevel {
     }
 
     fn title(&self) -> Option<String> {
-        let (_, suffix) = self.base_url.rsplit_once( '/').unwrap_or_default();
+        let (_, suffix) = self.base_url.rsplit_once('/').unwrap_or_default();
         let name = suffix.trim_end_matches("_files");
         Some(name.to_string())
     }
@@ -143,7 +149,11 @@ impl TilesRect for DziLevel {
 
 impl std::fmt::Debug for DziLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{} (Deep Zoom Image)", TileProvider::title(self).unwrap_or_default())
+        write!(
+            f,
+            "{} (Deep Zoom Image)",
+            TileProvider::title(self).unwrap_or_default()
+        )
     }
 }
 
@@ -171,7 +181,6 @@ fn test_panorama() {
         ]
     );
 }
-
 
 #[test]
 fn test_dzi_with_bom() {
@@ -211,5 +220,8 @@ fn test_openseadragon_javascript() {
         &mut load_from_properties("http://test.com/x/test.xml", contents.as_ref()).unwrap()[0];
     assert_eq!(Some(Vec2d { y: 9221, x: 7026 }), level.size_hint());
     let tiles: Vec<String> = level.next_tiles(None).into_iter().map(|t| t.url).collect();
-    assert_eq!(tiles[0], "http://test.com/example-images/highsmith/highsmith_files/14/0_0.jpg");
+    assert_eq!(
+        tiles[0],
+        "http://test.com/example-images/highsmith/highsmith_files/14/0_0.jpg"
+    );
 }

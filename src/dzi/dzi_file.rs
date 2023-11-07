@@ -24,7 +24,10 @@ pub struct DziFile {
 
 impl DziFile {
     pub fn get_size(&self) -> Result<Vec2d, DziError> {
-        Ok(Vec2d { x: self.size.width, y: self.size.height })
+        Ok(Vec2d {
+            x: self.size.width,
+            y: self.size.height,
+        })
     }
     pub fn get_tile_size(&self) -> Vec2d {
         Vec2d::square(self.tile_size)
@@ -40,7 +43,9 @@ impl DziFile {
         } else {
             let until_dot = if let Some(dot_pos) = resource_url.rfind('.') {
                 &resource_url[0..dot_pos]
-            } else { resource_url };
+            } else {
+                resource_url
+            };
             format!("{}_files", until_dot)
         }
     }
@@ -67,7 +72,7 @@ fn test_dzi() {
             <Size Height="3852" Width="5393"/>
         </Image>"#,
     )
-        .unwrap();
+    .unwrap();
     assert_eq!(dzi.get_size().unwrap(), Vec2d { x: 5393, y: 3852 });
     assert_eq!(dzi.get_tile_size(), Vec2d { x: 256, y: 256 });
     assert_eq!(dzi.max_level(), 13);
@@ -85,7 +90,8 @@ fn test_dzi_json() {
             "TileSize": "254",
             "Size": { "Height": "4409", "Width": "7793" }
 	    }"#,
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(dzi.get_size().unwrap(), Vec2d { y: 4409, x: 7793 });
     assert_eq!(dzi.get_tile_size(), Vec2d { x: 254, y: 254 });
     assert_eq!(dzi.max_level(), 13);

@@ -1,9 +1,9 @@
 use std::error::Error;
 
-use reqwest::{self, header};
-use tokio::sync::mpsc::error::SendError;
 use crate::encoder::tile_buffer::TileBufferMsg;
 use custom_error::custom_error;
+use reqwest::{self, header};
+use tokio::sync::mpsc::error::SendError;
 
 custom_error! {
     pub ZoomError
@@ -55,11 +55,13 @@ impl DezoomerError {
 pub fn image_error_to_io_error(err: image::ImageError) -> std::io::Error {
     match err {
         image::ImageError::IoError(e) => e,
-        e => make_io_err(e)
+        e => make_io_err(e),
     }
 }
 
 pub fn make_io_err<E>(e: E) -> std::io::Error
-    where E: Into<Box<dyn std::error::Error + Send + Sync>> {
+where
+    E: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
     std::io::Error::new(std::io::ErrorKind::Other, e)
 }

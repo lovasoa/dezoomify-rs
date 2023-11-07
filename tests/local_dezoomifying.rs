@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use image::{self, DynamicImage, GenericImageView};
 use image_hasher::HasherConfig;
 
-use dezoomify_rs::{Arguments, dezoomify, ZoomError};
+use dezoomify_rs::{dezoomify, Arguments, ZoomError};
 
 /// Dezoom a file locally
 #[ignore] // Ignore this test by default because it's slow in debug mode
@@ -15,7 +15,9 @@ pub async fn custom_size_local_zoomify_tiles() {
     test_image(
         "testdata/zoomify/test_custom_size/ImageProperties.xml",
         "testdata/zoomify/test_custom_size/expected_result.jpg",
-    ).await.unwrap()
+    )
+    .await
+    .unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -23,7 +25,9 @@ pub async fn local_generic_tiles() {
     test_image(
         "testdata/generic/map_{{X}}_{{Y}}.jpg",
         "testdata/generic/map_expected.png",
-    ).await.unwrap()
+    )
+    .await
+    .unwrap()
 }
 
 #[allow(clippy::needless_lifetimes)]
@@ -50,8 +54,11 @@ pub async fn test_image(input: &str, expected: &str) -> Result<(), ZoomError> {
         Ok(actual) => actual,
         Err(e) => {
             std::fs::copy(&tmp_path, "err.png")?;
-            eprintln!("Unable to open the dezoomified image {:?}; copied it to err.png", &tmp_path);
-            return Err(e.into())
+            eprintln!(
+                "Unable to open the dezoomified image {:?}; copied it to err.png",
+                &tmp_path
+            );
+            return Err(e.into());
         }
     };
     let expected = image::open(expected)?;
@@ -60,7 +67,11 @@ pub async fn test_image(input: &str, expected: &str) -> Result<(), ZoomError> {
 }
 
 fn assert_images_equal(a: DynamicImage, b: DynamicImage) {
-    assert_eq!(a.dimensions(), b.dimensions(), "image dimensions should match");
+    assert_eq!(
+        a.dimensions(),
+        b.dimensions(),
+        "image dimensions should match"
+    );
     let hasher = HasherConfig::new().to_hasher();
     let dist = hasher.hash_image(&a).dist(&hasher.hash_image(&b));
     assert!(dist < 3, "The distance between the two images is {}", dist);

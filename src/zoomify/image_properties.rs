@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
-use log::{info, warn};
 use crate::dezoomer::Vec2d;
+use log::{info, warn};
 use std::convert::TryInto;
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -43,7 +43,10 @@ impl ImageProperties {
             let tiles = (width / tile_width).ceil() * (height / tile_height).ceil();
             tiles_before.push(tiles as u32);
             level_tiles.push(ZoomLevelInfo {
-                size: Vec2d { x: width as u32, y: height as u32 },
+                size: Vec2d {
+                    x: width as u32,
+                    y: height as u32,
+                },
                 tile_size,
                 tiles_before: 0, // Will be replaced in the end
             });
@@ -52,10 +55,12 @@ impl ImageProperties {
         }
         let computed_tile_count = tiles_before.iter().sum::<u32>();
         if computed_tile_count != self.num_tiles {
-            info!("The computed number of tiles ({}) does not match \
+            info!(
+                "The computed number of tiles ({}) does not match \
             the number of tiles specified in ImageProperties.xml ({}). \
-            Trying the second computation method..."
-                  , computed_tile_count, self.num_tiles);
+            Trying the second computation method...",
+                computed_tile_count, self.num_tiles
+            );
             level_tiles.clear();
             tiles_before.clear();
             let mut size = self.size();
@@ -63,20 +68,32 @@ impl ImageProperties {
             loop {
                 let size_in_tiles = size.ceil_div(tile_size);
                 tiles_before.push(size_in_tiles.area().try_into().unwrap());
-                level_tiles.push(ZoomLevelInfo { size, tile_size, tiles_before: 0 });
-                if size.x <= tile_size.x && size.y <= tile_size.y { break }
+                level_tiles.push(ZoomLevelInfo {
+                    size,
+                    tile_size,
+                    tiles_before: 0,
+                });
+                if size.x <= tile_size.x && size.y <= tile_size.y {
+                    break;
+                }
                 size = self.size() / level_size_ratio;
-                if size.x % 2 != 0 { size.x += 1 }
-                if size.y % 2 != 0 { size.y += 1 }
+                if size.x % 2 != 0 {
+                    size.x += 1
+                }
+                if size.y % 2 != 0 {
+                    size.y += 1
+                }
                 level_size_ratio = level_size_ratio * Vec2d { x: 2, y: 2 };
             }
         }
         if log::log_enabled!(log::Level::Warn) {
             let computed_tile_count = tiles_before.iter().sum::<u32>();
             if computed_tile_count != self.num_tiles {
-                warn!("The computed number of tiles ({}) does not match \
-                        the number of tiles specified in ImageProperties.xml ({})"
-                      , computed_tile_count, self.num_tiles);
+                warn!(
+                    "The computed number of tiles ({}) does not match \
+                        the number of tiles specified in ImageProperties.xml ({})",
+                    computed_tile_count, self.num_tiles
+                );
             }
         }
         level_tiles.reverse();
@@ -133,10 +150,23 @@ fn test_real_num_tiles() {
     assert_eq!(
         props.levels(),
         vec![
-            ZoomLevelInfo { size: Vec2d { x: 2, y: 2 }, tile_size, tiles_before: 0 },
-            ZoomLevelInfo { size: Vec2d { x: 6, y: 2 }, tile_size, tiles_before: 1 },
-            ZoomLevelInfo { size: Vec2d { x: 10, y: 5 }, tile_size, tiles_before: 3 },
-        ]);
+            ZoomLevelInfo {
+                size: Vec2d { x: 2, y: 2 },
+                tile_size,
+                tiles_before: 0
+            },
+            ZoomLevelInfo {
+                size: Vec2d { x: 6, y: 2 },
+                tile_size,
+                tiles_before: 1
+            },
+            ZoomLevelInfo {
+                size: Vec2d { x: 10, y: 5 },
+                tile_size,
+                tiles_before: 3
+            },
+        ]
+    );
 }
 
 #[test]

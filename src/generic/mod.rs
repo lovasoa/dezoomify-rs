@@ -3,7 +3,10 @@ use std::collections::HashSet;
 use lazy_static::lazy_static;
 use regex::Regex;
 
-use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, single_level, TileFetchResult, TileProvider, TileReference, ZoomLevels};
+use crate::dezoomer::{
+    single_level, Dezoomer, DezoomerError, DezoomerInput, TileFetchResult, TileProvider,
+    TileReference, ZoomLevels,
+};
 use crate::Vec2d;
 
 mod dichotomy_2d;
@@ -34,12 +37,15 @@ impl Dezoomer for GenericDezoomer {
 }
 
 lazy_static! {
-    static ref TEMPLATE_RE: Regex = Regex::new(r"(?xi)
+    static ref TEMPLATE_RE: Regex = Regex::new(
+        r"(?xi)
     \{\{
         (?P<dimension>x|y)
         (?::0(?P<zeroes>\d+))?
      \}\}
-    ").unwrap();
+    "
+    )
+    .unwrap();
 }
 
 struct ZoomLevel {
@@ -53,22 +59,28 @@ struct ZoomLevel {
 
 impl ZoomLevel {
     fn tile_url_at(&self, x: u32, y: u32) -> String {
-        TEMPLATE_RE.replace_all(&self.url_template, |caps: &regex::Captures| {
-            let dimension = caps.name("dimension")
-                .expect("missing dimension")
-                .as_str()
-                .chars().next().expect("empty dim")
-                .to_ascii_lowercase();
-            let num = match dimension {
-                'x' => x,
-                'y' => y,
-                _ => unreachable!("The dimension is either x or y")
-            };
-            let padding: usize = caps.name("zeroes")
-                .and_then(|m| m.as_str().parse().ok())
-                .unwrap_or(0);
-            format!("{num:0padding$}", num = num, padding = padding)
-        }).to_string()
+        TEMPLATE_RE
+            .replace_all(&self.url_template, |caps: &regex::Captures| {
+                let dimension = caps
+                    .name("dimension")
+                    .expect("missing dimension")
+                    .as_str()
+                    .chars()
+                    .next()
+                    .expect("empty dim")
+                    .to_ascii_lowercase();
+                let num = match dimension {
+                    'x' => x,
+                    'y' => y,
+                    _ => unreachable!("The dimension is either x or y"),
+                };
+                let padding: usize = caps
+                    .name("zeroes")
+                    .and_then(|m| m.as_str().parse().ok())
+                    .unwrap_or(0);
+                format!("{num:0padding$}", num = num, padding = padding)
+            })
+            .to_string()
     }
     fn tile_ref_at(&self, x: u32, y: u32) -> TileReference {
         let tile_size = self.tile_size.unwrap_or(Vec2d { x: 0, y: 0 });
@@ -94,9 +106,8 @@ impl TileProvider for ZoomLevel {
                     y: self.last_tile.1,
                 };
                 self.image_size = self.tile_size.map(|s| s * last_tile_pos + s);
-                let all_tiles = (0..=last_tile_pos.y).flat_map(|y|
-                    (0..=last_tile_pos.x).map(move |x|
-                        (x, y)))
+                let all_tiles = (0..=last_tile_pos.y)
+                    .flat_map(|y| (0..=last_tile_pos.x).map(move |x| (x, y)))
                     .filter(|pos| !self.done.contains(pos))
                     .map(|(x, y)| self.tile_ref_at(x, y))
                     .collect();
@@ -123,11 +134,10 @@ impl std::fmt::Debug for ZoomLevel {
     }
 }
 
-
 #[test]
 fn test_generic_dezoomer() {
-    use std::collections::HashSet;
     use crate::dezoomer::PageContents;
+    use std::collections::HashSet;
     let uri = "{{X}},{{Y}}".to_string();
     let mut lvl = GenericDezoomer {}
         .zoom_levels(&DezoomerInput {
@@ -160,7 +170,7 @@ fn test_generic_dezoomer() {
         all_tiles.extend(successes);
         tries += 1;
         assert!(tries <= 10);
-    };
+    }
 
     let expected: HashSet<TileReference> = vec![
         TileReference {
@@ -187,7 +197,9 @@ fn test_generic_dezoomer() {
             url: "2,1".into(),
             position: Vec2d { x: 8, y: 5 },
         },
-    ].into_iter().collect();
+    ]
+    .into_iter()
+    .collect();
     assert_eq!(all_tiles, expected);
 }
 

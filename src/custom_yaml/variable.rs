@@ -1,4 +1,4 @@
-use evalexpr::{HashMapContext, ContextWithMutableVariables};
+use evalexpr::{ContextWithMutableVariables, HashMapContext};
 use itertools::Itertools;
 use regex::Regex;
 use serde::Deserialize;

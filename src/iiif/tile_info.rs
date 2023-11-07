@@ -7,8 +7,8 @@ use log::warn;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::Vec2d;
 use crate::network::resolve_relative;
+use crate::Vec2d;
 
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ImageInfo {
@@ -53,7 +53,10 @@ static QUALITY_ORDER: [&str; 5] = ["bitonal", "gray", "color", "native", "defaul
 static FORMAT_ORDER: [&str; 7] = ["webp", "gif", "bmp", "tif", "jpg", "jpeg", "png"];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum TileSizeFormat { WidthHeight, Width }
+pub enum TileSizeFormat {
+    WidthHeight,
+    Width,
+}
 
 impl ImageInfo {
     pub fn size(&self) -> Vec2d {
@@ -64,12 +67,17 @@ impl ImageInfo {
     }
 
     fn profile_info(&self) -> Cow<ProfileInfo> {
-        self.profile.as_ref().map(|p| p.profile_info()).unwrap_or_default()
+        self.profile
+            .as_ref()
+            .map(|p| p.profile_info())
+            .unwrap_or_default()
     }
 
     pub fn best_quality(&self) -> String {
         let pinfo = self.profile_info();
-        self.qualities.iter().flat_map(|v| v.iter())
+        self.qualities
+            .iter()
+            .flat_map(|v| v.iter())
             .chain(pinfo.qualities.iter().flat_map(|x| x.iter()))
             .max_by_key(|&s| QUALITY_ORDER.iter().position(|&x| x == s))
             .cloned()
@@ -81,7 +89,9 @@ impl ImageInfo {
 
     pub fn best_format(&self) -> String {
         let pinfo = self.profile_info();
-        self.formats.iter().flat_map(|v| v.iter())
+        self.formats
+            .iter()
+            .flat_map(|v| v.iter())
             .chain(pinfo.formats.iter().flat_map(|x| x.iter()))
             .max_by_key(|&s| FORMAT_ORDER.iter().position(|&x| x == s))
             .cloned()
@@ -93,7 +103,9 @@ impl ImageInfo {
 
     pub fn preferred_size_format(&self) -> TileSizeFormat {
         let pinfo = self.profile_info();
-        let s: HashSet<&str> = pinfo.supports.iter()
+        let s: HashSet<&str> = pinfo
+            .supports
+            .iter()
             .flat_map(|x| x.iter())
             .map(|s| s.as_str())
             .collect();
@@ -106,14 +118,21 @@ impl ImageInfo {
 
     pub fn tiles(&self) -> Vec<TileInfo> {
         let profile_info = self.profile_info();
-        let mut tiles = self.tiles.as_ref()
+        let mut tiles: Vec<_> = self
+            .tiles
+            .as_ref()
             .map(|v| {
-                v.iter().flat_map(|info|
-                    if profile_info.tile_size_fits(info.size()) {
-                        Some(info.clone())
-                    } else { None }
-                ).collect()
-            }).unwrap_or_else(Vec::new);
+                v.iter()
+                    .flat_map(|info| {
+                        if profile_info.tile_size_fits(info.size()) {
+                            Some(info.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         // If no preset tile size covers the full-resolution image, add a new one
         if !tiles.iter().any(|t| t.scale_factors.contains(&1)) {
             let mut info = TileInfo::default();
@@ -137,18 +156,26 @@ impl ImageInfo {
     /// Because our parser is so tolerant, we need to evaluate the probability
     /// that this is not in fact a valid IIIF image
     pub fn has_distinctive_iiif_properties(&self) -> bool {
-        self.id.is_some() || self.protocol.is_some() || self.context.is_some() ||
-            self.tiles.is_some() || self.formats.is_some() ||
-            self.iiif_type.as_ref().filter(
-                |&s| s == "iiif:ImageProfile" || s == "ImageService3"
-            ).is_some()
+        self.id.is_some()
+            || self.protocol.is_some()
+            || self.context.is_some()
+            || self.tiles.is_some()
+            || self.formats.is_some()
+            || self
+                .iiif_type
+                .as_ref()
+                .filter(|&s| s == "iiif:ImageProfile" || s == "ImageService3")
+                .is_some()
     }
 
     /// Some info.json files contain a an invalid value for "@id",
     /// such as "localhost" or "example.com"
     pub fn remove_test_id(&mut self) {
         if let Some(id) = &self.id {
-            if Regex::new(r"^https?://((www\.)?example\.|localhost)").unwrap().is_match(id) {
+            if Regex::new(r"^https?://((www\.)?example\.|localhost)")
+                .unwrap()
+                .is_match(id)
+            {
                 info!("Removing probably invalid IIIF id '{}'", id);
                 self.id = None;
             }
@@ -173,10 +200,12 @@ pub struct TileInfo {
 
 impl TileInfo {
     pub fn size(&self) -> Vec2d {
-        Vec2d { x: self.width, y: self.height.unwrap_or(self.width) }
+        Vec2d {
+            x: self.width,
+            y: self.height.unwrap_or(self.width),
+        }
     }
 }
-
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 #[serde(untagged)]
@@ -240,14 +269,15 @@ impl Profile {
     fn profile_info(&self) -> Cow<ProfileInfo> {
         match self {
             Profile::Reference(s) => {
-                PROFILE_REFERENCES.get(s)
+                PROFILE_REFERENCES
+                    .get(s)
                     .map(Cow::Borrowed)
                     .unwrap_or_else(|| {
                         warn!("Unknown IIIF profile reference: {}", s);
                         Cow::Owned(ProfileInfo::default())
                     })
-            },
-            Profile::Info(info) => { Cow::Borrowed(info) },
+            }
+            Profile::Info(info) => Cow::Borrowed(info),
             Profile::Multiple(profiles) => {
                 let mut formats = vec![];
                 let mut qualities = vec![];
@@ -257,16 +287,24 @@ impl Profile {
                 let mut max_area = None;
                 fn update_max<T: Ord + Copy>(target: &mut Option<T>, new: Option<T>) {
                     if let Some(new) = new {
-                        *target = Some(
-                            if let Some(old) = target { new.min(*old) } else { new }
-                        )
+                        *target = Some(if let Some(old) = target {
+                            new.min(*old)
+                        } else {
+                            new
+                        })
                     }
                 }
                 for profile in profiles.iter().flat_map(|x| x.iter()) {
                     let p = profile.profile_info();
-                    if let Some(x) = &p.formats { formats.extend_from_slice(x) }
-                    if let Some(x) = &p.qualities { qualities.extend_from_slice(x) }
-                    if let Some(x) = &p.supports { supports.extend_from_slice(x) }
+                    if let Some(x) = &p.formats {
+                        formats.extend_from_slice(x)
+                    }
+                    if let Some(x) = &p.qualities {
+                        qualities.extend_from_slice(x)
+                    }
+                    if let Some(x) = &p.supports {
+                        supports.extend_from_slice(x)
+                    }
                     update_max(&mut max_width, p.max_width);
                     update_max(&mut max_height, p.max_height);
                     update_max(&mut max_area, p.max_area);
@@ -279,11 +317,10 @@ impl Profile {
                     max_height,
                     max_area,
                 })
-            },
+            }
         }
     }
 }
-
 
 impl Default for TileInfo {
     fn default() -> Self {
@@ -331,19 +368,22 @@ fn test_profile_info() {
             max_width: Some(78),
             max_height: Some(94),
             ..Default::default()
-        })
+        }),
     ]));
-    assert_eq!(*profiles.profile_info(), ProfileInfo {
-        formats: Some(vec!["jpg".into()]), // from level0
-        qualities: Some(vec!["default".into()]), // from level0
-        supports: Some(vec![
-            "sizeByWhListed".into(), // from level0
-            "sizeByWh".into(), // from the second profile
-        ]),
-        max_width: Some(56),
-        max_height: Some(94),
-        ..Default::default()
-    })
+    assert_eq!(
+        *profiles.profile_info(),
+        ProfileInfo {
+            formats: Some(vec!["jpg".into()]),       // from level0
+            qualities: Some(vec!["default".into()]), // from level0
+            supports: Some(vec![
+                "sizeByWhListed".into(), // from level0
+                "sizeByWh".into(),       // from the second profile
+            ]),
+            max_width: Some(56),
+            max_height: Some(94),
+            ..Default::default()
+        }
+    )
 }
 
 #[test]
@@ -356,11 +396,25 @@ fn test_best_quality() {
         (Some(vec!["zorglub".into()]), "zorglub"),
         (Some(vec!["zorglub".into(), "color".into()]), "color"),
         (Some(vec!["bitonal".into(), "gray".into()]), "gray"),
-        (Some(vec!["bitonal".into(), "gray".into(), "color".into()]), "color"),
-        (Some(vec!["default".into(), "bitonal".into(), "gray".into(), "color".into()]), "default"),
+        (
+            Some(vec!["bitonal".into(), "gray".into(), "color".into()]),
+            "color",
+        ),
+        (
+            Some(vec![
+                "default".into(),
+                "bitonal".into(),
+                "gray".into(),
+                "color".into(),
+            ]),
+            "default",
+        ),
     ];
     for (qualities, expected_best_quality) in pairs.into_iter() {
-        let info = ImageInfo { qualities, ..ImageInfo::default() };
+        let info = ImageInfo {
+            qualities,
+            ..ImageInfo::default()
+        };
         assert_eq!(info.best_quality(), expected_best_quality);
     }
 }
