@@ -49,18 +49,11 @@ impl<'a> IntoIterator for &'a TileSet {
 }
 
 #[derive(Debug)]
-struct IntTemplate(String);
+struct IntTemplate(evalexpr::Node);
 
 impl IntTemplate {
     fn eval<C: evalexpr::Context>(&self, context: &C) -> Result<u32, UrlTemplateError> {
-        let template: evalexpr::Node =
-            evalexpr::build_operator_tree(&self.0).map_err(|source| {
-                UrlTemplateError::BadExpression {
-                    expr: self.0.clone(),
-                    source,
-                }
-            })?;
-        let evaluated_int = template.eval_int_with_context(context)?;
+        let evaluated_int = self.0.eval_int_with_context(context)?;
         Ok(evaluated_int.try_into()?)
     }
 }
@@ -69,8 +62,44 @@ impl FromStr for IntTemplate {
     type Err = UrlTemplateError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(IntTemplate(s.to_string()))
+        Ok(IntTemplate(parse_expr(s)?))
     }
+}
+
+#[derive(Debug)]
+struct StrTemplate(evalexpr::Node);
+
+impl StrTemplate {
+    fn eval<C: evalexpr::Context>(&self, context: &C) -> Result<String, UrlTemplateError> {
+        let value = self.0.eval_with_context(context)?;
+        value_to_string(value)
+    }
+}
+
+fn value_to_string(value: evalexpr::Value) -> Result<String, UrlTemplateError> {
+    match value {
+        evalexpr::Value::String(s) => Ok(s),
+        evalexpr::Value::Float(f) => Ok(f.to_string()),
+        evalexpr::Value::Int(i) => Ok(i.to_string()),
+        evalexpr::Value::Boolean(b) => Ok(b.to_string()),
+        evalexpr::Value::Tuple(t) => t.into_iter().map(value_to_string).collect(),
+        evalexpr::Value::Empty => Ok(String::new()),
+    }
+}
+
+impl FromStr for StrTemplate {
+    type Err = UrlTemplateError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(StrTemplate(parse_expr(s)?))
+    }
+}
+
+fn parse_expr(s: &str) -> Result<evalexpr::Node, UrlTemplateError> {
+    evalexpr::build_operator_tree(s).map_err(|source| UrlTemplateError::BadExpression {
+        expr: s.to_string(),
+        source,
+    })
 }
 
 impl<'de> Deserialize<'de> for IntTemplate {
@@ -135,7 +164,7 @@ impl<'de> Deserialize<'de> for UrlTemplate {
 enum UrlPart {
     Constant(String),
     Expression {
-        expression: IntTemplate,
+        expression: StrTemplate,
         min_width: usize,
     },
 }
@@ -157,7 +186,7 @@ impl UrlPart {
                 expression,
                 min_width,
             } => Ok(format!(
-                "{:0width$}",
+                "{:0>width$}",
                 expression.eval(context)?,
                 width = min_width
             )),
