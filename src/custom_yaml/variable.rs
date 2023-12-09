@@ -1,4 +1,4 @@
-use evalexpr::{ContextWithMutableFunctions, ContextWithMutableVariables, HashMapContext, EvalexprError};
+use evalexpr::{ContextWithMutableVariables, HashMapContext};
 use itertools::Itertools;
 use regex::Regex;
 use serde::Deserialize;
@@ -169,32 +169,10 @@ impl Variables {
 }
 
 fn build_context() -> HashMapContext {
-    let mut ctx = HashMapContext::new();
-    ctx.set_function(
-        "str::substring".to_owned(),
-        evalexpr::Function::new(|argument| {
-            let args = argument.as_tuple()?;
-            let subject = args
-                .get(0)
-                .ok_or(EvalexprError::WrongFunctionArgumentAmount { expected: 2, actual: 0 })?
-                .as_string()?;
-            let start = args
-                .get(1)
-                .ok_or(EvalexprError::WrongFunctionArgumentAmount { expected: 2, actual: 1 })?
-                .as_int()? as usize;
-            let end = args
-                .get(2)
-                .and_then(|arg| arg.as_int().ok())
-                .map(|a| a as usize)
-                .unwrap_or_else(|| subject.len());
-            let start = start.min(subject.len());
-            let end = end.min(subject.len()).max(start);
-            let substr = &subject[start..end];
-            Ok(evalexpr::Value::from(substr))
-        }),
-    ).unwrap();
-    ctx
+    HashMapContext::new()
+    // Add custom variables and functions here
 }
+
 custom_error! {pub BadVariableError
     BadName{name: String} = "invalid variable name: '{name}'",
     TooManyValues{name:String, steps:i64}= "the range of values for {name} is too wide: {steps} steps",
