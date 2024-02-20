@@ -54,13 +54,27 @@ pub struct TileDownloader {
     pub retries: usize,
     pub retry_delay: Duration,
     pub tile_storage_folder: Option<PathBuf>,
+    pub zoom_format: String,
 }
 
 impl TileDownloader {
     pub async fn download_tile(
         &self,
-        tile_reference: TileReference,
+        mut tile_reference: TileReference,
     ) -> Result<Tile, TileDownloadError> {
+        if !"auto".eq(&self.zoom_format) {
+            if let Ok(regx) = regex::Regex::new(r"default.*") {
+                let url = regx
+                    .replace(
+                        &tile_reference.url,
+                        &format!("default.{}", self.zoom_format),
+                    )
+                    .to_string();
+
+                tile_reference.url = url
+            };
+        }
+
         // The initial delay after which a failed request is retried depends on the position of the tile
         // in order to avoid sending repeated "bursts" of requests to a server that is struggling
         let n = 100;
