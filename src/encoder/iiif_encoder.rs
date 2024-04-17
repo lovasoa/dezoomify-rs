@@ -73,6 +73,7 @@ impl Encoder for IiifEncoder {
         OpenOptions::new()
             .write(true)
             .create(true)
+            .truncate(true)
             .open(info_json_path)?
             .write_all(info_json_str.as_bytes())?;
 
@@ -86,6 +87,7 @@ impl Encoder for IiifEncoder {
         OpenOptions::new()
             .write(true)
             .create(true)
+            .truncate(true)
             .open(viewer_path)?
             .write_all(viewer_buf.as_bytes())?;
         Ok(())

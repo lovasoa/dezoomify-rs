@@ -18,6 +18,7 @@ impl PngEncoder {
         let file = OpenOptions::new()
             .write(true)
             .create(true)
+            .truncate(true)
             .open(destination)?;
         let mut encoder = png::Encoder::new(file, size.x, size.y);
         encoder.set_color(png::ColorType::Rgb);
