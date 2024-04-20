@@ -1,6 +1,6 @@
 [package]
 name = "dezoomify-rs"
-version = "2.12.1"
+version = "2.12.2"
 authors = ["lovasoa"]
 edition = "2021"
 license-file = "LICENSE"
@@ -12,7 +12,7 @@ readme = "README.md"
 keywords = ["image", "download"]
 
 [dependencies]
-image = "0.24"
+image = "0.25"
 png = "0.17"
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
@@ -32,26 +32,26 @@ aes = "0.8.1"
 cbc = "0.1.2"
 hmac = "0.12"
 sha-1 = "0.10"
-base64 = "0.21"
+base64 = "0.22"
 indicatif = "0.17"
 sanitize-filename-reader-friendly = "2"
 colour = "0.7"
-human-panic = "1"
+human-panic = "2"
 log = "0.4"
-env_logger = "0.10"
+env_logger = "0.11"
 url = "2"
-fixedbitset = "0.4"
+fixedbitset = "0.5"
 
 # See https://github.com/lovasoa/dezoomify-rs/issues/191
 [target.'cfg(target_os = "linux")'.dependencies]
-reqwest = { version = "0.11", features = ["gzip", "rustls-tls-native-roots"], default-features = false }
+reqwest = { version = "0.12", features = ["gzip", "zstd", "rustls-tls-native-roots"], default-features = false }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
-reqwest = { version = "0.11", features = ["gzip"] }
+reqwest = { version = "0.12", features = ["gzip"] }
 
 [dev-dependencies]
 criterion = "0.5"
-image_hasher = "1"
+image_hasher = "2"
 tempdir = "0.3"
 
 [[bench]]

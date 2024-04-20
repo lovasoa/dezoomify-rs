@@ -1,4 +1,3 @@
-use image::ImageOutputFormat;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io;
@@ -6,6 +5,7 @@ use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use image::codecs::jpeg::JpegEncoder;
 use log::debug;
 
 use crate::encoder::retiler::{Retiler, TileSaver};
@@ -121,8 +121,9 @@ impl TileSaver for IIIFTileSaver {
         debug!("Writing tile to {:?}", image_path);
         std::fs::create_dir_all(&image_dir_path)?;
         let file = &mut BufWriter::new(File::create(&image_path)?);
+        let jpeg_writer = JpegEncoder::new_with_quality(file, self.quality);
         tile.image
-            .write_to(file, ImageOutputFormat::Jpeg(self.quality))
+            .write_with_encoder(jpeg_writer)
             .map_err(image_error_to_io_error)
     }
 }
