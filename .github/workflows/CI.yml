@@ -23,9 +23,9 @@ jobs:
           - os: ubuntu-latest
             binary_path: target/debug/dezoomify-rs
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Cache cargo dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -33,7 +33,7 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - run: cargo build --locked
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: dezoomify-rs ${{ matrix.os }}
           path: ${{ matrix.binary_path }}
