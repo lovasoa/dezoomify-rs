@@ -172,6 +172,7 @@ pub async fn dezoomify_level(
         retries: args.retries,
         retry_delay: args.retry_delay,
         tile_storage_folder: args.tile_storage_folder.clone(),
+        zoom_format: args.zoom_format.clone(),
     };
     let mut throttler = throttler::Throttler::new(args.min_interval);
     info!("Creating canvas");
