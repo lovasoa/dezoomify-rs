@@ -1,9 +1,8 @@
 use std::path::PathBuf;
 
-use image::{DynamicImage, GenericImageView, SubImage};
+use image::{DynamicImage, GenericImageView, Rgb, Rgba, SubImage};
 use log::debug;
 
-use crate::encoder::canvas::ImageWriter;
 use crate::tile::Tile;
 use crate::{max_size_in_rect, Vec2d, ZoomError};
 
@@ -47,21 +46,19 @@ fn encoder_for_name(
         )?))
     } else if extension == "jpeg" || extension == "jpg" {
         debug!("Using the jpeg encoder with a quality of {}", quality);
-        let image_writer = ImageWriter::Jpeg { quality };
-        Ok(Box::new(canvas::Canvas::new(
+        Ok(Box::new(canvas::Canvas::<Rgb<u8>>::new_jpeg(
             destination,
             size,
-            image_writer,
+            quality,
         )?))
     } else {
         debug!(
             "Using the generic canvas implementation {}",
             &destination.to_string_lossy()
         );
-        Ok(Box::new(canvas::Canvas::new(
+        Ok(Box::new(canvas::Canvas::<Rgba<u8>>::new_generic(
             destination,
             size,
-            ImageWriter::Generic,
         )?))
     }
 }

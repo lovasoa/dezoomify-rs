@@ -1,51 +1,88 @@
-use image::{GenericImage, ImageBuffer, ImageResult, PixelWithColorType, Rgba};
+use image::{
+    ExtendedColorType, GenericImageView, ImageBuffer, ImageResult, Pixel, PixelWithColorType, Rgb,
+    Rgba,
+};
 use log::debug;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::encoder::{crop_tile, Encoder};
+use crate::encoder::Encoder;
 use crate::tile::Tile;
 use crate::Vec2d;
 use crate::ZoomError;
 use std::fs::File;
 use std::io::BufWriter;
 
-type SubPix = u8;
-type Pix = Rgba<SubPix>;
-type CanvasBuffer = ImageBuffer<Pix, Vec<SubPix>>;
+type CanvasBuffer<Pix> = ImageBuffer<Pix, Vec<<Pix as Pixel>::Subpixel>>;
 
-fn empty_buffer(size: Vec2d) -> CanvasBuffer {
-    ImageBuffer::from_fn(size.x, size.y, |_, _| Pix::from([0, 0, 0, 0]))
-}
-
-pub struct Canvas {
-    image: CanvasBuffer,
+pub struct Canvas<Pix: Pixel = Rgba<u8>> {
+    image: CanvasBuffer<Pix>,
     destination: PathBuf,
     image_writer: ImageWriter,
 }
 
-impl Canvas {
-    pub fn new(
+impl<Pix: Pixel> Canvas<Pix> {
+    pub fn new_generic(destination: PathBuf, size: Vec2d) -> Result<Self, ZoomError> {
+        Ok(Canvas {
+            image: ImageBuffer::new(size.x, size.y),
+            destination,
+            image_writer: ImageWriter::Generic,
+        })
+    }
+
+    pub fn new_jpeg(
         destination: PathBuf,
         size: Vec2d,
-        image_writer: ImageWriter,
-    ) -> Result<Self, ZoomError> {
-        Ok(Canvas {
-            image: empty_buffer(size),
+        quality: u8,
+    ) -> Result<Canvas<Rgb<u8>>, ZoomError> {
+        Ok(Canvas::<Rgb<u8>> {
+            image: ImageBuffer::new(size.x, size.y),
             destination,
-            image_writer,
+            image_writer: ImageWriter::Jpeg { quality },
         })
     }
 }
 
-impl Encoder for Canvas {
+trait FromRgba {
+    fn from_rgba(rgba: Rgba<u8>) -> Self;
+}
+
+impl FromRgba for Rgba<u8> {
+    fn from_rgba(rgba: Rgba<u8>) -> Self {
+        rgba
+    }
+}
+
+impl FromRgba for Rgb<u8> {
+    fn from_rgba(rgba: Rgba<u8>) -> Self {
+        rgba.to_rgb()
+    }
+}
+
+impl<Pix: Pixel<Subpixel = u8> + PixelWithColorType + Send + FromRgba + 'static> Encoder
+    for Canvas<Pix>
+{
     fn add_tile(&mut self, tile: Tile) -> io::Result<()> {
-        let sub_tile = crop_tile(&tile, self.size());
-        let Vec2d { x, y } = tile.position();
         debug!("Copying tile data from {:?}", tile);
-        self.image
-            .copy_from(&*sub_tile, x, y)
-            .map_err(|_err| io::Error::new(io::ErrorKind::InvalidData, "tile too large for image"))
+        let min_pos = tile.position();
+        let canvas_size = self.size();
+        if !min_pos.fits_inside(canvas_size) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "tile too large for image",
+            ));
+        }
+        let max_pos = tile.bottom_right().min(canvas_size);
+        let size = max_pos - min_pos;
+        for y in 0..size.y {
+            let canvas_y = y + min_pos.y;
+            for x in 0..size.x {
+                let canvas_x = x + min_pos.x;
+                let p = tile.image.get_pixel(x, y);
+                self.image.put_pixel(canvas_x, canvas_y, Pix::from_rgba(p));
+            }
+        }
+        Ok(())
     }
 
     fn finalize(&mut self) -> io::Result<()> {
@@ -69,13 +106,22 @@ pub enum ImageWriter {
 }
 
 impl ImageWriter {
-    fn write(&self, image: &CanvasBuffer, destination: &Path) -> ImageResult<()> {
+    fn write<Pix: Pixel<Subpixel = u8> + PixelWithColorType>(
+        &self,
+        image: &CanvasBuffer<Pix>,
+        destination: &Path,
+    ) -> ImageResult<()> {
         match *self {
             ImageWriter::Jpeg { quality } => {
                 let file = File::create(destination)?;
                 let fout = &mut BufWriter::new(file);
                 let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(fout, quality);
-                encoder.encode(image, image.width(), image.height(), Pix::COLOR_TYPE)?;
+                encoder.encode(
+                    image.as_raw(),
+                    image.width(),
+                    image.height(),
+                    ExtendedColorType::Rgb8,
+                )?;
             }
             ImageWriter::Generic => {
                 image.save(destination)?;

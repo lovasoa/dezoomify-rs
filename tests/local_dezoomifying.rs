@@ -9,7 +9,6 @@ use image_hasher::HasherConfig;
 use dezoomify_rs::{dezoomify, Arguments, ZoomError};
 
 /// Dezoom a file locally
-#[ignore] // Ignore this test by default because it's slow in debug mode
 #[tokio::test(flavor = "multi_thread")]
 pub async fn custom_size_local_zoomify_tiles() {
     test_image(
