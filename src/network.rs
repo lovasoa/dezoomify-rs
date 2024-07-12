@@ -169,6 +169,7 @@ pub fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
         header_map
     );
     let client = reqwest::Client::builder()
+        .http1_title_case_headers()
         .default_headers(header_map)
         .referer(false)
         .pool_max_idle_per_host(args.max_idle_per_host)
