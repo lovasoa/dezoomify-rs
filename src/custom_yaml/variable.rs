@@ -36,7 +36,7 @@ impl Variable {
             return Err(BadVariableError::Infinite {
                 name: self.name.clone(),
             });
-        } else if steps > i64::from(std::u32::MAX) {
+        } else if steps > i64::from(u32::MAX) {
             return Err(BadVariableError::TooManyValues {
                 name: self.name.clone(),
                 steps,

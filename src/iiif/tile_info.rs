@@ -146,7 +146,7 @@ impl ImageInfo {
             info.width = cropped_size.x;
             info.height = Some(cropped_size.y);
             if let Some(scale_factors) = &self.scale_factors {
-                info.scale_factors = scale_factors.clone()
+                info.scale_factors.clone_from(scale_factors)
             }
             tiles.push(info)
         }
