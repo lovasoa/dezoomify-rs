@@ -1,6 +1,6 @@
 [package]
 name = "dezoomify-rs"
-version = "2.12.4"
+version = "2.12.5"
 authors = ["lovasoa"]
 edition = "2021"
 license-file = "LICENSE"
