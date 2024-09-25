@@ -1,5 +1,5 @@
 use image::{
-    ColorType, GenericImageView, ImageBuffer, ImageResult, Pixel, PixelWithColorType, Rgb, Rgba
+    ColorType, GenericImageView, ImageBuffer, ImageResult, Pixel, PixelWithColorType, Rgb, Rgba,
 };
 use log::debug;
 use std::io;
