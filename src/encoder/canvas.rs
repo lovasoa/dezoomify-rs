@@ -1,6 +1,5 @@
 use image::{
-    ExtendedColorType, GenericImageView, ImageBuffer, ImageResult, Pixel, PixelWithColorType, Rgb,
-    Rgba,
+    ColorType, GenericImageView, ImageBuffer, ImageResult, Pixel, PixelWithColorType, Rgb, Rgba
 };
 use log::debug;
 use std::io;
@@ -120,7 +119,7 @@ impl ImageWriter {
                     image.as_raw(),
                     image.width(),
                     image.height(),
-                    ExtendedColorType::Rgb8,
+                    ColorType::Rgb8,
                 )?;
             }
             ImageWriter::Generic => {
