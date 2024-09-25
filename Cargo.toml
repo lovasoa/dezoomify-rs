@@ -1,6 +1,6 @@
 [package]
 name = "dezoomify-rs"
-version = "2.12.5"
+version = "2.13.0"
 authors = ["lovasoa"]
 edition = "2021"
 license-file = "LICENSE"
@@ -51,7 +51,7 @@ reqwest = { version = "0.12", features = ["gzip"] }
 
 [dev-dependencies]
 criterion = "0.5"
-image_hasher = "2"
+image_hasher = "1"
 tempdir = "0.3"
 
 [[bench]]
