@@ -68,7 +68,7 @@ pub struct Arguments {
     /// For lossy output formats such as jpeg, this affects the quality of the resulting image.
     /// 0 means less compression, 100 means more compression.
     /// Currently affects only the JPEG and PNG encoders.
-    #[arg(long, default_value = "20")]
+    #[arg(long, default_value = "5")]
     pub compression: u8,
 
     /// Sets an HTTP header to use on requests.
