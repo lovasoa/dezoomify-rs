@@ -127,7 +127,7 @@ impl TileDownloader {
 
     async fn write_to_tile_cache(&self, uri: &str, contents: &[u8]) {
         if let Some(root) = &self.tile_storage_folder {
-            match tokio::fs::write(root.join(&sanitize(uri)), contents).await {
+            match tokio::fs::write(root.join(sanitize(uri)), contents).await {
                 Ok(_) => debug!("Wrote {} to tile cache ({} bytes)", uri, contents.len()),
                 Err(e) => warn!(
                     "Unable to write {} to the tile cache {:?}: {}",
@@ -139,7 +139,7 @@ impl TileDownloader {
 
     async fn read_from_tile_cache(&self, uri: &str) -> Option<Vec<u8>> {
         if let Some(root) = &self.tile_storage_folder {
-            match tokio::fs::read(root.join(&sanitize(uri))).await {
+            match tokio::fs::read(root.join(sanitize(uri))).await {
                 Ok(d) => {
                     debug!("{} read from tile cache", uri);
                     return Some(d);

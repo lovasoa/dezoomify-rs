@@ -61,7 +61,7 @@ pub fn get_outname(
                 &path
             );
             let mut name = OsString::from(&filename);
-            name.push(&format!("_{:04}.", i));
+            name.push(format!("_{:04}.", i));
             name.push(&ext);
             path.set_file_name(name);
         }
