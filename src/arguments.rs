@@ -116,6 +116,9 @@ pub struct Arguments {
     /// retrying partially failed downloads, or stitching the tiles with an external program.
     #[arg(short = 'c', long = "tile-cache")]
     pub tile_storage_folder: Option<PathBuf>,
+    /// A zoom_level image format suffix eg.default.png or default.jpg
+    #[arg(short = 'f', long = "zoom-format", default_value = "auto")]
+    pub zoom_format: String,
 }
 
 impl Default for Arguments {
@@ -140,6 +143,7 @@ impl Default for Arguments {
             connect_timeout: Duration::from_secs(6),
             logging: "warn".to_string(),
             tile_storage_folder: None,
+            zoom_format: "".to_string(),
         }
     }
 }
