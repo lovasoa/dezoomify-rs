@@ -198,11 +198,12 @@ impl Arguments {
     }
 
     pub fn request_referer(&self) -> Option<&str> {
-        if self.is_bulk_mode() {
+        let candidate = if self.is_bulk_mode() {
             self.bulk.as_deref()
         } else {
             self.input_uri.as_deref()
-        }
+        };
+        candidate.filter(|uri| uri.starts_with("http://") || uri.starts_with("https://"))
     }
 
     pub fn should_use_largest(&self) -> bool {
@@ -347,7 +348,20 @@ fn test_request_referer_prefers_bulk_source_in_bulk_mode() {
         "--outfile",
         "out.jpg",
     ]);
-    assert_eq!(args.request_referer(), Some("urls.txt"));
+    assert_eq!(args.request_referer(), None);
+}
+
+#[test]
+fn test_request_referer_uses_http_bulk_source() {
+    let args = Arguments::parse_from([
+        "dezoomify-rs",
+        "--bulk",
+        "https://example.com/manifest.json",
+    ]);
+    assert_eq!(
+        args.request_referer(),
+        Some("https://example.com/manifest.json")
+    );
 }
 
 #[test]
