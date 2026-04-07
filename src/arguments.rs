@@ -26,6 +26,11 @@ pub struct Arguments {
     #[arg()]
     pub outfile: Option<PathBuf>,
 
+    /// File to which the resulting image should be saved.
+    /// This is an explicit alternative to the positional OUTFILE argument.
+    #[arg(long = "outfile", conflicts_with = "outfile")]
+    pub outfile_option: Option<PathBuf>,
+
     /// Name of the dezoomer to use. "auto" will try to detect the format automatically
     #[arg(short, long, default_value = "auto")]
     dezoomer: String,
@@ -145,6 +150,7 @@ impl Default for Arguments {
             display_help: (),
             input_uri: None,
             outfile: None,
+            outfile_option: None,
             dezoomer: "auto".to_string(),
             largest: false,
             max_width: None,
@@ -181,6 +187,20 @@ impl Arguments {
 
     pub fn is_bulk_mode(&self) -> bool {
         self.bulk.is_some()
+    }
+
+    pub fn output_file(&self) -> Option<PathBuf> {
+        self.outfile_option.clone().or_else(|| self.outfile.clone())
+    }
+
+    pub fn bulk_output_file(&self) -> Option<PathBuf> {
+        self.output_file().or_else(|| {
+            if self.is_bulk_mode() {
+                self.input_uri.as_ref().map(PathBuf::from)
+            } else {
+                None
+            }
+        })
     }
 
     pub fn should_use_largest(&self) -> bool {
@@ -302,6 +322,17 @@ fn test_bulk_url_reading() {
     // Test should_use_largest with explicit options
     args.max_width = Some(1000);
     assert!(!args.should_use_largest());
+}
+
+#[test]
+fn test_outfile_option_parsing() {
+    let args = Arguments::parse_from([
+        "dezoomify-rs",
+        "https://example.com/info.json",
+        "--outfile",
+        "out.jpg",
+    ]);
+    assert_eq!(args.output_file(), Some(PathBuf::from("out.jpg")));
 }
 
 #[test]

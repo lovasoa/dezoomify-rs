@@ -358,11 +358,12 @@ This mode downloads each image entry referenced by the manifest and uses manifes
 
 ### Filename generation
 
-When processing IIIF manifests, dezoomify-rs uses:
+For `dezoomify-rs --bulk <manifest-url-or-path>`:
 
-- **Metadata title** when present
-- **Canvas label** when present
-- **Fallback title** derived from available manifest data when those fields are missing
+- dezoomify-rs reads every image entry from the IIIF manifest.
+- For each entry, it builds a base output name from text fields in the manifest (book/manuscript label and page label when available).
+- If the manifest has no usable labels for an entry, dezoomify-rs falls back to numbered names (`Image_1`, `Image_2`, ...).
+- The final filename is sanitized for filesystem safety and collisions are resolved by adding a numeric suffix.
 
 Example output filenames:
 ```
@@ -375,7 +376,9 @@ Gospel-book_Lindisfarne_Gospels_f_1v_0003.jpg
 
 - **Progress tracking**: Each URL is processed sequentially with progress indicators (`[1/5]`, `[2/5]`, etc.)
 - **Automatic level selection**: If no level-specifying arguments (`--max-width`, `--max-height`, `--zoom-level`) are provided, `--largest` is automatically implied
-- **Output file naming**: If you provide an output filename as the positional `OUTFILE` argument, each image is saved with a numeric suffix (`_1`, `_2`, etc.)
+- **Output file naming**:
+  - If you pass `--outfile result.jpg` (or positional `OUTFILE`), bulk downloads are written as `result_1.jpg`, `result_2.jpg`, ...
+  - If you do not pass an output filename, bulk downloads are named from each input's title/URL-derived name.
 - **Error handling**: Failed downloads don't stop the entire process; the tool continues with the next URL and reports a summary at the end
 - **Metadata preservation**: IIIF manifest metadata is extracted and used for intelligent filename generation
 
@@ -384,6 +387,12 @@ Gospel-book_Lindisfarne_Gospels_f_1v_0003.jpg
 Process multiple images and save them with a common prefix:
 ```sh
 ./dezoomify-rs --bulk urls.txt my_collection.jpg
+# Creates: my_collection_1.jpg, my_collection_2.jpg, etc.
+```
+
+Same behavior with an explicit option:
+```sh
+./dezoomify-rs --bulk urls.txt --outfile my_collection.jpg
 # Creates: my_collection_1.jpg, my_collection_2.jpg, etc.
 ```
 

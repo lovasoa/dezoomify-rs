@@ -271,8 +271,9 @@ async fn create_tile_buffer(save_as: PathBuf, compression: u8) -> Result<TileBuf
 pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
     let zoom_level = find_zoomlevel(args).await?;
     let base_dir = current_dir()?;
+    let output_file = args.output_file();
     let save_as = prepare_output_path(
-        &args.outfile,
+        &output_file,
         &zoom_level.title(),
         &base_dir,
         zoom_level.size_hint(),
@@ -373,7 +374,7 @@ async fn process_bulk_zoomable_images(
     base_dir: &Path,
 ) -> Result<(), ZoomError> {
     use log::{debug, trace, warn};
-    let bulk_outfile = bulk_mode_outfile(args);
+    let bulk_outfile = args.bulk_output_file();
 
     // Process each ZoomableImage individually
     for (index, zoomable_image) in images.into_iter().enumerate() {
@@ -532,12 +533,6 @@ async fn process_bulk_zoomable_images(
     }
 
     Ok(())
-}
-
-fn bulk_mode_outfile(args: &Arguments) -> Option<PathBuf> {
-    args.outfile
-        .clone()
-        .or_else(|| args.input_uri.as_ref().map(PathBuf::from))
 }
 
 /// Generate a unique output filename for bulk processing
@@ -875,15 +870,36 @@ mod tests {
 
     #[test]
     fn test_bulk_mode_outfile_prefers_explicit_outfile() {
-        let args =
-            Arguments::parse_from(["dezoomify-rs", "--bulk", "urls.txt", "from_positional.jpg", "explicit.jpg"]);
-        assert_eq!(bulk_mode_outfile(&args), Some(PathBuf::from("explicit.jpg")));
+        let args = Arguments::parse_from([
+            "dezoomify-rs",
+            "--bulk",
+            "urls.txt",
+            "from_positional.jpg",
+            "explicit.jpg",
+        ]);
+        assert_eq!(args.bulk_output_file(), Some(PathBuf::from("explicit.jpg")));
     }
 
     #[test]
     fn test_bulk_mode_outfile_uses_first_positional_as_fallback() {
         let args = Arguments::parse_from(["dezoomify-rs", "--bulk", "urls.txt", "fallback.jpg"]);
-        assert_eq!(bulk_mode_outfile(&args), Some(PathBuf::from("fallback.jpg")));
+        assert_eq!(args.bulk_output_file(), Some(PathBuf::from("fallback.jpg")));
+    }
+
+    #[test]
+    fn test_bulk_mode_outfile_option_overrides_positionals() {
+        let args = Arguments::parse_from([
+            "dezoomify-rs",
+            "--bulk",
+            "urls.txt",
+            "positional-input.jpg",
+            "--outfile",
+            "from-option.jpg",
+        ]);
+        assert_eq!(
+            args.bulk_output_file(),
+            Some(PathBuf::from("from-option.jpg"))
+        );
     }
 }
 
