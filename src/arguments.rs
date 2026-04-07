@@ -194,13 +194,15 @@ impl Arguments {
     }
 
     pub fn bulk_output_file(&self) -> Option<PathBuf> {
-        self.output_file().or_else(|| {
-            if self.is_bulk_mode() {
-                self.input_uri.as_ref().map(PathBuf::from)
-            } else {
-                None
-            }
-        })
+        self.output_file()
+    }
+
+    pub fn request_referer(&self) -> Option<&str> {
+        if self.is_bulk_mode() {
+            self.bulk.as_deref()
+        } else {
+            self.input_uri.as_deref()
+        }
     }
 
     pub fn should_use_largest(&self) -> bool {
@@ -333,6 +335,19 @@ fn test_outfile_option_parsing() {
         "out.jpg",
     ]);
     assert_eq!(args.output_file(), Some(PathBuf::from("out.jpg")));
+}
+
+#[test]
+fn test_request_referer_prefers_bulk_source_in_bulk_mode() {
+    let args = Arguments::parse_from([
+        "dezoomify-rs",
+        "--bulk",
+        "urls.txt",
+        "not-a-referer.jpg",
+        "--outfile",
+        "out.jpg",
+    ]);
+    assert_eq!(args.request_referer(), Some("urls.txt"));
 }
 
 #[test]

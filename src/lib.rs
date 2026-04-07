@@ -881,9 +881,9 @@ mod tests {
     }
 
     #[test]
-    fn test_bulk_mode_outfile_uses_first_positional_as_fallback() {
+    fn test_bulk_mode_outfile_does_not_use_input_uri() {
         let args = Arguments::parse_from(["dezoomify-rs", "--bulk", "urls.txt", "fallback.jpg"]);
-        assert_eq!(args.bulk_output_file(), Some(PathBuf::from("fallback.jpg")));
+        assert_eq!(args.bulk_output_file(), None);
     }
 
     #[test]
