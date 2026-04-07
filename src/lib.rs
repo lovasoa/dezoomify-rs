@@ -373,6 +373,7 @@ async fn process_bulk_zoomable_images(
     base_dir: &Path,
 ) -> Result<(), ZoomError> {
     use log::{debug, trace, warn};
+    let bulk_outfile = bulk_mode_outfile(args);
 
     // Process each ZoomableImage individually
     for (index, zoomable_image) in images.into_iter().enumerate() {
@@ -432,7 +433,7 @@ async fn process_bulk_zoomable_images(
         );
 
         // Use get_outname to handle file collision properly, without args.outfile override
-        let save_as = if let Some(ref base_outfile) = args.outfile {
+        let save_as = if let Some(ref base_outfile) = bulk_outfile {
             // In bulk mode with specified outfile, use index-based naming with collision handling
             let base_path = generate_bulk_output_name(base_outfile, index);
             get_outname(
@@ -533,6 +534,12 @@ async fn process_bulk_zoomable_images(
     Ok(())
 }
 
+fn bulk_mode_outfile(args: &Arguments) -> Option<PathBuf> {
+    args.outfile
+        .clone()
+        .or_else(|| args.input_uri.as_ref().map(PathBuf::from))
+}
+
 /// Generate a unique output filename for bulk processing
 fn generate_bulk_output_name(base_outfile: &Path, index: usize) -> PathBuf {
     let mut result = base_outfile.to_path_buf();
@@ -630,6 +637,7 @@ pub fn max_size_in_rect(position: Vec2d, tile_size: Vec2d, canvas_size: Vec2d) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     #[test]
     fn test_parse_level_index() {
@@ -863,6 +871,19 @@ mod tests {
             generate_bulk_output_name(base, 0),
             Path::new("测试文件_1.jpg")
         );
+    }
+
+    #[test]
+    fn test_bulk_mode_outfile_prefers_explicit_outfile() {
+        let args =
+            Arguments::parse_from(["dezoomify-rs", "--bulk", "urls.txt", "from_positional.jpg", "explicit.jpg"]);
+        assert_eq!(bulk_mode_outfile(&args), Some(PathBuf::from("explicit.jpg")));
+    }
+
+    #[test]
+    fn test_bulk_mode_outfile_uses_first_positional_as_fallback() {
+        let args = Arguments::parse_from(["dezoomify-rs", "--bulk", "urls.txt", "fallback.jpg"]);
+        assert_eq!(bulk_mode_outfile(&args), Some(PathBuf::from("fallback.jpg")));
     }
 }
 

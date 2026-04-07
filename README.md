@@ -125,7 +125,7 @@ Alternatively, you can find this url in your browser's network inspector when lo
 
 #### IIIF Manifest Support
 
-dezoomify-rs also supports processing IIIF Presentation API manifests directly, which is particularly useful for downloading entire manuscripts or multi-page documents. When processing manifests, dezoomify-rs extracts metadata to generate meaningful filenames that include document titles and page/section labels rather than generic numbered files.
+dezoomify-rs accepts IIIF Presentation API manifest URLs as bulk input. It extracts image entries from the manifest and builds output filenames from available manifest metadata (for example manifest title and canvas label).
 
 ### DeepZoom
 
@@ -354,34 +354,28 @@ You can also pass a URL directly to the `--bulk` option to process IIIF manifest
 ./dezoomify-rs --bulk https://example.com/iiif/manifest.json
 ```
 
-This is particularly useful for downloading entire manuscripts or collections from IIIF-compatible repositories. The tool will automatically extract all images from the manifest and generate meaningful filenames using metadata from the manifest.
+This mode downloads each image entry referenced by the manifest and uses manifest metadata for output naming.
 
-### Enhanced filename generation
+### Filename generation
 
-When processing IIIF manifests, dezoomify-rs now creates much more descriptive filenames by leveraging metadata:
+When processing IIIF manifests, dezoomify-rs uses:
 
-- **Metadata titles**: Uses the "Title" field from manifest metadata (e.g., "Gospel-book ('Lindisfarne Gospels')")
-- **Canvas labels**: Incorporates specific page/section labels (e.g., "Front cover", "f. 1r", "Inside back cover")
-- **Smart fallbacks**: Falls back to manifest labels or generic page numbers when metadata isn't available
+- **Metadata title** when present
+- **Canvas label** when present
+- **Fallback title** derived from available manifest data when those fields are missing
 
-**Example output filenames:**
+Example output filenames:
 ```
 Gospel-book_Lindisfarne_Gospels_Front_cover_0001.jpg
 Gospel-book_Lindisfarne_Gospels_f_1r_0002.jpg
 Gospel-book_Lindisfarne_Gospels_f_1v_0003.jpg
 ```
 
-Instead of generic names like:
-```
-Cotton_MS_Nero_D_IV_page_1_0001.jpg
-Cotton_MS_Nero_D_IV_page_2_0002.jpg
-```
-
 ### Bulk mode behavior
 
 - **Progress tracking**: Each URL is processed sequentially with progress indicators (`[1/5]`, `[2/5]`, etc.)
 - **Automatic level selection**: If no level-specifying arguments (`--max-width`, `--max-height`, `--zoom-level`) are provided, `--largest` is automatically implied
-- **Output file naming**: If you specify an output file with `--outfile`, each image will be saved with a suffix (`_0001`, `_0002`, etc.)
+- **Output file naming**: If you provide an output filename as the positional `OUTFILE` argument, each image is saved with a numeric suffix (`_1`, `_2`, etc.)
 - **Error handling**: Failed downloads don't stop the entire process; the tool continues with the next URL and reports a summary at the end
 - **Metadata preservation**: IIIF manifest metadata is extracted and used for intelligent filename generation
 
@@ -390,7 +384,7 @@ Cotton_MS_Nero_D_IV_page_2_0002.jpg
 Process multiple images and save them with a common prefix:
 ```sh
 ./dezoomify-rs --bulk urls.txt my_collection.jpg
-# Creates: my_collection_0001.jpg, my_collection_0002.jpg, etc.
+# Creates: my_collection_1.jpg, my_collection_2.jpg, etc.
 ```
 
 Process with specific size constraints:
