@@ -26,6 +26,11 @@ pub struct Arguments {
     #[arg()]
     pub outfile: Option<PathBuf>,
 
+    /// File to which the resulting image should be saved.
+    /// This is an explicit alternative to the positional OUTFILE argument.
+    #[arg(long = "outfile", conflicts_with = "outfile")]
+    pub outfile_option: Option<PathBuf>,
+
     /// Name of the dezoomer to use. "auto" will try to detect the format automatically
     #[arg(short, long, default_value = "auto")]
     dezoomer: String,
@@ -145,6 +150,7 @@ impl Default for Arguments {
             display_help: (),
             input_uri: None,
             outfile: None,
+            outfile_option: None,
             dezoomer: "auto".to_string(),
             largest: false,
             max_width: None,
@@ -181,6 +187,23 @@ impl Arguments {
 
     pub fn is_bulk_mode(&self) -> bool {
         self.bulk.is_some()
+    }
+
+    pub fn output_file(&self) -> Option<PathBuf> {
+        self.outfile_option.clone().or_else(|| self.outfile.clone())
+    }
+
+    pub fn bulk_output_file(&self) -> Option<PathBuf> {
+        self.output_file()
+    }
+
+    pub fn request_referer(&self) -> Option<&str> {
+        let candidate = if self.is_bulk_mode() {
+            self.bulk.as_deref()
+        } else {
+            self.input_uri.as_deref()
+        };
+        candidate.filter(|uri| uri.starts_with("http://") || uri.starts_with("https://"))
     }
 
     pub fn should_use_largest(&self) -> bool {
@@ -302,6 +325,43 @@ fn test_bulk_url_reading() {
     // Test should_use_largest with explicit options
     args.max_width = Some(1000);
     assert!(!args.should_use_largest());
+}
+
+#[test]
+fn test_outfile_option_parsing() {
+    let args = Arguments::parse_from([
+        "dezoomify-rs",
+        "https://example.com/info.json",
+        "--outfile",
+        "out.jpg",
+    ]);
+    assert_eq!(args.output_file(), Some(PathBuf::from("out.jpg")));
+}
+
+#[test]
+fn test_request_referer_prefers_bulk_source_in_bulk_mode() {
+    let args = Arguments::parse_from([
+        "dezoomify-rs",
+        "--bulk",
+        "urls.txt",
+        "not-a-referer.jpg",
+        "--outfile",
+        "out.jpg",
+    ]);
+    assert_eq!(args.request_referer(), None);
+}
+
+#[test]
+fn test_request_referer_uses_http_bulk_source() {
+    let args = Arguments::parse_from([
+        "dezoomify-rs",
+        "--bulk",
+        "https://example.com/manifest.json",
+    ]);
+    assert_eq!(
+        args.request_referer(),
+        Some("https://example.com/manifest.json")
+    );
 }
 
 #[test]
