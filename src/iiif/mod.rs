@@ -372,11 +372,11 @@ fn is_legacy_presentation_manifest(value: &serde_json::Value) -> bool {
 }
 
 fn manifest_type(value: &serde_json::Value) -> Option<&str> {
-    let content_type = value
+    
+    value
         .get("type")
         .or_else(|| value.get("@type"))
-        .and_then(|type_value| type_value.as_str());
-    content_type
+        .and_then(|type_value| type_value.as_str())
 }
 
 fn json_context_contains(value: &serde_json::Value, needle: &str) -> bool {
