@@ -60,7 +60,7 @@ impl MetadataEntry {
 
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq, Default)]
 pub struct Manifest {
-    #[serde(default, rename = "@context")]
+    #[serde(default, rename = "@context", skip_deserializing)]
     pub context: Option<String>, // Can be string or array of strings
     #[serde(default)] // If ID is missing, we might use the fetch URL as a fallback later
     pub id: String,
@@ -144,9 +144,69 @@ pub struct ImageService {
     #[serde(alias = "@type")] // IIIF Image API 2 uses "@type"
     #[serde(default, rename = "type")]
     pub service_type: String, // e.g. "ImageService2", "ImageService3"
+    #[serde(default, skip_deserializing)]
     pub profile: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq, Default)]
+pub struct LegacyManifest {
+    #[serde(default)]
+    pub label: IiifLabel,
+    #[serde(default)]
+    pub sequences: Vec<LegacySequence>,
+    #[serde(default)]
+    pub metadata: Option<Vec<MetadataEntry>>,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq, Default)]
+pub struct LegacySequence {
+    #[serde(default)]
+    pub canvases: Vec<LegacyCanvas>,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq, Default)]
+pub struct LegacyCanvas {
+    #[serde(default)]
+    pub label: IiifLabel,
+    #[serde(default)]
+    pub images: Vec<LegacyAnnotation>,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq, Default)]
+pub struct LegacyAnnotation {
+    #[serde(default)]
+    pub resource: LegacyImageResource,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq, Default)]
+pub struct LegacyImageResource {
+    #[serde(default, alias = "@id")]
+    pub id: String,
+    #[serde(default, rename = "type", alias = "@type")]
+    pub resource_type: String,
+    #[serde(default)]
+    pub service: LegacyImageServices,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq, Default)]
+#[serde(untagged)]
+pub enum LegacyImageServices {
+    Single(ImageService),
+    Multiple(Vec<ImageService>),
+    #[default]
+    None,
+}
+
+impl LegacyImageServices {
+    fn as_slice(&self) -> &[ImageService] {
+        match self {
+            LegacyImageServices::Single(service) => std::slice::from_ref(service),
+            LegacyImageServices::Multiple(services) => services.as_slice(),
+            LegacyImageServices::None => &[],
+        }
+    }
 }
 
 /// Holds information extracted from a manifest for a single image to be dezoomified.
@@ -162,6 +222,36 @@ pub struct ExtractedImageInfo {
     pub canvas_label: Option<String>,
     /// The 0-based index of the canvas in the manifest's `items` array.
     pub canvas_index: usize,
+}
+
+fn image_service_info_uri(manifest_url: &str, service_id: &str) -> String {
+    let mut resolved_uri = resolve_relative(manifest_url, service_id);
+    if !resolved_uri.ends_with("/info.json") {
+        if !resolved_uri.ends_with('/') {
+            resolved_uri.push('/');
+        }
+        resolved_uri.push_str("info.json");
+    }
+    resolved_uri
+}
+
+fn choose_image_service_uri(services: &[ImageService], manifest_url: &str) -> Option<String> {
+    let service = services
+        .iter()
+        .find(|s| s.service_type == "ImageService3" && !s.id.is_empty())
+        .or_else(|| {
+            services
+                .iter()
+                .find(|s| s.service_type == "ImageService2" && !s.id.is_empty())
+        })
+        .or_else(|| {
+            services
+                .iter()
+                .find(|s| s.service_type.contains("ImageService") && !s.id.is_empty())
+        })
+        .or_else(|| services.iter().find(|s| !s.id.is_empty()))?;
+
+    Some(image_service_info_uri(manifest_url, &service.id))
 }
 
 impl Manifest {
@@ -201,46 +291,17 @@ impl Manifest {
                         // Expect "Image" type for the body, but rely on service presence.
                         // if image_body.image_type != "Image" { continue; }
 
-                        let mut final_image_uri: Option<String> = None;
-                        let mut chosen_original_service_id: Option<&str> = None;
-
-                        // Prioritize ImageService3, then ImageService2, then any other ImageService
-                        let services = &image_body.service;
-                        if let Some(service3) =
-                            services.iter().find(|s| s.service_type == "ImageService3")
-                        {
-                            if !service3.id.is_empty() {
-                                chosen_original_service_id = Some(&service3.id);
+                        let final_image_uri = choose_image_service_uri(
+                            &image_body.service,
+                            manifest_url,
+                        )
+                        .or_else(|| {
+                            if !image_body.id.is_empty() && image_body.image_type == "Image" {
+                                Some(resolve_relative(manifest_url, &image_body.id))
+                            } else {
+                                None
                             }
-                        } else if let Some(service2) =
-                            services.iter().find(|s| s.service_type == "ImageService2")
-                        {
-                            if !service2.id.is_empty() {
-                                chosen_original_service_id = Some(&service2.id);
-                            }
-                        } else if let Some(any_service) = services
-                            .iter()
-                            .find(|s| s.service_type.contains("ImageService") && !s.id.is_empty())
-                        {
-                            chosen_original_service_id = Some(&any_service.id);
-                        }
-
-                        if let Some(original_service_id) = chosen_original_service_id {
-                            let mut resolved_uri =
-                                resolve_relative(manifest_url, original_service_id);
-                            // Ensure it points to info.json if it's a service ID
-                            if !resolved_uri.ends_with("/info.json") {
-                                if !resolved_uri.ends_with('/') {
-                                    resolved_uri.push('/');
-                                }
-                                resolved_uri.push_str("info.json");
-                            }
-                            final_image_uri = Some(resolved_uri);
-                        } else if !image_body.id.is_empty() && image_body.image_type == "Image" {
-                            // If no suitable service, and body.id is present and type is Image, use it directly.
-                            // This covers cases where 'body' is a direct image link without a service.
-                            final_image_uri = Some(resolve_relative(manifest_url, &image_body.id));
-                        }
+                        });
 
                         if let Some(uri_to_add) = final_image_uri {
                             infos.push(ExtractedImageInfo {
@@ -255,6 +316,61 @@ impl Manifest {
                 }
             }
         }
+        infos
+    }
+}
+
+impl LegacyManifest {
+    /// Get the title from metadata if available
+    pub fn get_metadata_title(&self) -> Option<String> {
+        self.metadata
+            .as_ref()?
+            .iter()
+            .find_map(|entry| entry.get_title())
+    }
+
+    /// Extracts image URIs from IIIF Presentation v1/v2 manifests.
+    pub fn extract_image_infos(&self, manifest_url: &str) -> Vec<ExtractedImageInfo> {
+        let mut infos = Vec::new();
+        let manifest_label = self.label.get_english_or_first();
+        let metadata_title = self.get_metadata_title();
+
+        for (canvas_index, canvas) in self
+            .sequences
+            .iter()
+            .flat_map(|sequence| sequence.canvases.iter())
+            .enumerate()
+        {
+            let canvas_label = canvas.label.get_english_or_first();
+
+            for annotation in &canvas.images {
+                let resource = &annotation.resource;
+                let final_image_uri =
+                    choose_image_service_uri(resource.service.as_slice(), manifest_url).or_else(
+                        || {
+                            if !resource.id.is_empty()
+                                && (resource.resource_type.is_empty()
+                                    || resource.resource_type.ends_with("Image"))
+                            {
+                                Some(resolve_relative(manifest_url, &resource.id))
+                            } else {
+                                None
+                            }
+                        },
+                    );
+
+                if let Some(uri_to_add) = final_image_uri {
+                    infos.push(ExtractedImageInfo {
+                        image_uri: uri_to_add,
+                        manifest_label: manifest_label.clone(),
+                        metadata_title: metadata_title.clone(),
+                        canvas_label: canvas_label.clone(),
+                        canvas_index,
+                    });
+                }
+            }
+        }
+
         infos
     }
 }
@@ -557,6 +673,53 @@ mod tests {
             Some("Cotton MS Nero D IV".to_string())
         );
         assert_eq!(infos[0].canvas_label, Some("Front cover".to_string()));
+    }
+
+    #[test]
+    fn test_legacy_manifest_prefers_service_and_handles_arrays() {
+        let json_data = r#"{
+          "@type":"sc:Manifest","label":"A Young Lady with a Parrot","sequences":[{"canvases":[
+            {"label":"AIC canvas","images":[{"resource":{"@type":"dctypes:Image","@id":"https://www.artic.edu/iiif/2/2d9fb8b5-b9a3-3e41-270e-3c480f7b317b/full/843,/0/default.jpg","service":{"@id":"https://www.artic.edu/iiif/2/2d9fb8b5-b9a3-3e41-270e-3c480f7b317b"}}}]},
+            {"label":"Array canvas","images":[{"resource":{"@id":"thumbnail.jpg","service":[{"@id":"svc2","@type":"ImageService2"},{"id":"svc3","type":"ImageService3"}]}}]}
+          ]}]
+        }"#;
+
+        let manifest: LegacyManifest = serde_json::from_str(json_data).unwrap();
+        let infos = manifest.extract_image_infos("https://example.org/manifest.json");
+
+        assert_eq!(infos.len(), 2);
+        assert_eq!(
+            infos[0].image_uri,
+            "https://www.artic.edu/iiif/2/2d9fb8b5-b9a3-3e41-270e-3c480f7b317b/info.json"
+        );
+        assert_eq!(infos[0].canvas_label, Some("AIC canvas".to_string()));
+        assert_eq!(infos[0].canvas_index, 0);
+        assert_eq!(infos[1].image_uri, "https://example.org/svc3/info.json");
+        assert_eq!(infos[1].canvas_label, Some("Array canvas".to_string()));
+        assert_eq!(infos[1].canvas_index, 1);
+    }
+
+    #[test]
+    fn test_v1_metadata_manifest_uses_legacy_sequence_canvas_images_shape() {
+        let json_data = r#"{
+          "@context":"http://www.shared-canvas.org/ns/context.json","@type":"sc:Manifest",
+          "label":"Book 1","sequences":[{"canvases":[{"label":"p. 1","images":[{"resource":{
+            "@id":"http://www.example.org/iiif/book1/res/page1.jpg","@type":"dctypes:Image",
+            "service":{"@id":"http://www.example.org/images/book1-page1"}
+          }}]}]}]
+        }"#;
+
+        let manifest: LegacyManifest = serde_json::from_str(json_data).unwrap();
+        let infos = manifest.extract_image_infos("http://www.example.org/iiif/book1/manifest");
+
+        assert_eq!(infos.len(), 1);
+        assert_eq!(
+            infos[0].image_uri,
+            "http://www.example.org/images/book1-page1/info.json"
+        );
+        assert_eq!(infos[0].manifest_label, Some("Book 1".to_string()));
+        assert_eq!(infos[0].canvas_label, Some("p. 1".to_string()));
+        assert_eq!(infos[0].canvas_index, 0);
     }
 
     #[test]
