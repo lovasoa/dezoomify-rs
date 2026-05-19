@@ -1,5 +1,5 @@
 use crate::binary_display::display_bytes;
-use aes::cipher::{BlockDecryptMut, KeyIvInit, block_padding::NoPadding};
+use aes::cipher::{BlockModeDecrypt, KeyIvInit, block_padding::NoPadding};
 use custom_error::custom_error;
 use log::trace;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
@@ -61,7 +61,7 @@ fn aes_decrypt_buffer(encrypted: &mut [u8]) -> Result<&[u8], InvalidEncryptedIma
         113, 231, 4, 5, 53, 58, 119, 139, 250, 111, 188, 48, 50, 27, 149, 146,
     ];
     Aes128CbcDec::new(&key.into(), &iv.into())
-        .decrypt_padded_mut::<NoPadding>(encrypted)
+        .decrypt_padded::<NoPadding>(encrypted)
         .map_err(|_| InvalidEncryptedImage::DecryptError)
 }
 

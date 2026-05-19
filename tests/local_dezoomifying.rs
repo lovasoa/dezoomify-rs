@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use clap::Parser;
 use image::{self, DynamicImage, GenericImageView};
 use image_hasher::HasherConfig;
-use tempdir::TempDir;
+use tempfile::Builder as TempDirBuilder;
 
 use dezoomify_rs::{Arguments, ZoomError, dezoomify, process_bulk};
 
@@ -167,7 +167,10 @@ async fn test_bulk_processing() -> Result<(), ZoomError> {
     let workspace_root = get_workspace_root();
 
     // Create a temporary directory for the test
-    let temp_dir = TempDir::new("dezoomify-rs-bulk-test").unwrap();
+    let temp_dir = TempDirBuilder::new()
+        .prefix("dezoomify-rs-bulk-test")
+        .tempdir()
+        .unwrap();
 
     // Create a bulk URLs file with absolute paths
     let bulk_file_path = temp_dir.path().join("urls.txt");
@@ -253,7 +256,10 @@ async fn test_bulk_mode_cli_end_to_end() -> Result<(), ZoomError> {
     let workspace_root = get_workspace_root();
 
     // Create a temporary directory for the test
-    let temp_dir = TempDir::new("dezoomify-rs-cli-bulk-test").unwrap();
+    let temp_dir = TempDirBuilder::new()
+        .prefix("dezoomify-rs-cli-bulk-test")
+        .tempdir()
+        .unwrap();
 
     // Create a bulk URLs file with absolute paths
     let bulk_file_path = temp_dir.path().join("test_urls.txt");
@@ -376,7 +382,10 @@ async fn test_bulk_mode_uses_image_titles_for_iiif_manifest() {
     let workspace_root = get_workspace_root();
 
     // Create a temporary directory for the test
-    let temp_dir = TempDir::new("dezoomify-rs-bulk-title-test").unwrap();
+    let temp_dir = TempDirBuilder::new()
+        .prefix("dezoomify-rs-bulk-title-test")
+        .tempdir()
+        .unwrap();
 
     // Create a bulk URLs file with a simple test manifest
     let bulk_file_path = temp_dir.path().join("urls.txt");
@@ -448,7 +457,10 @@ async fn test_bulk_mode_with_outfile_specified_still_uses_titles_in_naming() {
     let workspace_root = get_workspace_root();
 
     // Test that even when outfile is specified, the title logic is preserved
-    let temp_dir = TempDir::new("dezoomify-rs-bulk-outfile-test").unwrap();
+    let temp_dir = TempDirBuilder::new()
+        .prefix("dezoomify-rs-bulk-outfile-test")
+        .tempdir()
+        .unwrap();
 
     let bulk_file_path = temp_dir.path().join("urls.txt");
     let mut bulk_file = File::create(&bulk_file_path).unwrap();

@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use hmac::{Mac, SimpleHmac};
+use hmac::{KeyInit, Mac, SimpleHmac};
 use sha1::Sha1;
 
 use super::PageInfo;

@@ -78,7 +78,7 @@ mod tests {
     use std::path::Path;
     use std::sync::Mutex;
 
-    use tempdir::TempDir;
+    use tempfile::Builder as TempDirBuilder;
 
     use super::*;
 
@@ -86,7 +86,9 @@ mod tests {
         lazy_static::lazy_static! {
             static ref CWD_MUTEX: Mutex<()> = Mutex::new(());
         }
-        let tmp = tempdir::TempDir::new("dezoomify-rs-tests")
+        let tmp = TempDirBuilder::new()
+            .prefix("dezoomify-rs-tests")
+            .tempdir()
             .expect("Unable to create a temporary directory to run the tests in");
         let lock = CWD_MUTEX.lock().unwrap(); // prevents multiple threads from changing cwd at once
         let cwd = current_dir().expect("Unable to getcwd");
@@ -98,7 +100,9 @@ mod tests {
     }
 
     fn assert_filename_ok(filename: &str) -> Result<(), Box<dyn Error>> {
-        let base_dir = TempDir::new("dezoomify-rs-test-filename")?;
+        let base_dir = TempDirBuilder::new()
+            .prefix("dezoomify-rs-test-filename")
+            .tempdir()?;
         let outname = get_outname(&None, &Some(filename.to_string()), base_dir.as_ref(), None);
         assert!(
             !outname.exists(),
@@ -138,7 +142,10 @@ mod tests {
 
     #[test]
     fn switch_to_png_for_large_files() {
-        let base_dir = TempDir::new("dezoomify-rs-test-png").unwrap();
+        let base_dir = TempDirBuilder::new()
+            .prefix("dezoomify-rs-test-png")
+            .tempdir()
+            .unwrap();
         let base = |s| base_dir.as_ref().join(s);
         let tests = vec![
             // outfile, zoom_name, size, expected_result
