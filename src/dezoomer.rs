@@ -1,15 +1,15 @@
 use std::borrow::{Borrow, Cow};
 use std::collections::HashMap;
 use std::error::Error;
-use std::fmt::Debug;
+use std::fmt::{self, Debug};
 use std::str::FromStr;
+use std::sync::Arc;
 
 pub use crate::errors::DezoomerError;
 
 pub use super::Vec2d;
 use super::ZoomError;
 use crate::dezoomer::PageContents::Success;
-use std::fmt;
 
 pub enum PageContents {
     Unknown,
@@ -114,18 +114,20 @@ impl ZoomableImage {
                 use crate::network::fetch_uri;
                 use log::debug;
 
-                debug!("Resolving ZoomableImageUrl: {}", url.url);
+                let ZoomableImageUrl { url, title } = url;
+
+                debug!("Resolving ZoomableImageUrl: {}", url);
 
                 // Try each dezoomer on this URL to find one that can process it
                 // Prioritize dezoomers based on URL patterns for better performance
-                let dezoomers = prioritize_dezoomers_for_url(&url.url, all_dezoomers(false));
+                let dezoomers = prioritize_dezoomers_for_url(&url, all_dezoomers(false));
 
                 for mut dezoomer in dezoomers {
-                    debug!("Trying dezoomer '{}' on URL: {}", dezoomer.name(), url.url);
+                    debug!("Trying dezoomer '{}' on URL: {}", dezoomer.name(), url);
 
                     // Use the dezoomer's zoom_levels method to try to extract levels
                     let mut input = DezoomerInput {
-                        uri: url.url.clone(),
+                        uri: url.clone(),
                         contents: PageContents::Unknown,
                     };
 
@@ -138,7 +140,7 @@ impl ZoomableImage {
                                     dezoomer.name(),
                                     levels.len()
                                 );
-                                return Ok(levels);
+                                return Ok(zoom_levels_with_title(levels, title));
                             }
                             Err(DezoomerError::NeedsData { uri: needed_uri }) => {
                                 debug!(
@@ -164,6 +166,69 @@ impl ZoomableImage {
             }
         }
     }
+}
+
+#[derive(Debug)]
+struct TitledZoomLevel {
+    inner: ZoomLevel,
+    title: Arc<str>,
+}
+
+impl TileProvider for TitledZoomLevel {
+    fn next_tiles(&mut self, previous: Option<TileFetchResult>) -> Vec<TileReference> {
+        self.inner.next_tiles(previous)
+    }
+
+    fn post_process_fn(&self) -> PostProcessFn {
+        self.inner.post_process_fn()
+    }
+
+    fn fmt_name(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt_level_name(
+            f,
+            format_args!("{}", self.title),
+            self.inner.size_hint(),
+            self.inner.tile_count_hint(),
+        )
+    }
+
+    fn title(&self) -> Option<String> {
+        Some(self.title.to_string())
+    }
+
+    fn size_hint(&self) -> Option<Vec2d> {
+        self.inner.size_hint()
+    }
+
+    fn tile_count_hint(&self) -> Option<u32> {
+        self.inner.tile_count_hint()
+    }
+
+    fn http_headers(&self) -> HashMap<String, String> {
+        self.inner.http_headers()
+    }
+}
+
+fn zoom_levels_with_title(levels: ZoomLevels, title: Option<String>) -> ZoomLevels {
+    let Some(title) = title.filter(|title| !title.trim().is_empty()) else {
+        return levels;
+    };
+
+    let title: Arc<str> = Arc::from(title);
+
+    levels
+        .into_iter()
+        .map(|inner| {
+            if inner.title().is_some_and(|title| !title.trim().is_empty()) {
+                inner
+            } else {
+                Box::new(TitledZoomLevel {
+                    inner,
+                    title: title.clone(),
+                }) as ZoomLevel
+            }
+        })
+        .collect()
 }
 
 #[derive(Debug)]
@@ -267,7 +332,12 @@ pub trait TileProvider: Debug {
 
     /// The name of the format
     fn name(&self) -> String {
-        format!("{self:?}")
+        TileProviderName(self).to_string()
+    }
+
+    /// Format this provider for zoom-level pickers.
+    fn fmt_name(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
     }
 
     /// The title of the image
@@ -280,9 +350,45 @@ pub trait TileProvider: Debug {
         None
     }
 
+    /// The number of tiles in the image. Can be unknown when dezooming starts
+    fn tile_count_hint(&self) -> Option<u32> {
+        None
+    }
+
     /// A collection of http headers to use when requesting the tiles
     fn http_headers(&self) -> HashMap<String, String> {
         HashMap::new()
+    }
+}
+
+struct TileProviderName<'a, T: TileProvider + ?Sized>(&'a T);
+
+impl<T: TileProvider + ?Sized> fmt::Display for TileProviderName<'_, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt_name(f)
+    }
+}
+
+impl fmt::Display for dyn TileProvider + Send + Sync + '_ {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt_name(f)
+    }
+}
+
+fn fmt_level_name(
+    f: &mut fmt::Formatter<'_>,
+    label: fmt::Arguments<'_>,
+    size: Option<Vec2d>,
+    tile_count: Option<u32>,
+) -> fmt::Result {
+    f.write_fmt(label)?;
+    match (size, tile_count) {
+        (Some(Vec2d { x, y }), Some(tile_count)) => {
+            write!(f, " ({x:>5} x {y:>5} pixels, {tile_count:>5} tiles)")
+        }
+        (Some(Vec2d { x, y }), None) => write!(f, " ({x:>5} x {y:>5} pixels)"),
+        (None, Some(tile_count)) => write!(f, " ({tile_count:>5} tiles)"),
+        (None, None) => Ok(()),
     }
 }
 
@@ -367,14 +473,12 @@ impl<T: TilesRect> TileProvider for T {
         TilesRect::post_process_fn(self)
     }
 
-    fn name(&self) -> String {
-        let Vec2d { x, y } = self.size();
-        format!(
-            "{:?} ({:>5} x {:>5} pixels, {:>5} tiles)",
-            self,
-            x,
-            y,
-            self.tile_count()
+    fn fmt_name(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt_level_name(
+            f,
+            format_args!("{self:?}"),
+            Some(self.size()),
+            Some(self.tile_count()),
         )
     }
 
@@ -384,6 +488,10 @@ impl<T: TilesRect> TileProvider for T {
 
     fn size_hint(&self) -> Option<Vec2d> {
         Some(self.size())
+    }
+
+    fn tile_count_hint(&self) -> Option<u32> {
+        Some(self.tile_count())
     }
 
     fn http_headers(&self) -> HashMap<String, String> {
@@ -458,8 +566,16 @@ pub fn dezoomer_result_from_single_url(url: ZoomableImageUrl) -> DezoomerResult 
 mod tests {
     use super::*;
 
-    #[derive(Debug)]
-    struct FakeLvl;
+    #[derive(Default)]
+    struct FakeLvl {
+        title: Option<&'static str>,
+    }
+
+    impl std::fmt::Debug for FakeLvl {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("FakeLvl")
+        }
+    }
 
     impl TilesRect for FakeLvl {
         fn size(&self) -> Vec2d {
@@ -473,11 +589,15 @@ mod tests {
         fn tile_url(&self, pos: Vec2d) -> String {
             format!("{},{}", pos.x, pos.y)
         }
+
+        fn title(&self) -> Option<String> {
+            self.title.map(str::to_string)
+        }
     }
 
     #[test]
     fn assert_tiles() {
-        let mut lvl: ZoomLevel = Box::new(FakeLvl {});
+        let mut lvl: ZoomLevel = Box::<FakeLvl>::default();
         let mut all_tiles = vec![];
         let mut zoom_level_iter = ZoomLevelIter::new(&mut lvl);
         while let Some(tiles) = zoom_level_iter.next_tile_references() {
@@ -513,7 +633,7 @@ mod tests {
 
     #[test]
     fn test_simple_zoomable_image() {
-        let zoom_levels: ZoomLevels = vec![Box::new(FakeLvl {})];
+        let zoom_levels: ZoomLevels = vec![Box::<FakeLvl>::default()];
         let title = Some("Test Image".to_string());
 
         let image = SimpleZoomableImage::new(zoom_levels, title.clone());
@@ -528,5 +648,31 @@ mod tests {
         // Test that into_zoom_levels works correctly
         let extracted_levels = boxed_image.into_zoom_levels().unwrap();
         assert_eq!(extracted_levels.len(), 1);
+    }
+
+    #[test]
+    fn test_zoom_levels_with_title_preserves_level_details() {
+        let levels =
+            zoom_levels_with_title(vec![Box::<FakeLvl>::default()], Some("Readable".into()));
+
+        let display_name = format!("{}", &*levels[0]);
+        assert_eq!(levels[0].title(), Some("Readable".to_string()));
+        assert_eq!(levels[0].name(), display_name);
+        assert!(display_name.starts_with("Readable ("));
+        assert!(display_name.contains("pixels"));
+        assert!(display_name.contains("tiles"));
+    }
+
+    #[test]
+    fn test_zoom_levels_with_title_preserves_inner_title() {
+        let levels = zoom_levels_with_title(
+            vec![Box::new(FakeLvl {
+                title: Some("Inner Title"),
+            })],
+            Some("Outer Title".into()),
+        );
+
+        assert_eq!(levels[0].title(), Some("Inner Title".to_string()));
+        assert!(format!("{}", &*levels[0]).starts_with("FakeLvl ("));
     }
 }
