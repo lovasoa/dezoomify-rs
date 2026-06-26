@@ -1,9 +1,11 @@
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, LazyLock};
 
 use custom_error::custom_error;
 use itertools::Itertools;
 use log::debug;
 use log::warn;
+use regex::Regex;
 
 use krpano_metadata::{KrpanoMetadata, TemplateString, TemplateStringPart, XY};
 
@@ -51,18 +53,23 @@ enum ResolveState {
     #[default]
     None,
     /// HTML loaded; XML URL known from embedpano.  Need the viewer JS.
-    NeedJs { xml_uri: String },
+    NeedJs {
+        xml_uri: String,
+        remaining_js_uris: Vec<String>,
+    },
     /// Viewer JS loaded; need the XML config to proceed.
     /// Carries the JS so it can be reused if the XML is encrypted.
     NeedXml {
         xml_uri: String,
         viewer_js: Vec<u8>,
+        remaining_js_uris: Vec<String>,
     },
     /// Encrypted XML is pending; need the viewer JS to decrypt it.
     /// (Used when the entry point is XML directly, not HTML.)
     NeedJsToDecrypt {
         xml_uri: String,
         xml_contents: Vec<u8>,
+        remaining_js_uris: Vec<String>,
     },
 }
 
@@ -91,56 +98,98 @@ impl KrpanoDezoomer {
         parse: impl FnOnce(&str, &[u8]) -> Result<T, DezoomerError>,
     ) -> Result<T, DezoomerError> {
         let DezoomerInputWithContents { uri, contents } = data.with_contents()?;
-        debug!("krpano handle_input: uri={uri}, content_len={}", contents.len());
+        debug!(
+            "krpano handle_input: uri={uri}, content_len={}",
+            contents.len()
+        );
 
         // --- State machine dispatch ---
 
         // HTML → JS: we know the XML URL, the current call is the viewer JS.
         // Save the JS and request the XML.
         if matches!(&self.state, ResolveState::NeedJs { .. }) {
-            let xml_uri = match &self.state {
-                ResolveState::NeedJs { xml_uri } => xml_uri.clone(),
+            let (xml_uri, remaining_js_uris) = match std::mem::take(&mut self.state) {
+                ResolveState::NeedJs {
+                    xml_uri,
+                    remaining_js_uris,
+                } => (xml_uri, remaining_js_uris),
                 _ => unreachable!(),
             };
-            debug!("krpano state=NeedJs → got JS ({} bytes), requesting XML: {xml_uri}", contents.len());
+            debug!(
+                "krpano state=NeedJs → got JS ({} bytes), requesting XML: {xml_uri}",
+                contents.len()
+            );
             let viewer_js = contents.to_vec();
             self.state = ResolveState::NeedXml {
                 xml_uri: xml_uri.clone(),
                 viewer_js,
+                remaining_js_uris,
             };
             return Err(DezoomerError::NeedsData { uri: xml_uri });
         }
 
         // JS → XML: we have the viewer JS; the current call is the XML.
         // If encrypted, decrypt with the saved JS.  Otherwise parse directly.
-        if let ResolveState::NeedXml {
-            xml_uri,
-            viewer_js,
-        } = &self.state
-        {
-            let (xml_uri, viewer_js) = (xml_uri.clone(), viewer_js.clone());
-            self.state = ResolveState::None;
-            debug!("krpano state=NeedXml → got content ({} bytes), xml_uri={xml_uri}", contents.len());
+        if matches!(&self.state, ResolveState::NeedXml { .. }) {
+            let (xml_uri, viewer_js, mut remaining_js_uris) = match std::mem::take(&mut self.state)
+            {
+                ResolveState::NeedXml {
+                    xml_uri,
+                    viewer_js,
+                    remaining_js_uris,
+                } => (xml_uri, viewer_js, remaining_js_uris),
+                _ => unreachable!(),
+            };
+            debug!(
+                "krpano state=NeedXml → got content ({} bytes), xml_uri={xml_uri}",
+                contents.len()
+            );
 
             if encrypted::is_encrypted_xml(contents) {
-                debug!("krpano: XML is encrypted, decrypting with saved viewer JS ({} bytes)", viewer_js.len());
-                let decrypted = decrypt_xml(contents, Some(&viewer_js))?;
-                debug!("krpano: decrypted XML = {} bytes", decrypted.len());
-                return parse(&xml_uri, &decrypted);
+                debug!(
+                    "krpano: XML is encrypted, decrypting with saved viewer JS ({} bytes)",
+                    viewer_js.len()
+                );
+                match decrypt_xml(contents, Some(&viewer_js)) {
+                    Ok(decrypted) => {
+                        debug!("krpano: decrypted XML = {} bytes", decrypted.len());
+                        return parse(&xml_uri, &decrypted);
+                    }
+                    Err(e) => {
+                        if let Some(next_js_uri) = next_js_candidate(&mut remaining_js_uris) {
+                            debug!(
+                                "krpano: decrypt failed with candidate JS: {e}; trying next JS candidate {next_js_uri}"
+                            );
+                            self.state = ResolveState::NeedJsToDecrypt {
+                                xml_uri,
+                                xml_contents: contents.to_vec(),
+                                remaining_js_uris,
+                            };
+                            return Err(DezoomerError::NeedsData { uri: next_js_uri });
+                        }
+                        return Err(e.into());
+                    }
+                }
             }
             debug!("krpano: XML is plain, parsing directly");
             return parse(&xml_uri, contents);
         }
 
         // Encrypted XML entry point: need viewer JS to decrypt.
-        if let ResolveState::NeedJsToDecrypt {
-            xml_uri,
-            xml_contents,
-        } = &self.state
-        {
-            let (xml_uri, xml_contents) = (xml_uri.clone(), xml_contents.clone());
-            self.state = ResolveState::None;
-            debug!("krpano state=NeedJsToDecrypt → got potential viewer JS ({} bytes)", contents.len());
+        if matches!(&self.state, ResolveState::NeedJsToDecrypt { .. }) {
+            let (xml_uri, xml_contents, mut remaining_js_uris) =
+                match std::mem::take(&mut self.state) {
+                    ResolveState::NeedJsToDecrypt {
+                        xml_uri,
+                        xml_contents,
+                        remaining_js_uris,
+                    } => (xml_uri, xml_contents, remaining_js_uris),
+                    _ => unreachable!(),
+                };
+            debug!(
+                "krpano state=NeedJsToDecrypt → got potential viewer JS ({} bytes)",
+                contents.len()
+            );
 
             // Use raw contents as viewer JS (handles packed viewers).
             let viewer_js = extract_viewer_js(contents).unwrap_or_else(|| contents.to_vec());
@@ -150,11 +199,18 @@ impl KrpanoDezoomer {
                     return parse(&xml_uri, &decrypted);
                 }
                 Err(e) => {
-                    debug!("krpano: decrypt failed with saved JS: {e}");
-                    self.state = ResolveState::NeedJsToDecrypt {
-                        xml_uri,
-                        xml_contents,
-                    };
+                    if let Some(next_js_uri) = next_js_candidate(&mut remaining_js_uris) {
+                        debug!(
+                            "krpano: decrypt failed with candidate JS: {e}; trying next JS candidate {next_js_uri}"
+                        );
+                        self.state = ResolveState::NeedJsToDecrypt {
+                            xml_uri,
+                            xml_contents,
+                            remaining_js_uris,
+                        };
+                        return Err(DezoomerError::NeedsData { uri: next_js_uri });
+                    }
+                    return Err(e.into());
                 }
             }
         }
@@ -164,14 +220,17 @@ impl KrpanoDezoomer {
         if looks_like_html(contents) {
             debug!("krpano: content looks like HTML ({} bytes)", contents.len());
             let html = String::from_utf8_lossy(contents);
-            let js_uri = extract_js_from_html(&html, uri);
+            let mut js_uris = extract_js_candidates_from_html(&html, uri);
             let xml_uri = extract_xml_from_embedpano(&html)
                 .map(|rel| resolve_relative(uri, &rel))
                 .unwrap_or_else(|| sibling_uri(uri, "tour.xml"));
 
-            debug!("krpano HTML: js_uri={js_uri:?}, xml_uri={xml_uri}");
-            if let Some(js_uri) = js_uri {
-                self.state = ResolveState::NeedJs { xml_uri };
+            debug!("krpano HTML: js_uris={js_uris:?}, xml_uri={xml_uri}");
+            if let Some(js_uri) = next_js_candidate(&mut js_uris) {
+                self.state = ResolveState::NeedJs {
+                    xml_uri,
+                    remaining_js_uris: js_uris,
+                };
                 return Err(DezoomerError::NeedsData { uri: js_uri });
             }
             debug!("krpano HTML: no JS found, requesting XML directly");
@@ -180,7 +239,10 @@ impl KrpanoDezoomer {
 
         if looks_like_viewer_js(contents) {
             let xml_uri = sibling_uri(uri, "tour.xml");
-            debug!("krpano: content looks like viewer JS ({} bytes), requesting XML: {xml_uri}", contents.len());
+            debug!(
+                "krpano: content looks like viewer JS ({} bytes), requesting XML: {xml_uri}",
+                contents.len()
+            );
             return Err(DezoomerError::NeedsData { uri: xml_uri });
         }
 
@@ -190,12 +252,16 @@ impl KrpanoDezoomer {
             self.state = ResolveState::NeedJsToDecrypt {
                 xml_uri: uri.to_string(),
                 xml_contents: contents.to_vec(),
+                remaining_js_uris: Vec::new(),
             };
             return Err(DezoomerError::NeedsData { uri: js_uri });
         }
 
         // Plain (non-encrypted) krpano XML — parse directly.
-        debug!("krpano: trying to parse as plain XML ({} bytes)", contents.len());
+        debug!(
+            "krpano: trying to parse as plain XML ({} bytes)",
+            contents.len()
+        );
         parse(uri, contents)
     }
 }
@@ -213,28 +279,56 @@ fn looks_like_viewer_js(contents: &[u8]) -> bool {
         && (text.contains("krpano") || text.contains("loadpano") || text.contains("embedhtml5"))
 }
 
-/// Try to extract a viewer JS URL from an HTML page.
-/// Returns the first `<script src="...">` that is not inline.
-fn extract_js_from_html(html: &str, html_uri: &str) -> Option<String> {
-    debug!("extract_js_from_html: scanning {} bytes of HTML", html.len());
-    // Find any <script src="..."> tag.
-    for line in html.lines() {
-        let lower = line.to_lowercase();
-        if lower.contains("<script") && lower.contains("src=") {
-            if let Some(src) = extract_src_attr(line) {
-                // Skip common non-viewer scripts.
-                if !src.ends_with(".js") {
-                    debug!("extract_js_from_html: skipping non-JS src: {src}");
-                    continue;
-                }
-                let resolved = resolve_relative(html_uri, &src);
-                debug!("extract_js_from_html: found {src} → {resolved}");
-                return Some(resolved);
-            }
+/// Try to extract viewer JS candidates from an HTML page.
+///
+/// The candidates are ranked so krpano viewer filenames (`tour.js`,
+/// `krpano.js`, `*krpano*.js`) come before common library or analytics
+/// scripts.  Less likely scripts are retained as fallbacks for encrypted XML
+/// pages whose actual viewer has a non-standard filename.
+fn extract_js_candidates_from_html(html: &str, html_uri: &str) -> Vec<String> {
+    debug!(
+        "extract_js_from_html: scanning {} bytes of HTML",
+        html.len()
+    );
+
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+
+    for (index, tag) in SCRIPT_TAG_RE.find_iter(html).enumerate() {
+        let tag = tag.as_str();
+        let Some(src) = extract_src_attr(tag) else {
+            continue;
+        };
+        if !is_javascript_src(&src) {
+            debug!("extract_js_from_html: skipping non-JS src: {src}");
+            continue;
+        }
+
+        let resolved = resolve_relative(html_uri, &src);
+        if seen.insert(resolved.clone()) {
+            let score = viewer_script_score(&src);
+            debug!("extract_js_from_html: candidate {src} → {resolved}, score={score}");
+            candidates.push(ScriptCandidate {
+                uri: resolved,
+                score,
+                index,
+            });
         }
     }
+
+    candidates.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.index.cmp(&b.index)));
+    let uris = candidates
+        .into_iter()
+        .map(|candidate| candidate.uri)
+        .collect::<Vec<_>>();
+
+    if !uris.is_empty() {
+        debug!("extract_js_from_html: ranked candidates={uris:?}");
+        return uris;
+    }
+
     debug!("extract_js_from_html: no <script src> found");
-    None
+    Vec::new()
 }
 
 /// Extract the XML URL from an `embedpano({xml:"..."})` call in an HTML page.
@@ -265,14 +359,12 @@ fn extract_xml_from_embedpano(html: &str) -> Option<String> {
 
 /// Extract the `src` attribute value from a <script> tag.
 fn extract_src_attr(line: &str) -> Option<String> {
-    let start = line.find("src=")?;
-    let rest = &line[start + 4..];
-    let quote = rest.chars().next()?;
-    if quote != '"' && quote != '\'' {
-        return None;
-    }
-    let end = rest[1..].find(quote)?;
-    Some(rest[1..=end].to_string())
+    let captures = SCRIPT_SRC_RE.captures(line)?;
+    captures
+        .get(1)
+        .or_else(|| captures.get(2))
+        .or_else(|| captures.get(3))
+        .map(|capture| capture.as_str().to_string())
 }
 
 /// Extract viewer JS from a data block — the content might be the JS itself,
@@ -301,6 +393,93 @@ fn sibling_uri(uri: &str, filename: &str) -> String {
         format!("{dir}/{filename}")
     } else {
         filename.to_string()
+    }
+}
+
+#[derive(Debug)]
+struct ScriptCandidate {
+    uri: String,
+    score: i32,
+    index: usize,
+}
+
+static SCRIPT_TAG_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)<script\b[^>]*>").unwrap());
+
+static SCRIPT_SRC_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?is)(?:^|[\s<])src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))"#).unwrap()
+});
+
+fn is_javascript_src(src: &str) -> bool {
+    let without_query = src
+        .split_once(['?', '#'])
+        .map_or(src, |(path, _)| path)
+        .to_ascii_lowercase();
+    without_query.ends_with(".js")
+}
+
+fn viewer_script_score(src: &str) -> i32 {
+    let lower = src.to_ascii_lowercase();
+    let path = lower
+        .split_once(['?', '#'])
+        .map_or(lower.as_str(), |(path, _)| path);
+    let filename = path.rsplit('/').next().unwrap_or(path);
+    let mut score = 0;
+
+    if filename == "tour.js" {
+        score += 1_000;
+    } else if filename == "krpano.js" {
+        score += 950;
+    } else {
+        if filename.contains("krpano") {
+            score += 850;
+        }
+        if filename.contains("pano") {
+            score += 450;
+        }
+        if filename.contains("tour") {
+            score += 400;
+        }
+        if filename.contains("viewer") {
+            score += 250;
+        }
+    }
+
+    if is_common_non_viewer_script(filename) || is_common_non_viewer_script(path) {
+        score -= 1_000;
+    }
+
+    score
+}
+
+fn is_common_non_viewer_script(value: &str) -> bool {
+    [
+        "jquery",
+        "analytics",
+        "gtag",
+        "googletagmanager",
+        "matomo",
+        "piwik",
+        "bootstrap",
+        "modernizr",
+        "polyfill",
+        "underscore",
+        "lodash",
+        "react",
+        "vue",
+        "angular",
+        "runtime",
+        "vendor",
+    ]
+    .iter()
+    .any(|needle| value.contains(needle))
+}
+
+fn next_js_candidate(js_uris: &mut Vec<String>) -> Option<String> {
+    if js_uris.is_empty() {
+        None
+    } else {
+        Some(js_uris.remove(0))
     }
 }
 
@@ -731,4 +910,85 @@ fn encrypted_xml_second_call_decrypts() {
         Ok(_levels) => { /* success */ }
         Err(e) => panic!("second call failed: {e}"),
     }
+}
+
+#[test]
+fn html_script_candidates_prefer_krpano_viewer() {
+    let html = r#"
+        <html>
+            <head>
+                <script src="/assets/jquery.min.js"></script>
+                <script src='https://www.googletagmanager.com/gtag/js?id=G-TEST'></script>
+                <script data-src="ignored.js" src = "assets/tour.js?cache=1"></script>
+            </head>
+        </html>
+    "#;
+
+    let candidates = extract_js_candidates_from_html(html, "http://example.com/pano/index.html");
+    assert_eq!(
+        candidates.first().map(String::as_str),
+        Some("http://example.com/pano/assets/tour.js?cache=1")
+    );
+}
+
+#[test]
+fn html_encrypted_xml_falls_back_to_next_viewer_candidate() {
+    let mut dezoomer = KrpanoDezoomer::default();
+    let html = r#"
+        <html>
+            <head>
+                <script src="tour.js"></script>
+                <script src="krpano.js"></script>
+                <script src="assets/jquery.js"></script>
+            </head>
+            <body>
+                <script>embedpano({xml:"tour.xml", target:"pano"});</script>
+            </body>
+        </html>
+    "#;
+    let xml = std::fs::read("testdata/krpano/encrypted/2018-04-04/tour.xml").unwrap();
+    let real_js = std::fs::read("testdata/krpano/encrypted/2018-04-04/tour.js").unwrap();
+
+    let input_html = DezoomerInput {
+        uri: "http://example.com/pano/index.html".to_string(),
+        contents: PageContents::Success(html.as_bytes().to_vec()),
+    };
+    let result = dezoomer.zoom_levels(&input_html);
+    match result {
+        Err(DezoomerError::NeedsData { uri }) => {
+            assert_eq!(uri, "http://example.com/pano/tour.js");
+        }
+        other => panic!("expected first JS NeedsData, got {other:?}"),
+    }
+
+    let input_bad_js = DezoomerInput {
+        uri: "http://example.com/pano/tour.js".to_string(),
+        contents: PageContents::Success(b"console.log('not krpano');".to_vec()),
+    };
+    let result = dezoomer.zoom_levels(&input_bad_js);
+    match result {
+        Err(DezoomerError::NeedsData { uri }) => {
+            assert_eq!(uri, "http://example.com/pano/tour.xml");
+        }
+        other => panic!("expected XML NeedsData, got {other:?}"),
+    }
+
+    let input_xml = DezoomerInput {
+        uri: "http://example.com/pano/tour.xml".to_string(),
+        contents: PageContents::Success(xml),
+    };
+    let result = dezoomer.zoom_levels(&input_xml);
+    match result {
+        Err(DezoomerError::NeedsData { uri }) => {
+            assert_eq!(uri, "http://example.com/pano/krpano.js");
+        }
+        other => panic!("expected fallback JS NeedsData, got {other:?}"),
+    }
+
+    let input_real_js = DezoomerInput {
+        uri: "http://example.com/pano/krpano.js".to_string(),
+        contents: PageContents::Success(real_js),
+    };
+    let result = dezoomer.zoom_levels(&input_real_js);
+    assert!(result.is_ok(), "fallback viewer JS failed: {result:?}");
 }
