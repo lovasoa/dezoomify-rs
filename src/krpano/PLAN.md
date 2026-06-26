@@ -4,15 +4,14 @@
 
 `dezoomify-rs` already has a `krpano` dezoomer that can parse normal krpano XML and build tile providers from `<image>`, `<level>`, and shape tags. Some krpano tours, including the HIROX capture that motivated this work, ship an XML file whose top-level content is an `<encrypted>` element instead of readable krpano XML. The existing parser cannot process those files until the encrypted payload has been decrypted and decompressed back into normal XML.
 
-The previous implementation only added detection/extraction scaffolding in `src/krpano/encrypted.rs`. That is useful plumbing, but it is not sufficient: the decryption entrypoint still returns `Unsupported`, so encrypted krpano tours are not actually supported yet.
+Update this file as implementation progresses.
 
 ## What is understood already
 
-- The HIROX sample is krpano, not a new zoomable image format.
 - The viewer JavaScript contains an obfuscated loader that first decodes the actual krpano engine source.
 - The top-level viewer-loader obfuscation is modified Base85 followed by LZ4 block decompression and `new Function(...)`.
 - The actual krpano engine contains a separate file/XML decryption path in its internal resource-loader module.
-- In the supplied decrypted krpano source, the relevant XML/file path is centered around:
+- In the [decrypted krpano source](testdata/krpano/encrypted/2023-04-30/decoded.js), the relevant XML/file path is centered around:
   - `ra.decryptData(...)`, which decrypts krpano’s encrypted string constants.
   - The internal resource decoding function usually named `w(a, d)` in the minified source.
   - The byte decryption helper usually named `b(a, b)` in the minified source.
@@ -34,11 +33,8 @@ The previous implementation only added detection/extraction scaffolding in `src/
 
 ### 1. Build a focused test corpus
 
-1. Save a tiny readable krpano XML fixture.
-2. Use official `krpanotools encrypt -p` to generate a public encrypted fixture from it.
-3. Keep the HIROX `tour.xml` capture as a real-world protected/private encrypted fixture.
-4. If possible, add one custom-key fixture generated from a licensed/protected test viewer or documented example.
-5. Store only small, license-safe fixtures in the repository; keep large or proprietary captures out of tree.
+Done, see [testdata](testdata/krpano/encrypted/).
+Each folder has a tour.{js,xml} pair that the code in the repo should be able to decode.
 
 ### 2. Port payload extraction and header parsing
 
@@ -70,9 +66,9 @@ Status: in progress. The RC4-like byte decryptor from minified helper `b(a, b)` 
 ### 5. Resolve key and constant derivation
 
 1. Isolate the smallest part of `ra.decryptData(...)` needed to decrypt the constants used by XML/file decryption.
-2. Port that string-constant decryptor if the constants cannot be replaced by stable documented values.
+2. Investigate whether the constants can be replaced by stable documented values. Otherwise write rust code to extract the constants from the js files.
 3. Extract viewer keys from JavaScript (`h(t, "krp:...")`) and from protected/custom-key metadata where available.
-4. Add tests that prove the derived keys decrypt generated fixtures and the HIROX fixture.
+4. Add tests that prove the derived keys decrypt generated fixtures and the HIROX fixture. We should have a test that iterates on testdata/krpano/encrypted/ and asserts all js/xml pairs decode successfully.
 
 ### 6. Integrate into `KrpanoDezoomer`
 
