@@ -155,6 +155,11 @@ Modern `Z` vector proven by `/tmp/krpano_decrypt_2018_probe.js`:
 - `2015-08-04` accepts `P`, `R`, and an embedded-key `G` mode. Its `R` branch can use license-derived key variable `od`, but also has a default-key fallback not seen in later old engines.
 - The old license decoder has a `case 7` branch that pads the recovered key string to 128 characters when needed, then stores it in the helper key variable (`od`, `pe`, or `Pd` depending on version).
 - The `decodeLicense=function(a){return null}` found inside the resource module is not the old license decoder that assigns those variables.
+- **2026-06-26 probe findings:**
+  - Decryptor usage pattern confirmed: `if(82==b)if(Pd)f=127,h=Pd;else return null` (where `Pd` is the key variable, varies by fixture).
+  - Z body transform sequence in the old decoded engine: Base85-decode body → `decrypt_bytes` with mode='R' (82) and key=`Pd`/`od`/`pe` → parse LZ4 header from decrypted result → LZ4 decompress → UTF-8.
+  - The wrapper `krp:` key is NOT directly the decrypt key. Passing the wrapper key value (stripped of `krp:` prefix, padded to 128 chars) to `decrypt_bytes` produces garbage — the key must first go through the real license-decoder (Base64 decode + checksum + character lookup) before reaching `case 7`.
+  - The real license decoder that processes the `krp:` wrapper key into `Pd`/`od`/`pe` has not yet been structurally located. This blocks old-fixture decryption.
 
 ### Modern engine family
 
@@ -234,7 +239,7 @@ The modern resource-file function has the same high-level branch structure acros
 3. **No dead test code.** Every `#[allow(dead_code)]` is removed once its consumer is wired; the test exercises the public path.
 4. **Exact errors for unsupported branches.** Tests that exercise `B`, `G`, or unknown headers assert the error message contains the header bytes and branch name.
 5. **Generated output is not committed.** LZ4 decompressed payloads and full decoded engines stay in `/tmp` or test output; only small excerpts (e.g. first 80 bytes of plaintext) appear in test assertions.
-6. **Old engine first.** Old `KENCRUZR` fixtures use a simpler, better-understood pipeline; proving the Z branch with old fixtures first builds confidence before tackling the more complex modern startup-unpack.
+6. **Proven-key first.** Implement the Z branch pipeline against a fixture with a known working key (`2018-04-04`, key = `actions overflow`) before tackling key-derivation problems. The Z branch code is identical for old and modern engines; only the key source differs.
 
 ## Decisions
 
@@ -244,7 +249,7 @@ The modern resource-file function has the same high-level branch structure acros
 - Split implementation into two known engine families:
   - old literal-header engines,
   - modern startup-unpack / `we.subdiv` engines with `decryptData` retained as a secondary helper behind `Rt`.
-- **Implement old engine first.** It is simpler (literal `KENC`, numeric `_[]` table, well-understood license-decoder path) and proves the Z branch end-to-end before tackling modern complexity.
+- **Implement shared Z branch first** using the modern `2018-04-04` fixture (key = `actions overflow`, proven by `/tmp/krpano_decrypt_2018_probe.js`). Then derive old-engine keys and modern-engine constants. The Z body transform is identical across both engine families; only the key source differs. Old-engine key derivation is blocked on locating the real license decoder that processes the `krp:` wrapper key into `Pd`/`od`/`pe`.
 - Treat `P/P` and `R/R` as their own body-transform family until proven otherwise.
 - Keep unobserved branches (`B`, 2015 `G`) unsupported or fixture-gated until test data exists.
 - Wire `decrypt_xml` only after each stage has fixture-driven intermediate vectors.
@@ -268,7 +273,7 @@ Each item below needs an explicit answer, fixture vector, or implementation deci
 
 ### Phase 1: Freeze Fixture Metadata
 
-Status: next.
+Status: **done** (2026-06-26).
 
 Goal: make the current corpus facts executable so regressions are caught immediately.
 
@@ -321,7 +326,7 @@ Acceptance checks:
 
 ### Phase 2: Build an Analysis Harness
 
-Status: not started.
+Status: **next**.
 
 Goal: make intermediate decrypt stages inspectable without committing large decoded JS files.
 
@@ -372,7 +377,9 @@ Acceptance checks:
 
 ### Phase 3: Derive Old-Engine Keys and Prove Old Z Branch
 
-Status: not started.
+Status: **in progress** — Part A (key derivation) blocked on investigation; Part B (Z branch wiring) can proceed independently.
+
+**2026-06-26 revision:** Part B (Z branch wiring in `branches.rs`) is engine-family-agnostic. It will be implemented and tested against the modern `2018-04-04` fixture (key = `actions overflow`) as part of Phase 5. Part A (old license key derivation) remains blocked until the real license decoder is structurally located in the old decoded engines.
 
 Goal: derive license keys for `KENCRUZR` fixtures and prove the full Z pipeline end-to-end with old fixtures. This is the simpler pipeline and should be completed first.
 
@@ -436,7 +443,7 @@ Acceptance checks:
 
 ### Phase 4: Derive Modern Static Constants and Keys
 
-Status: partially proven in temporary probes.
+Status: **next** (partially proven in temporary probes).
 
 Goal: resolve modern startup-unpacked `we.subdiv` constants into concrete strings without executing arbitrary viewer JS.
 
@@ -724,12 +731,12 @@ Phase 3 can be done in parallel with Phase 4 if desired.
 
 Do these in order:
 
-1. **Phase 1:** Add fixture metadata tests and `KencBranch` classification in `encrypted.rs`.
-2. **Phase 2:** Add analysis harness, then split `encrypted.rs` → `encrypted/` module.
-3. **Phase 3:** Old license key derivation + old Z branch — **first end-to-end decrypting pipeline.**
-4. **Phase 4** (in parallel with Phase 3 if desired): Modern startup-unpack in `encrypted/modern_engine.rs`.
-5. **Phase 5:** Modern Z branch (`2018-04-04`), now that old Z is proven and modern constants exist.
-6. **Phase 6:** `P/P` and `R/R` branch resolution (likely needs investigation before full implementation).
+1. ✅ ~~**Phase 1:** Add fixture metadata tests and `KencBranch` classification.~~
+2. ✅ ~~**Phase 2:** Add analysis harness, split `encrypted.rs` → `encrypted/` module.~~
+3. **Phase 3 Part B + Phase 5 combined:** Implement Z branch transform in `branches.rs`, test against `2018-04-04` with known key `actions overflow`. First end-to-end decrypting pipeline.
+4. **Phase 4:** Modern startup-unpack in `encrypted/modern_engine.rs` — extract `actions overflow` structurally instead of hardcoding.
+5. **Phase 3 Part A** (deferred): Old license key derivation — locate the real license decoder in old engines.
+6. **Phase 6:** `P/P` and `R/R` branch resolution.
 7. **Phase 7:** Complete `decrypt_xml` dispatching all branches.
 8. **Phase 8+9:** Dezoomer integration and validation.
 
@@ -737,9 +744,9 @@ Do these in order:
 
 - Commit 1: Phase 1 — fixture metadata tests + `KencBranch` (additions to `encrypted.rs`).
 - Commit 2: Phase 2 — analysis harness + module split `encrypted.rs` → `encrypted/{mod,header,codecs,crypto,viewer}.rs` (pure move, no logic change).
-- Commit 3: Phase 3 — `encrypted/old_engine.rs` + `encrypted/branches.rs` (Z branch), old fixtures decrypting end-to-end.
-- Commit 4: Phase 4 — `encrypted/modern_engine.rs` with context extraction + tests.
-- Commit 5: Phase 5 — modern Z branch for `2018-04-04`.
+- Commit 3: Phase 3 Part B + Phase 5 — `encrypted/branches.rs` (Z branch transform), tested against `2018-04-04` with known key `actions overflow`. First end-to-end decrypting pipeline.
+- Commit 4: Phase 4 — `encrypted/modern_engine.rs` with context extraction + tests (replace hardcoded key with structural extraction).
+- Commit 5: Phase 3 Part A — `encrypted/old_engine.rs` old license key derivation (deferred until real license decoder is located).
 - Commit 6: Phase 6 — RR/PP branch completion + tests (may be multiple commits if investigation is iterative).
 - Commit 7: Phase 7 — `decrypt_xml` wired, all supported fixtures decrypting.
 - Commit 8: Phase 8+9 — `KrpanoDezoomer` integration + end-to-end validation.
