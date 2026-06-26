@@ -176,27 +176,27 @@ mod tests {
 
     fn fixture_wrapper_key_len(dir_name: &str) -> Option<usize> {
         match dir_name {
-            "old" => Some(136),
-            "2013-06-05-B" => Some(137),
-            "2013-08-09-B" => Some(109),
-            "2015-08-04" => Some(60),
-            "2017-09-21" => Some(115),
-            "2018-04-04" => Some(17),
-            "2023-02-07" => Some(29),
-            "2023-04-30" => Some(110),
-            "2023-04-30-PP" => Some(49),
-            "2023-12-11" => Some(163),
-            "2024-12-20" => Some(45),
-            // krpanotools 1.24 demo viewer: all share the same 148-char wrapper key.
+            "old" => Some(8778),
+            "2013-06-05-B" => Some(6916),
+            "2013-08-09-B" => Some(6486),
+            "2015-08-04" => Some(7914),
+            "2017-09-21" => Some(9412),
+            "2018-04-04" => Some(1607),
+            "2023-02-07" => Some(2798),
+            "2023-04-30" => Some(2915),
+            "2023-04-30-PP" => Some(2795),
+            "2023-12-11" => Some(2823),
+            "2024-12-20" => Some(2874),
+            // krpanotools 1.24 demo viewer: all share the same key (2549 chars after unescaping).
             "2026-06-25-pp-01_minimal"
             | "2026-06-25-pp-02_special_chars"
             | "2026-06-25-pp-03_nested"
             | "2026-06-25-pp-04_large"
-            | "2026-06-25-pp-05_deep" => Some(148),
+            | "2026-06-25-pp-05_deep" => Some(2549),
             // krpanotools R/R: each viewer embeds a distinct custom key.
-            "2026-06-25-rr_minimal" => Some(20),
-            "2026-06-25-rr_tour" => Some(96),
-            "2026-06-25-rr_special" => Some(204),
+            "2026-06-25-rr_minimal" => Some(3061),
+            "2026-06-25-rr_tour" => Some(3053),
+            "2026-06-25-rr_special" => Some(3055),
             _ => None,
         }
     }

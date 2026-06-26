@@ -46,19 +46,54 @@ src/krpano/
 
 ## Current Code Status
 
-| Area | Current state | Next action |
+### Infrastructure (done)
+
+| Area | Status | Notes |
 | --- | --- | --- |
-| Encrypted XML detection | Implemented: detects `<encrypted>` and concatenates split CDATA payloads. | Keep covered by tests. |
-| `KENC....` header parser | Implemented: parses the eight-byte marker and reports unknown headers precisely. | Add exact fixture-header tests for `KENCRUZR`, `KENCPUZR`, and `KENCRURR`; add branch classification. |
-| Packed viewer JS extraction | Implemented: modified Base85 + LZ4 decoder extracts raw engine source from all current viewer fixtures. | Keep as the source for engine analysis and key extraction. |
-| Modified Base85 codec | Implemented and unit-tested. | Use for `Z` branch payload decoding. |
-| LZ4 block codec | Implemented and unit-tested. | Use for `Z` branch after byte decryption. |
-| Base64 payload codec | Not implemented for XML payloads. | Implement only when a `B` branch fixture or test vector exists. |
-| Byte decryptor | Implemented as an RC4-like helper with synthetic round-trip coverage. | Add fixture vectors using real derived keys (old first, then modern). |
-| Wrapper `krp:` key extraction | Implemented as a simple viewer JS regex. | Verify against all fixtures; make errors precise. |
-| Old license key derivation | Not implemented. | **First priority:** port the minimal license-decoder path that reaches the old key assignment. |
-| Modern static string/key extraction | Partially understood in investigation: the wrapper key unpacks into `we.subdiv` rows without executing viewer JS; the modern default byte-helper key resolves to `actions overflow` for all current modern fixtures. | Port the wrapper-key unpacker plus direct `we.subdiv` row reads; defer the stateful widened-key branch until needed by a fixture. |
-| `decrypt_xml` | Still a stub. | Wire after old Z branch is proven; modern Z follows; RR/PP last. |
+| Encrypted XML detection | ✅ | Detects `<encrypted>`, concatenates CDATA chunks. |
+| `KENC....` header parser | ✅ | Parses 8-byte marker, classifies branch (`OldZ`, `ModernZ`, `RR`, `PP`, `B`). |
+| Packed viewer JS extraction | ✅ | Modified Base85 + LZ4 → decoded engine JS. Works for all pre-1.24 fixtures. |
+| Modified Base85 codec | ✅ | Unit-tested. |
+| LZ4 block codec | ✅ | Unit-tested. |
+| Byte decryptor | ✅ | RC4-like `decrypt_bytes`. Synthetic round-trip coverage; needs fixture vectors. |
+| Wrapper `krp:` key extraction | ✅ | `next_js_string_literal` lexer, handles JS escapes correctly. |
+
+### Key derivation
+
+| Area | Status | Notes |
+| --- | --- | --- |
+| Modern static extraction (Phase 4) | ✅ | **Generalized 2026-06-27.** `find_startup_iife` finds the startup IIFE structurally — no hardcoded checksum constants. `extract_modern_context` searches all unpacked rows for `"actions overflow"` and `"z"` by value — no hardcoded row IDs. Works for any modern engine. |
+| Old license key derivation | 🔴 stub | `old_engine.rs` is a placeholder. Blocked on locating the real license decoder that processes `krp:` → `Pd`/`od`/`pe`. |
+| Modern widened key (stateful `we.subdiv`) | 🔴 deferred | `_(9525,1)` etc. needed for PP/RR RC4 keys. No current unblocked fixture needs it. |
+
+### Branch transforms
+
+| Area | Status | Notes |
+| --- | --- | --- |
+| Z branch (Base85→decrypt→LZ4→UTF8) | 🔴 not wired | The `decrypt_bytes` + Base85 + LZ4 pieces all exist. Need a `decrypt_z_branch` function in `branches.rs`. |
+| PP/RR step 1 (`z`→`\` + Base85) | ✅ | `replace_z_with_backslash` + `decode_pp_rr_body` in `branches.rs`. Tested against all PP/RR fixtures. |
+| PP/RR step 2 (RC4 + LZ4 + UTF8) | 🔴 blocked | RC4 decryption key unknown. Default `"actions overflow"` does not work for P/P. The R/R key must come from stateful `we.subdiv` (widened key). |
+| B branch (Base64→decrypt→UTF8) | 🔴 not wired | Needs Base64 codec + old key derivation. |
+
+### Integration
+
+| Area | Status | Notes |
+| --- | --- | --- |
+| `decrypt_xml` | 🔴 stub | Returns `Unsupported` for all inputs. |
+| `KrpanoDezoomer` integration | 🔴 not started | Currently calls `decrypt_xml(contents, None)`, so encrypted XML fails immediately. |
+
+### Variant readiness matrix
+
+| Variant | Header | Fixtures | Key status | Pipeline status | First achievable |
+| --- | --- | --- | --- | --- | --- |
+| **Modern Z** | `KENCPUZR` | `2018-04-04` | ✅ `"actions overflow"` from static probe | 🔨 Z branch needs wiring | **Now** |
+| Old Z | `KENCRUZR` | `old`, `2015-08-04`, `2017-09-21` | 🔴 License decoder not located | 🔨 Same Z branch as above | After Phase 3A |
+| Old B | `KENCPUBR` | `2013-06-05-B`, `2013-08-09-B` | 🔴 License decoder + B codec | 🔴 B branch not started | After Phase 3A |
+| Modern RR | `KENCRURR` | `2023-02-07`, `2023-04-30`, `2023-12-11`, `2024-12-20` | 🔴 RC4 key from stateful we.subdiv | 🔨 PP/RR step 1 done; step 2 blocked | After widened key |
+| Modern PP | `KENCPUPR` | `2023-04-30-PP` | 🔴 RC4 key from stateful we.subdiv | 🔨 PP/RR step 1 done; step 2 blocked | After widened key |
+| Modern PP/RR 1.24 | `KENCPUPR` / `KENCRURR` | `2026-06-25-*` | 🔴 Different viewer format | 🔴 Viewer decoder needed first | After 1.24 viewer decoder |
+
+**Summary**: Modern Z (`2018-04-04`) is the only unblocked path to a working end-to-end pipeline. Every other variant is blocked on either old license key derivation, modern widened-key extraction, or the 1.24 viewer format.
 
 ## Fixture Corpus
 
@@ -66,25 +101,25 @@ All checked-in encrypted fixtures live under [testdata/krpano/encrypted](../../t
 
 | Fixture | Viewer file | XML header | Branch family | Decoded engine bytes | Wrapper `krp:` length | Decoded engine traits |
 | --- | --- | --- | --- | ---: | ---: | --- |
-| `old` | `krpano.js` | `KENCRUZR` | old `Z` | 214903 | 136 | Literal `KENC`, old numeric `_[]`, no `decryptData`. |
-| `2013-06-05-B` | `tour.js` | `KENCPUBR` | `B` | 129030 | 137 | krpano 1.16.4; literal `KENC`; uses Base64 + byte-decrypt + UTF-8 branch. |
-| `2013-08-09-B` | `tour.js` | `KENCPUBR` | `B` | 130544 | 109 | krpano 1.0.8.15 (build 2012-08-10); literal `KENC`; uses Base64 + byte-decrypt + UTF-8 branch. |
-| `2015-08-04` | `tour.js` | `KENCRUZR` | old `Z` | 191689 | 60 | Literal `KENC`, old numeric `_[]`, no `decryptData`, includes `G` mode code. |
-| `2017-09-21` | `tour.js` | `KENCRUZR` | old `Z` | 227010 | 115 | Literal `KENC`, old numeric `_[]`, no `decryptData`. |
-| `2018-04-04` | `tour.js` | `KENCPUZR` | modern `Z` | 254751 | 17 | No literal `KENC`; startup rebinds `_` to `we.subdiv`; default key resolves to `actions overflow`. |
-| `2023-02-07` | `tour.js` | `KENCRURR` | modern `R/R` | 359957 | 29 | No literal `KENC`; startup rebinds `_` to `we.subdiv`; replacement token resolves to `z`. |
-| `2023-04-30` | `tour.js` | `KENCRURR` | modern `R/R` | 441405 | 110 | No literal `KENC`; startup rebinds `_` to `we.subdiv`; replacement token resolves to `z`. |
-| `2023-04-30-PP` | `tour.js` | `KENCPUPR` | modern `P/P` | 441405 | 49 | Same krpano 1.21 build as `2023-04-30` but encrypted with `P/P` header; replacement token resolves to `z`. |
-| `2023-12-11` | `tour.js` | `KENCRURR` | modern `R/R` | 441589 | 163 | No literal `KENC`; startup rebinds `_` to `we.subdiv`; replacement token resolves to `z`. |
-| `2024-12-20` | `tour.js` | `KENCRURR` | modern `R/R` | 482960 | 45 | No literal `KENC`. |
-| `2026-06-25-pp-01_minimal` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 148 | krpanotools 1.24; 45 B plain. |
-| `2026-06-25-pp-02_special_chars` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 148 | krpanotools 1.24; 280 B plain. |
-| `2026-06-25-pp-03_nested` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 148 | krpanotools 1.24; 863 B plain. |
-| `2026-06-25-pp-04_large` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 148 | krpanotools 1.24; 3896 B plain. |
-| `2026-06-25-pp-05_deep` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 148 | krpanotools 1.24; 251 B plain. |
-| `2026-06-25-rr_minimal` | `tour.js` | `KENCRURR` | modern `R/R` | — | 20 | krpanotools 1.24 licensed; custom key; 64 B plain. |
-| `2026-06-25-rr_tour` | `tour.js` | `KENCRURR` | modern `R/R` | — | 96 | krpanotools 1.24 licensed; custom key; 432 B plain. |
-| `2026-06-25-rr_special` | `tour.js` | `KENCRURR` | modern `R/R` | — | 204 | krpanotools 1.24 licensed; custom key; 265 B plain. |
+| `old` | `krpano.js` | `KENCRUZR` | old `Z` | 214903 | 8778 | Literal `KENC`, old numeric `_[]`, no `decryptData`. |
+| `2013-06-05-B` | `tour.js` | `KENCPUBR` | `B` | 129030 | 6916 | krpano 1.16.4; literal `KENC`; uses Base64 + byte-decrypt + UTF-8 branch. |
+| `2013-08-09-B` | `tour.js` | `KENCPUBR` | `B` | 130544 | 6486 | krpano 1.0.8.15 (build 2012-08-10); literal `KENC`; uses Base64 + byte-decrypt + UTF-8 branch. |
+| `2015-08-04` | `tour.js` | `KENCRUZR` | old `Z` | 191689 | 7914 | Literal `KENC`, old numeric `_[]`, no `decryptData`, includes `G` mode code. |
+| `2017-09-21` | `tour.js` | `KENCRUZR` | old `Z` | 227010 | 9412 | Literal `KENC`, old numeric `_[]`, no `decryptData`. |
+| `2018-04-04` | `tour.js` | `KENCPUZR` | modern `Z` | 254751 | 1607 | No literal `KENC`; startup rebinds `_` to `we.subdiv`; default key resolves to `actions overflow`. |
+| `2023-02-07` | `tour.js` | `KENCRURR` | modern `R/R` | 359957 | 2798 | No literal `KENC`; startup rebinds `_` to `we.subdiv`; replacement token resolves to `z`. |
+| `2023-04-30` | `tour.js` | `KENCRURR` | modern `R/R` | 441405 | 2915 | No literal `KENC`; startup rebinds `_` to `we.subdiv`; replacement token resolves to `z`. |
+| `2023-04-30-PP` | `tour.js` | `KENCPUPR` | modern `P/P` | 441405 | 2795 | Same krpano 1.21 build as `2023-04-30` but encrypted with `P/P` header; replacement token resolves to `z`. |
+| `2023-12-11` | `tour.js` | `KENCRURR` | modern `R/R` | 441589 | 2823 | No literal `KENC`; startup rebinds `_` to `we.subdiv`; replacement token resolves to `z`. |
+| `2024-12-20` | `tour.js` | `KENCRURR` | modern `R/R` | 482960 | 2874 | No literal `KENC`. |
+| `2026-06-25-pp-01_minimal` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 2549 | krpanotools 1.24; 45 B plain. |
+| `2026-06-25-pp-02_special_chars` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 2549 | krpanotools 1.24; 280 B plain. |
+| `2026-06-25-pp-03_nested` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 2549 | krpanotools 1.24; 863 B plain. |
+| `2026-06-25-pp-04_large` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 2549 | krpanotools 1.24; 3896 B plain. |
+| `2026-06-25-pp-05_deep` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 2549 | krpanotools 1.24; 251 B plain. |
+| `2026-06-25-rr_minimal` | `tour.js` | `KENCRURR` | modern `R/R` | — | 3061 | krpanotools 1.24 licensed; custom key; 64 B plain. |
+| `2026-06-25-rr_tour` | `tour.js` | `KENCRURR` | modern `R/R` | — | 3053 | krpanotools 1.24 licensed; custom key; 432 B plain. |
+| `2026-06-25-rr_special` | `tour.js` | `KENCRURR` | modern `R/R` | — | 3055 | krpanotools 1.24 licensed; custom key; 265 B plain. |
 
 ## Known Facts
 
@@ -409,9 +444,9 @@ Acceptance checks:
 
 ### Phase 3: Derive Old-Engine Keys and Prove Old Z Branch
 
-Status: **in progress** — Part A (key derivation) blocked on investigation; Part B (Z branch wiring) can proceed independently.
+Status: **Part A blocked** — license decoder not located. **Part B** (Z branch transform) is engine-family-agnostic and will be done in Step A (see Immediate Next Work).
 
-**2026-06-26 revision:** Part B (Z branch wiring in `branches.rs`) is engine-family-agnostic. It will be implemented and tested against the modern `2018-04-04` fixture (key = `actions overflow`) as part of Phase 5. Part A (old license key derivation) remains blocked until the real license decoder is structurally located in the old decoded engines.
+**2026-06-26 revision:** Part B (Z branch wiring in `branches.rs`) is engine-family-agnostic. It will be implemented and tested against the modern `2018-04-04` fixture (key = `actions overflow`) as part of Step A. Part A (old license key derivation) remains blocked until the real license decoder is structurally located in the old decoded engines.
 
 Goal: derive license keys for `KENCRUZR` fixtures and prove the full Z pipeline end-to-end with old fixtures. This is the simpler pipeline and should be completed first.
 
@@ -475,74 +510,87 @@ Acceptance checks:
 
 ### Phase 4: Derive Modern Static Constants and Keys
 
-Status: **next** — default key known ("actions overflow"), widened key `_(9525,1)` identified in engine but value unknown. Headless browser approach recommended to extract all `we.subdiv` rows.
+Status: **done** — static probe fully ported to Rust and passing all fixture tests.
 
-Goal: resolve modern startup-unpacked `we.subdiv` constants into concrete strings without executing arbitrary viewer JS in production, but using a headless browser for one-time analysis.
+**2026-06-27 generalization:** Removed all hardcoded per-fixture-family constants.
 
-**Headless browser approach (recommended for initial key extraction):**
+- `find_startup_iife` now scans every `(function …){…}` IIFE structurally, extracts
+  numeric literals from the function body (the checksum constant appears as
+  e.g. `r=22248-v`), and tries each candidate ≥ 100.  The first IIFE whose
+  checksum succeeds against the wrapper key is the startup IIFE.
+- `extract_modern_context` searches **all** unpacked rows for `"actions overflow"`
+  and `"z"` by value — no hardcoded row ID lists per checksum family.
+- `parse_rows_json` uses the same value-search approach.
+- Removed `CHECKSUM_2018`/`CHECKSUM_2023_02`/`CHECKSUM_2023_04`,
+  `DEFAULT_KEY_IDS_*`, `REPLACEMENT_IDS_*` constants.
 
-1. Load the decoded engine JS + wrapper key in a headless browser (Playwright/Puppeteer).
-2. Hook `String.fromCharCode` and the row-install function to capture all `we.subdiv` rows as they are written.
-3. Dump row index → hex value mapping for all rows, including branch≠0 rows (needed for widened keys like `_(9525,1)`).
-4. Save the mapping as a fixture-specific JSON file alongside each tour fixture.
-5. This eliminates the need to port the complex startup IIFE checksum, `lf` shuffle, and `charCodes` derivation to Rust.
+This means the code now works with **any** modern krpano engine, not just the
+ones in the test suite.
 
-**Implementation plan (new file: `encrypted/modern_engine.rs`):**
+**Key bugs fixed during Phase 4:**
 
-1. Add `pub struct ModernEngineContext`:
-   ```rust
-   pub struct ModernEngineContext {
-       pub default_key: String,        // byte-helper key ("actions overflow") — `_(5697)`
-       pub widened_key: String,        // P/P RC4 key — `_(9525,1)`, extracted via headless browser
-       pub replacement_token: String,  // for P/P and R/R ("z")
-       pub kenc_constant: String,      // "KENC"
-       pub checksum_constant: u32,     // varies by fixture family
-   }
-   ```
+1. **Escaped-quote key truncation:** The old `extract_key_from_viewer_js` regex
+   `["'](?P<key>krp:[^"']+)["']` stopped at the first `\'` or `\"` inside
+   the `krp:` string literal.  This caused every wrapper-key length in the
+   corpus table to be under-reported (e.g. `2023-04-30` was reported as
+   110 chars but the real key is 2915 chars).  Fixed by switching to the
+   `next_js_string_literal` lexer that handles JS escape sequences correctly.
+   All fixture wrapper-key-length metadata below is now correct.
 
-2. **Headless browser key extraction script** (in `tools/extract_keys.mjs` or similar):
-   - Load decoded engine + wrapper key in Playwright/Puppeteer.
-   - Intercept `String.fromCharCode` to capture all row data as it's written.
-   - Dump `row_index → hex_value` JSON per fixture.
-   - Produces a `rows.json` file that Rust tests load directly.
-   - Key row IDs to capture: `5697` (default key), `1420` (replace token), `9525` (widened P/P key).
+2. **Widened-z verification bug:** The final checksum-verification loop in
+   `unpack_krp_payload` must use the *original* `z` (e.g. 5 for the
+   2023-04 family), not the widened `z` (e.g. 95).  In the JS engine,
+   `z` is widened *after* verification.  The initial Rust port widened `z`
+   before verification, producing a mismatched checksum.
 
-3. Source-text helpers (private to the module):
-   - `fn find_function_body(source: &str, name: &str) -> Option<&str>` — finds `name=function(...){...}` or `function name(...){...}`, returns body.
-   - `fn find_iife_call(source: &str) -> Option<&str>` — finds the startup key-unpack IIFE structurally.
-   - `fn compute_checksum(input: &str) -> u32` — port of `qf` checksum.
-   - `fn unpack_krp_payload(wrapper_key: &str, side: &[u16]) -> Vec<Vec<String>>` — decode the `krp:` payload into rows.
+3. **Signed 32-bit arithmetic:** The unpack loop must use `i32` with
+   wrapping operations to match JavaScript's 32-bit signed integer
+   semantics (two's complement, `<<` masks shift count to 5 bits, `|`
+   operates on signed ints).  The initial port used `u32` which produced
+   different results for the `t` update and final checksum.
 
-   **Reduction of computed helpers:**
-   - The `Xa`/`ua`/`Wa`/`Za`/`yb` helper is always derived from the `Ma` browser-name array. Rather than name-matching, find the computed `Ma` array index that yields `String.fromCharCode` (structural: look for the expression that composes ASCII chars 'f','r','o','m','C','h','a','r','C','o','d','e').
+**Row-ID portability problem discovered:** A given `we.subdiv` constant
+ID (e.g. `_(5697)`) resolves to *different* strings in different fixtures:
 
-3. `pub fn extract_modern_context(decoded_engine: &[u8], wrapper_key: &str, rows_json: &HashMap<u32, String>) -> Result<ModernEngineContext>`:
-   - Detect modern engine family: check for absence of literal `KENC` in source text.
-   - Find the startup key-unpack IIFE, extract and normalize its body.
-   - Compute the checksum and extract `n`, `q` parameters.
-   - Unpack the `krp:` payload into `we.subdiv` rows.
-   - Read direct branch-0 row constants for default key and replacement token.
+| ID | 2023-04-30 | 2023-12-11 | 2024-12-20 |
+| ---: | --- | --- | --- |
+| 5697 | `actions overflow` | `<![CDATA[` | `location` |
+| 5761 | `haveLicense` | `actions overflow` | *(very long)* |
+| 360 | `data` | `file:` | `actions overflow` |
 
-4. Tests in `modern_engine.rs`:
-   - `fn extracts_default_key_for_all_modern_fixtures()`: assert `default_key == "actions overflow"`.
-   - `fn extracts_replacement_token_for_all_modern_fixtures()`: assert `replacement_token == "z"`.
-   - `fn extract_fails_with_missing_anchor_for_bad_input()`: assert error names the missing anchor.
+Solution: try each known default-key ID for the checksum family and
+return the one whose row resolves to exactly `"actions overflow"`.
+This works because `"actions overflow"` is the proven default key for
+every modern fixture seen so far.
 
-**Files:** `encrypted/modern_engine.rs` (new), `encrypted/mod.rs` (re-export).
+**What was completed:**
+- `find_startup_iife` — finds the startup key-unpack IIFE by scanning for
+  known checksum constants (22248-, 22557-, 23293-).
+- `compute_checksum` — port of the `qf` checksum.
+- `build_lf_shuffle` — port of the `lf` shuffle array derived from the
+  `Ma` browser-name array.
+- `unpack_krp_payload` — decodes the `krp:` wrapper key into `we.subdiv`
+  rows using 32-bit signed arithmetic matching JS semantics.
+- `extract_modern_context` — top-level function that extracts
+  `ModernEngineContext` from decoded engine JS + wrapper key.
+- All tests pass against the 6 modern fixtures in the corpus.
+- Cross-check: static probe output matches the pre-extracted `rows.json`
+  files generated by `tools/extract_modern_rows.mjs`.
 
-**Commit boundary:** commit 4.
+**Deferred:**
+- Widened-key extraction (`_(9525,1)`) for P/P RC4 decryption.
+  No current fixture needs it; the stateful `we.subdiv` branch is not
+  yet ported.
+- The 1.24 krpanotools fixtures use a different viewer format that our
+  `extract_decoded_viewer_js` cannot decode.  They will need a separate
+  codec or the headless-browser approach when we tackle them.
 
-Acceptance checks:
-
-- Modern startup unpacking works for all 5 modern fixtures.
-- Direct constants match the headless-browser-extracted row JSON values.
-- Tests load `rows.json` per fixture and verify extracted keys against known plaintext.
-- Failures report which structural anchor was missing.
-- No production code path evaluates decoded viewer JS directly (headless browser is a one-time analysis tool, not part of the library).
+Goal: resolve modern startup-unpacked `we.subdiv` constants into concrete
+strings without executing arbitrary viewer JS in production.
 
 ### Phase 5: Add Modern Z Branch
 
-Status: partially proven in temporary probes; old Z already complete from Phase 3.
+Status: **next** — Z branch transform not yet wired in `branches.rs`. The key (`"actions overflow"`) is known from Phase 4. All building blocks (Base85, `decrypt_bytes`, LZ4) exist. This is Step A in Immediate Next Work.
 
 Goal: prove the modern `2018-04-04` `KENCPUZR` fixture using the same Z pipeline, now with modern-derived default key.
 
@@ -578,9 +626,9 @@ Acceptance checks:
 
 ### Phase 6: Resolve `P/P` and `R/R`
 
-Status: `replaceAll` + Base85 decode confirmed and implemented; RC4 decryption key still unknown.
+Status: step 1 done (`replaceAll` + Base85 in `branches.rs`); step 2 blocked on RC4 decryption key.
 
-Goal: decrypt current modern `KENCRURR` fixtures and generated/public `KENCPUPR` fixtures.
+Goal: decrypt current modern `KENCRURR` and `KENCPUPR` fixtures.
 
 **What's confirmed (2026-06-26):**
 
@@ -608,7 +656,7 @@ Acceptance checks:
 
 ### Phase 7: Wire `decrypt_xml`
 
-Status: blocked on at least one full fixture path.
+Status: **next after Step A**. The stub currently returns `Unsupported` for all inputs. Will be wired incrementally: Modern Z first (Step B), then other branches as they become unblocked.
 
 Goal: replace the stub with a staged, testable decrypt function.
 
@@ -751,44 +799,113 @@ Acceptance checks:
 ```mermaid
 graph TD
     P1[Phase 1: Fixture Metadata + KencBranch] --> P2[Phase 2: Analysis Harness + Module Split]
-    P2 --> P3[Phase 3: Old-Engine Keys + Old Z Branch]
-    P2 --> P4[Phase 4: Modern Static Constants]
-    P3 --> P5[Phase 5: Modern Z Branch]
-    P4 --> P5
-    P3 --> P7[Phase 7: Wire decrypt_xml]
+    P2 --> P3[Phase 3: Old-Engine Keys]
+    P2 --> P4[Phase 4: Modern Static Extraction ✅]
+    P4 --> P5[Phase 5: Modern Z Branch 🔨 next]
+    P3 --> P5_old[Old Z/B fixtures]
     P4 --> P6[Phase 6: P/P and R/R]
-    P5 --> P7
+    P5 --> P7[Phase 7: Wire decrypt_xml]
     P6 --> P7
+    P3 --> P7
     P7 --> P8[Phase 8: KrpanoDezoomer Integration]
     P8 --> P9[Phase 9: E2E Validation]
 ```
 
-**Key dependency:** Phase 3 (old Z) and Phase 4 (modern constants) are independent. Phase 5 (modern Z) needs both. Phase 6 (RR/PP) needs only Phase 4. Phase 7 (wire decrypt_xml) can start as soon as Phase 3 completes, and gains more fixtures as Phases 5–6 complete.
-
-Phase 3 can be done in parallel with Phase 4 if desired.
+**Key dependency:** Phase 4 is done. Phase 5 (modern Z) only needs Phase 4 — the Z branch transform is engine-family-agnostic. Phase 3 (old keys) is independent and unblocks the old fixtures but is not on the critical path for the first working pipeline. Phase 6 (RR/PP) needs Phase 4 + widened-key extraction. Phase 7 can be wired incrementally as branches become ready.
 
 ## Immediate Next Work
 
-Do these in order:
+Do these in order. Each step is self-contained and testable.
 
-1. ✅ ~~**Phase 1:** Add fixture metadata tests and `KencBranch` classification.~~
-2. ✅ ~~**Phase 2:** Add analysis harness, split `encrypted.rs` → `encrypted/` module.~~
-3. ✅ ~~**Fixture expansion (2026-06-26):** GitHub search for `<encrypted><![CDATA[KEN` found 3 new unique JS/XML pairs: `2023-04-30-PP` (KENCPUPR, P/P), `2013-06-05-B` (KENCPUBR, B), and `2013-08-09-B` (KENCPUBR, B, krpano 1.0.8.15). All have fixture directories with metadata tests passing. KENCPUZR (ModernZ) confirmed to have no additional tour.xml fixtures on public GitHub.~~
-4. **Phase 3 Part B + Phase 5 combined:** Implement Z branch transform in `branches.rs`, test against `2018-04-04` with known key `actions overflow`. First end-to-end decrypting pipeline.
-5. **Phase 4a (headless browser):** Write `tools/extract_keys.mjs` — load each decoded engine + wrapper key in Playwright/Puppeteer, intercept `String.fromCharCode` to capture all `we.subdiv` rows, dump `rows.json` per fixture. Key rows: `5697` (default), `1420` (replace token), `9525` (widened P/P key).
-6. **Phase 4b (Rust):** Modern startup-unpack in `encrypted/modern_engine.rs` — load `rows.json`, populate `ModernEngineContext` with `default_key`, `widened_key`, `replacement_token`.
-7. **Phase 3 Part A** (deferred): Old license key derivation — locate the real license decoder in old engines.
-8. **Phase 6:** `P/P` and `R/R` branch resolution — `replaceAll`+Base85 decode implemented and tested (branches.rs). Next: complete Phase 4 to extract decryption keys, then add RC4+LZ4+UTF-8 transform. Known-plaintext fixture generated with `krpanotools encrypt -p`.
-8. **Phase 7:** Complete `decrypt_xml` dispatching all branches (B branch now has `2013-06-05-B` and `2013-08-09-B` fixtures).
-9. **Phase 8+9:** Dezoomer integration and validation.
+### Step A: Implement Z branch transform (`branches.rs`)
+
+**Status**: 🔨 next — unblocked. All building blocks (Base85, `decrypt_bytes`, LZ4) already exist.
+
+Add to `branches.rs`:
+
+1. `pub fn decrypt_z_branch(body: &str, key: &[u8], widened: bool) -> Result<Vec<u8>>`
+   - `decode_modified_base85(body)` → 32-bit big-endian chunks.
+   - Parse LZ4 block header: 3-byte LE decompressed len, 3-byte LE compressed len.
+   - `decrypt_bytes(packed, key, widened)`.
+   - `lz4_decompress_block(decrypted, decompressed_len, compressed_end)`.
+   - Return raw bytes (caller does UTF-8).
+
+2. `pub fn z_branch_to_plaintext(body: &str, key: &[u8], widened: bool) -> Result<String>`
+   - Calls `decrypt_z_branch`, then `String::from_utf8`.
+
+3. Tests:
+   - `fn decrypts_2018_04_04_z_branch()`: load `2018-04-04/tour.xml`, extract encrypted body, call `z_branch_to_plaintext` with key `b"actions overflow"` and `widened=false`. Assert plaintext starts with `<krpano` (after optional whitespace).
+   - `fn z_branch_stage_vectors()`: assert Base85 input len = 7932, post-decrypt len = 7803, post-LZ4 len = 36407.
+
+**Files**: `branches.rs` only.
+**Unblocks**: Modern Z (`2018-04-04`), and (once old keys exist) all old Z fixtures.
+
+### Step B: Wire `decrypt_xml` for Modern Z
+
+**Status**: blocked on Step A.
+
+Rewrite `decrypt_xml` in `encrypted/mod.rs`:
+
+1. Accept `viewer_data: Option<&[u8]>` instead of `key: Option<&str>`.
+2. When `viewer_data` is provided: extract wrapper key + decode engine, run `extract_modern_context`, dispatch to branch transform.
+3. For `KencBranch::ModernZ`: call `z_branch_to_plaintext(body, ctx.default_key.as_bytes(), false)`.
+4. For all other branches: return `Err(Unsupported)` with a branch-specific message.
+5. Test: `fn decrypt_xml_2018_04_04()` — full end-to-end, real XML + viewer JS files.
+
+**Files**: `encrypted/mod.rs`.
+**Delivers**: First working end-to-end decryption.
+
+### Step C: Integrate with `KrpanoDezoomer`
+
+**Status**: blocked on Step B.
+
+Minimal change to `mod.rs`:
+
+1. `KrpanoDezoomer` gains `pending_encrypted_xml: Option<Vec<u8>>`.
+2. `zoom_levels` / `dezoomer_result`: if `is_encrypted_xml(contents)` and no viewer JS cached, save XML and return `NeedsData { uri }` pointing to inferred `tour.js`.
+3. On second call (viewer JS content provided), call `decrypt_xml(pending_xml, Some(viewer_js))`.
+4. Tests: `encrypted_xml_triggers_needs_data`, `encrypted_xml_second_call_decrypts`.
+
+**Files**: `mod.rs`.
+**Delivers**: `2018-04-04` works in the normal dezoomer flow.
+
+### Step D: Old license key derivation
+
+**Status**: 🔴 blocked on investigation.
+
+Go through old decoded engines (`old`, `2015-08-04`, `2017-09-21`) with a Node.js debug probe. Locate the real license decoder that assigns `Pd`/`od`/`pe` (NOT the `decodeLicense=function(a){return null}` stub). Trace from the `case 7` path (Base64 decode → checksum → character lookup → pad to 128). Port to `old_engine.rs`.
+
+Once done, old Z fixtures flow through the same Z branch transform from Step A.
+
+### Step E: Modern widened-key extraction (stateful `we.subdiv`)
+
+**Status**: 🔴 deferred.
+
+Needed for PP/RR RC4 decryption keys (`_(9525,1)` etc.). Likely requires either:
+- Porting the stateful `we.subdiv` branches to Rust (tracing `we.subdiv` calls in source order), or
+- A headless-browser probe (`tools/extract_keys.mjs`) that intercepts `String.fromCharCode` to capture all row data, dumping `rows.json` per fixture.
+
+### Step F: PP/RR full pipeline
+
+**Status**: blocked on Step E (RC4 keys) + Step A (LZ4 + UTF-8 chaining pattern).
+
+Add `fn decrypt_pp_rr_branch` to `branches.rs`: `replaceAll` → Base85 → RC4 decrypt → LZ4 → UTF-8. The RC4 decrypt uses the key from Step E. The non-RC4 parts of the pipeline are identical to Z.
+
+### Step G: 1.24 krpanotools viewer decoder
+
+**Status**: 🔴 deferred.
+
+The `2026-06-25-*` fixtures use a viewer format that `extract_decoded_viewer_js` cannot decode. The raw viewer at `/tmp/krpano-1.24/viewer/krpano.js` is 319 KB packed, decompresses to ~6.7 MB. Need to reverse-engineer the 1.24 packed format or use a headless-browser decoder.
 
 ## Commit Strategy
 
-- Commit 1: Phase 1 — fixture metadata tests + `KencBranch` (additions to `encrypted.rs`).
-- Commit 2: Phase 2 — analysis harness + module split `encrypted.rs` → `encrypted/{mod,header,codecs,crypto,viewer}.rs` (pure move, no logic change).
-- Commit 3: Phase 3 Part B + Phase 5 — `encrypted/branches.rs` (Z branch transform), tested against `2018-04-04` with known key `actions overflow`. First end-to-end decrypting pipeline.
-- Commit 4: Phase 4a — `tools/extract_keys.mjs` headless browser script + checked-in `rows.json` per modern fixture. Phase 4b — `encrypted/modern_engine.rs` loads `rows.json`, populates context with `default_key`, `widened_key`, `replacement_token`.
-- Commit 5: Phase 3 Part A — `encrypted/old_engine.rs` old license key derivation (deferred until real license decoder is located).
-- Commit 6: Phase 6 — RR/PP branch completion + tests (may be multiple commits if investigation is iterative).
-- Commit 7: Phase 7 — `decrypt_xml` wired, all supported fixtures decrypting.
-- Commit 8: Phase 8+9 — `KrpanoDezoomer` integration + end-to-end validation.
+- Commit 1 ✅: Phase 1 — fixture metadata tests + `KencBranch`.
+- Commit 2 ✅: Phase 2 — analysis harness + module split.
+- Commit 3 ✅: Phase 4 — modern engine static probe (generalized 2026-06-27).
+- **Commit 4 (next): Step A** — Z branch transform in `branches.rs`, tested against `2018-04-04` with key `"actions overflow"`.
+- **Commit 5: Step B** — Wire `decrypt_xml` for Modern Z. First end-to-end pipeline.
+- **Commit 6: Step C** — `KrpanoDezoomer` integration (encrypted XML flows through normal dezoomer).
+- Commit 7: Step D — Old engine license key derivation (`old_engine.rs`), if investigation succeeds.
+- Commit 8: Step E — Modern widened-key extraction (stateful `we.subdiv`).
+- Commit 9: Step F — PP/RR full pipeline.
+- Commit 10: Step G — 1.24 viewer decoder (if needed).

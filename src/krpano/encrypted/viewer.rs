@@ -8,8 +8,6 @@ lazy_static! {
     static ref ENCRYPTED_RE: Regex =
         Regex::new(r#"(?is)<encrypted>(?P<body>.*?)</encrypted>"#).unwrap();
     static ref CDATA_RE: Regex = Regex::new(r#"(?is)<!\[CDATA\[(?P<cdata>.*?)\]\]>"#).unwrap();
-    static ref KRPANO_KEY_RE: Regex =
-        Regex::new(r#"["'](?P<key>krp:[^"']+)["']"#).unwrap();
 }
 
 pub fn is_encrypted_xml(contents: &[u8]) -> bool {
@@ -41,10 +39,14 @@ pub fn encrypted_payload(contents: &[u8]) -> Result<String, EncryptedKrpanoError
 
 pub fn extract_key_from_viewer_js(contents: &[u8]) -> Option<String> {
     let text = String::from_utf8_lossy(contents);
-    KRPANO_KEY_RE
-        .captures(&text)
-        .and_then(|caps| caps.name("key"))
-        .map(|m| m.as_str().to_string())
+    let mut idx = 0;
+    while let Some((literal, next_idx)) = next_js_string_literal(&text, idx) {
+        idx = next_idx;
+        if literal.starts_with("krp:") {
+            return Some(literal);
+        }
+    }
+    None
 }
 
 pub fn extract_decoded_viewer_js(contents: &[u8]) -> Result<Vec<u8>, EncryptedKrpanoError> {
