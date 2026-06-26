@@ -119,11 +119,14 @@ mod tests {
     fn fixture_header_info(dir_name: &str) -> (&'static str, KencBranch) {
         match dir_name {
             "old" => ("KENCRUZR", KencBranch::OldZ),
+            "2013-06-05-B" => ("KENCPUBR", KencBranch::B),
+            "2013-08-09-B" => ("KENCPUBR", KencBranch::B),
             "2015-08-04" => ("KENCRUZR", KencBranch::OldZ),
             "2017-09-21" => ("KENCRUZR", KencBranch::OldZ),
             "2018-04-04" => ("KENCPUZR", KencBranch::ModernZ),
             "2023-02-07" => ("KENCRURR", KencBranch::RR),
             "2023-04-30" => ("KENCRURR", KencBranch::RR),
+            "2023-04-30-PP" => ("KENCPUPR", KencBranch::PP),
             "2023-12-11" => ("KENCRURR", KencBranch::RR),
             "2024-12-20" => ("KENCRURR", KencBranch::RR),
             _ => panic!("unknown fixture directory: {dir_name}"),
@@ -133,11 +136,14 @@ mod tests {
     fn fixture_decoded_engine_len(dir_name: &str) -> usize {
         match dir_name {
             "old" => 214_903,
+            "2013-06-05-B" => 129_030,
+            "2013-08-09-B" => 130_544,
             "2015-08-04" => 191_689,
             "2017-09-21" => 227_010,
             "2018-04-04" => 254_751,
             "2023-02-07" => 359_957,
             "2023-04-30" => 441_405,
+            "2023-04-30-PP" => 441_405,
             "2023-12-11" => 441_589,
             "2024-12-20" => 482_960,
             _ => panic!("unknown fixture directory: {dir_name}"),
@@ -147,11 +153,14 @@ mod tests {
     fn fixture_wrapper_key_len(dir_name: &str) -> usize {
         match dir_name {
             "old" => 136,
+            "2013-06-05-B" => 137,
+            "2013-08-09-B" => 109,
             "2015-08-04" => 60,
             "2017-09-21" => 115,
             "2018-04-04" => 17,
             "2023-02-07" => 29,
             "2023-04-30" => 110,
+            "2023-04-30-PP" => 49,
             "2023-12-11" => 163,
             "2024-12-20" => 45,
             _ => panic!("unknown fixture directory: {dir_name}"),
@@ -179,16 +188,16 @@ mod tests {
                 .unwrap_or_else(|err| panic!("{}: {err}", xml_path.display()));
             assert_eq!(
                 header.raw, expected_header,
-                "{}: header mismatch",
-                xml_path.display()
-            );
-            checked += 1;
+                    "{}: header mismatch",
+                    xml_path.display()
+                );
+                checked += 1;
+            }
+            assert!(checked >= 11, "expected at least 11 fixture directories, found {checked}");
         }
-        assert!(checked >= 8, "expected at least 8 fixture directories, found {checked}");
-    }
 
-    #[test]
-    fn classifies_every_header_branch() {
+        #[test]
+        fn classifies_every_header_branch() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/krpano/encrypted");
         let mut checked = 0;
         for entry in fs::read_dir(&root).unwrap() {
@@ -215,7 +224,7 @@ mod tests {
             );
             checked += 1;
         }
-        assert!(checked >= 8, "expected at least 8 fixture directories, found {checked}");
+        assert!(checked >= 11, "expected at least 11 fixture directories, found {checked}");
     }
 
     #[test]
@@ -243,7 +252,7 @@ mod tests {
             );
             checked += 1;
         }
-        assert!(checked >= 8, "expected at least 8 fixture directories, found {checked}");
+        assert!(checked >= 11, "expected at least 11 fixture directories, found {checked}");
     }
 
     #[test]
@@ -271,7 +280,7 @@ mod tests {
             );
             checked += 1;
         }
-        assert!(checked >= 8, "expected at least 8 fixture directories, found {checked}");
+        assert!(checked >= 11, "expected at least 11 fixture directories, found {checked}");
     }
 
     // -----------------------------------------------------------------

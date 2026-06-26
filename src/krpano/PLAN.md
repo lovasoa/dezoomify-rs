@@ -67,11 +67,14 @@ All checked-in encrypted fixtures live under [testdata/krpano/encrypted](../../t
 | Fixture | Viewer file | XML header | Branch family | Decoded engine bytes | Wrapper `krp:` length | Decoded engine traits |
 | --- | --- | --- | --- | ---: | ---: | --- |
 | `old` | `krpano.js` | `KENCRUZR` | old `Z` | 214903 | 136 | Literal `KENC`, old numeric `_[]`, no `decryptData`. |
+| `2013-06-05-B` | `tour.js` | `KENCPUBR` | `B` | 129030 | 137 | krpano 1.16.4; literal `KENC`; uses Base64 + byte-decrypt + UTF-8 branch. |
+| `2013-08-09-B` | `tour.js` | `KENCPUBR` | `B` | 130544 | 109 | krpano 1.0.8.15 (build 2012-08-10); literal `KENC`; uses Base64 + byte-decrypt + UTF-8 branch. |
 | `2015-08-04` | `tour.js` | `KENCRUZR` | old `Z` | 191689 | 60 | Literal `KENC`, old numeric `_[]`, no `decryptData`, includes `G` mode code. |
 | `2017-09-21` | `tour.js` | `KENCRUZR` | old `Z` | 227010 | 115 | Literal `KENC`, old numeric `_[]`, no `decryptData`. |
 | `2018-04-04` | `tour.js` | `KENCPUZR` | modern `Z` | 254751 | 17 | No literal `KENC`; startup rebinds `_` to `we.subdiv`; default key resolves to `actions overflow`. |
 | `2023-02-07` | `tour.js` | `KENCRURR` | modern `R/R` | 359957 | 29 | No literal `KENC`; startup rebinds `_` to `we.subdiv`; replacement token resolves to `z`. |
 | `2023-04-30` | `tour.js` | `KENCRURR` | modern `R/R` | 441405 | 110 | No literal `KENC`; startup rebinds `_` to `we.subdiv`; replacement token resolves to `z`. |
+| `2023-04-30-PP` | `tour.js` | `KENCPUPR` | modern `P/P` | 441405 | 49 | Same krpano 1.21 build as `2023-04-30` but encrypted with `P/P` header; replacement token resolves to `z`. |
 | `2023-12-11` | `tour.js` | `KENCRURR` | modern `R/R` | 441589 | 163 | No literal `KENC`; startup rebinds `_` to `we.subdiv`; replacement token resolves to `z`. |
 | `2024-12-20` | `tour.js` | `KENCRURR` | modern `R/R` | 482960 | 45 | No literal `KENC`; startup rebinds `_` to `we.subdiv`; replacement token resolves to `z`. |
 
@@ -108,9 +111,9 @@ Branch table:
 | --- | ---: | ---: | --- |
 | `KENCRUZR` | 1 | 10 | `Z`: modified Base85, byte decrypt, LZ4, UTF-8. Used by old fixtures. |
 | `KENCPUZR` | 0 | 10 | `Z`: modified Base85, byte decrypt, LZ4, UTF-8. Used by `2018-04-04`. |
-| `KENCPUPR` | 0 | 0 | `P/P`: accepted by modern code, exact transform pending. |
-| `KENCRURR` | 1 | 2 | `R/R`: accepted by modern code, exact transform pending. Used by 2023+ fixtures. |
-| `KENC..B.` | varies | -14 | `B`: Base64, byte decrypt, UTF-8 according to decoded code, but no current fixture exercises it. |
+| `KENCPUPR` | 0 | 0 | `P/P`: used by `2023-04-30-PP`; replacement token resolves to `z` (same engine as `2023-04-30` RR). |
+| `KENCRURR` | 1 | 2 | `R/R`: used by 2023+ fixtures; replacement token resolves to `z`. |
+| `KENCPUBR` | 0 | -14 | `B`: Base64, byte decrypt, UTF-8. Used by `2013-08-09-B` (krpano 1.0.8.15) and `2013-06-05-B` (krpano 1.16.4). |
 
 Important correction: `KENCRURR` does not use the `Z` Base85 + LZ4 branch.
 
@@ -148,7 +151,7 @@ Modern `Z` vector proven by `/tmp/krpano_decrypt_2018_probe.js`:
 
 ### Old engine family
 
-- Applies to `old`, `2015-08-04`, and `2017-09-21`.
+- Applies to `2013-08-09-B`, `2013-06-05-B`, `old`, `2015-08-04`, and `2017-09-21`.
 - Decoded engines contain literal `KENC` branch logic.
 - They use an old numeric `_[]` string table and do not use the modern `decryptData` constant system.
 - `old` and `2017-09-21` require a license-derived key for `R` mode. If the key variable is absent (`Pd` in `old`, `pe` in `2017-09-21`), the helper returns `null`.
@@ -157,7 +160,7 @@ Modern `Z` vector proven by `/tmp/krpano_decrypt_2018_probe.js`:
 - The `decodeLicense=function(a){return null}` found inside the resource module is not the old license decoder that assigns those variables.
 - **2026-06-26 probe findings:**
   - Decryptor usage pattern confirmed: `if(82==b)if(Pd)f=127,h=Pd;else return null` (where `Pd` is the key variable, varies by fixture).
-  - Z body transform sequence in the old decoded engine: Base85-decode body → `decrypt_bytes` with mode='R' (82) and key=`Pd`/`od`/`pe` → parse LZ4 header from decrypted result → LZ4 decompress → UTF-8.
+  - Z body transform sequence in the old decoded engine: Base85-decode body → `decrypt_bytes` with mode='R' (82) and key=`Pd`/`od`/`pe` → parse LZ4 header from decrypted result → LZ4 decompress → UTF-8. B branch uses Base64 instead of Base85 for the first stage.
   - The wrapper `krp:` key is NOT directly the decrypt key. Passing the wrapper key value (stripped of `krp:` prefix, padded to 128 chars) to `decrypt_bytes` produces garbage — the key must first go through the real license-decoder (Base64 decode + checksum + character lookup) before reaching `case 7`.
   - The real license decoder that processes the `krp:` wrapper key into `Pd`/`od`/`pe` has not yet been structurally located. This blocks old-fixture decryption.
 
@@ -251,7 +254,7 @@ The modern resource-file function has the same high-level branch structure acros
   - modern startup-unpack / `we.subdiv` engines with `decryptData` retained as a secondary helper behind `Rt`.
 - **Implement shared Z branch first** using the modern `2018-04-04` fixture (key = `actions overflow`, proven by `/tmp/krpano_decrypt_2018_probe.js`). Then derive old-engine keys and modern-engine constants. The Z body transform is identical across both engine families; only the key source differs. Old-engine key derivation is blocked on locating the real license decoder that processes the `krp:` wrapper key into `Pd`/`od`/`pe`.
 - Treat `P/P` and `R/R` as their own body-transform family until proven otherwise.
-- Keep unobserved branches (`B`, 2015 `G`) unsupported or fixture-gated until test data exists.
+- Keep unobserved branches (2015 `G`) unsupported or fixture-gated until test data exists.
 - Wire `decrypt_xml` only after each stage has fixture-driven intermediate vectors.
 - Do not pursue keyless known-plaintext RC4 attacks: the per-file keystream (variable 128-byte prefix) and sparse known plaintext make this infeasible (see analysis above). Key extraction from viewer JS is the correct path.
 
@@ -261,11 +264,11 @@ Each item below needs an explicit answer, fixture vector, or implementation deci
 
 | ID | Question | Blocks | Required proof |
 | --- | --- | --- | --- |
-| Q1 | What exactly completes the `P/P` and `R/R` body transform after `body.replaceAll("z", "\\")`? | 2023+ fixtures, HIROX-style `KENCRURR`, generated `KENCPUPR`. | Trace the downstream consumer after the replacement branch, identify whether another escape/parser/decode step runs, and produce plaintext vectors. |
+| Q1 | What exactly completes the `P/P` and `R/R` body transform after `body.replaceAll("z", "\\")`? | 2023+ fixtures with `KENCRURR` and `KENCPUPR` headers (now have `2023-04-30-PP` for P/P). | Trace the downstream consumer after the replacement branch, identify whether another escape/parser/decode step runs, and produce plaintext vectors. |
 | Q2 | When is the modern widened byte-helper key actually needed, and how should its stateful `we.subdiv` branch be replayed? | Future modern mode-1 `Z`/`B` fixtures; not the current `2018-04-04` `Z` path. | Port the relevant `we.subdiv` stateful branches or prove no supported fixture needs them; assert default key `actions overflow` for all current modern fixtures. |
 | Q3 | How is the old license key derived from wrapper data? | `KENCRUZR` fixtures in `old`, `2015-08-04`, `2017-09-21`. | Port or reproduce the license-decoder path that assigns `od`, `pe`, or `Pd`; verify final key strings and decrypted XML. |
 | Q4 | What are the semantic names for header modes? | Documentation quality, future compatibility. | Confirm which combinations map to public-key, protected/license-key, custom-key, compressed, and uncompressed krpano modes. |
-| Q5 | Should `B` and `G` branches be implemented now? | Only future/unobserved fixtures. | Add fixture vectors or explicitly keep them as precise unsupported errors. |
+| Q5 | Should `G` branch be implemented? Is `KENCRUBR` a valid variant? | Only future/unobserved fixtures. `B` branch now has `2013-06-05-B` and `2013-08-09-B` fixtures; `G` remains unobserved. | Add fixture vectors or explicitly keep them as precise unsupported errors. |
 | Q6 | Can one modern structural extractor cover future modern builds? | Robustness beyond current fixtures. | Tests over all modern fixtures and fallback errors that name the missing structural anchor. |
 | Q7 | How should viewer JS/key data enter `KrpanoDezoomer`? | User-facing integration. | Decide between `NeedsData`, URL inference, explicit key bundle input, or a combined approach; add tests for the chosen flow. |
 
@@ -733,12 +736,13 @@ Do these in order:
 
 1. ✅ ~~**Phase 1:** Add fixture metadata tests and `KencBranch` classification.~~
 2. ✅ ~~**Phase 2:** Add analysis harness, split `encrypted.rs` → `encrypted/` module.~~
-3. **Phase 3 Part B + Phase 5 combined:** Implement Z branch transform in `branches.rs`, test against `2018-04-04` with known key `actions overflow`. First end-to-end decrypting pipeline.
-4. **Phase 4:** Modern startup-unpack in `encrypted/modern_engine.rs` — extract `actions overflow` structurally instead of hardcoding.
-5. **Phase 3 Part A** (deferred): Old license key derivation — locate the real license decoder in old engines.
-6. **Phase 6:** `P/P` and `R/R` branch resolution.
-7. **Phase 7:** Complete `decrypt_xml` dispatching all branches.
-8. **Phase 8+9:** Dezoomer integration and validation.
+3. ✅ ~~**Fixture expansion (2026-06-26):** GitHub search for `<encrypted><![CDATA[KEN` found 3 new unique JS/XML pairs: `2023-04-30-PP` (KENCPUPR, P/P), `2013-06-05-B` (KENCPUBR, B), and `2013-08-09-B` (KENCPUBR, B, krpano 1.0.8.15). All have fixture directories with metadata tests passing. KENCPUZR (ModernZ) confirmed to have no additional tour.xml fixtures on public GitHub.~~
+4. **Phase 3 Part B + Phase 5 combined:** Implement Z branch transform in `branches.rs`, test against `2018-04-04` with known key `actions overflow`. First end-to-end decrypting pipeline.
+5. **Phase 4:** Modern startup-unpack in `encrypted/modern_engine.rs` — extract `actions overflow` structurally instead of hardcoding.
+6. **Phase 3 Part A** (deferred): Old license key derivation — locate the real license decoder in old engines.
+7. **Phase 6:** `P/P` and `R/R` branch resolution (now has `2023-04-30-PP` fixture for testing P/P).
+8. **Phase 7:** Complete `decrypt_xml` dispatching all branches (B branch now has `2013-06-05-B` and `2013-08-09-B` fixtures).
+9. **Phase 8+9:** Dezoomer integration and validation.
 
 ## Commit Strategy
 
