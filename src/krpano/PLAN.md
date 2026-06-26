@@ -23,7 +23,7 @@ src/krpano/
 │   ├── crypto.rs       # decrypt_bytes (RC4-like)
 │   ├── viewer.rs       # extract_key_from_viewer_js, extract_decoded_viewer_js,
 │   │                   #   next_js_string_literal, looks_like_* helpers
-│   ├── old_engine.rs   # Old engine license key derivation, old Z pipeline assembly
+│   ├── old_engine.rs   # Old engine license key derivation
 │   ├── modern_engine.rs# Startup key-unpack IIFE extraction, we.subdiv row reads,
 │   │                   #   static constant resolution
 │   └── branches.rs     # Branch transform dispatch: Z, P/P, R/R body transforms
@@ -42,6 +42,7 @@ src/krpano/
 - Tests stay co-located in `#[cfg(test)] mod tests` blocks within each module.
 - The split is done incrementally so no commit contains both a refactor and new logic.
 - No module exceeds ~300 lines, keeping code reviewable.
+- Old engine is implemented first because it is simpler (literal `KENC` in source, numeric `_[]` table, well-understood decrypt path).
 
 ## Current Code Status
 
@@ -53,11 +54,11 @@ src/krpano/
 | Modified Base85 codec | Implemented and unit-tested. | Use for `Z` branch payload decoding. |
 | LZ4 block codec | Implemented and unit-tested. | Use for `Z` branch after byte decryption. |
 | Base64 payload codec | Not implemented for XML payloads. | Implement only when a `B` branch fixture or test vector exists. |
-| Byte decryptor | Implemented as an RC4-like helper with synthetic round-trip coverage. | Add fixture vectors using real derived keys. |
+| Byte decryptor | Implemented as an RC4-like helper with synthetic round-trip coverage. | Add fixture vectors using real derived keys (old first, then modern). |
 | Wrapper `krp:` key extraction | Implemented as a simple viewer JS regex. | Verify against all fixtures; make errors precise. |
+| Old license key derivation | Not implemented. | **First priority:** port the minimal license-decoder path that reaches the old key assignment. |
 | Modern static string/key extraction | Partially understood in investigation: the wrapper key unpacks into `we.subdiv` rows without executing viewer JS; the modern default byte-helper key resolves to `actions overflow` for all current modern fixtures. | Port the wrapper-key unpacker plus direct `we.subdiv` row reads; defer the stateful widened-key branch until needed by a fixture. |
-| Old license key derivation | Not implemented. | Port the minimal license-decoder path that reaches the old key assignment. |
-| `decrypt_xml` | Still a stub. | Wire after branch transforms and key derivation have fixture vectors; `2018-04-04` now has a proven modern `Z` pipeline vector from temporary analysis. |
+| `decrypt_xml` | Still a stub. | Wire after old Z branch is proven; modern Z follows; RR/PP last. |
 
 ## Fixture Corpus
 
@@ -208,6 +209,33 @@ The modern resource-file function has the same high-level branch structure acros
 - For the `P/P` and `R/R` branch (`byte6 == 2 * mode_value`), it currently performs only `body.replaceAll("z", "\\")` in the resource-loader branch. This does not yet explain why checked-in `KENCRURR` bodies become plaintext XML; either another downstream interpretation step remains, or the exact call path differs after this return.
 - For the `B` branch (`byte6 == -14`), it Base64-decodes, byte-decrypts, and UTF-8-decodes according to the same resource function, but no current fixture covers it.
 
+## Test Strategy
+
+### Test categories
+
+| Category | Location | Purpose | Examples |
+| --- | --- | --- | --- |
+| Unit – codecs | `encrypted/codecs.rs` `#[cfg(test)]` | Verify each codec against hand-crafted vectors | `decodes_modified_base85_chunks`, `decodes_lz4_literal_only_block` |
+| Unit – crypto | `encrypted/crypto.rs` `#[cfg(test)]` | Verify RC4-like decryptor with synthetic round-trip | `decrypts_byte_cipher_payload` |
+| Unit – header | `encrypted/header.rs` `#[cfg(test)]` | Verify header parse, branch classify, error cases | `parses_known_kenc_headers`, `rejects_invalid_kenc_headers` |
+| Unit – viewer extraction | `encrypted/viewer.rs` `#[cfg(test)]` | Verify JS string extraction, key regex, packed decoding | `extracts_krpano_decryption_key_from_viewer_js` |
+| Unit – engine key derivation | `encrypted/old_engine.rs` + `modern_engine.rs` `#[cfg(test)]` | Verify derived keys and constants against known values | `derives_old_license_key_for_fixture_old` |
+| Unit – branch transforms | `encrypted/branches.rs` `#[cfg(test)]` | Verify each branch transform against fixture vectors | `decrypts_old_z_branch`, `decrypts_2018_04_04_z_branch` |
+| Unit – staging vectors | Each module `#[cfg(test)]` | Capture intermediate lengths/hashes at each pipeline stage | Base85 bytes → post-decrypt bytes → post-LZ4 bytes → plaintext |
+| Fixture metadata | `encrypted/mod.rs` `#[cfg(test)]` | Assert fixture facts from the corpus table | `all_fixtures_have_correct_kenc_header`, `all_viewer_fixtures_decode` |
+| Integration – decrypt | `encrypted/mod.rs` `#[cfg(test)]` | `decrypt_xml` end-to-end per fixture | `decrypt_xml_produces_valid_krpano_for_old` |
+| Integration – dezoomer | `mod.rs` `#[cfg(test)]` | KrpanoDezoomer consumes decrypted XML unchanged | Existing `test_cube`, `test_flat_multires` + new encrypted variants |
+| Regression | All existing tests | No plaintext krpano behavior changes | `test_cube`, `test_flat_multires`, `test_dezoomer_result_*` |
+
+### Testing principles
+
+1. **Every pipeline stage has an intermediate vector.** If a test fails, the staging output immediately identifies *which* stage broke.
+2. **Fixture-gated, not name-gated.** Tests use header values and branch classification to select the code path, not the fixture directory name.
+3. **No dead test code.** Every `#[allow(dead_code)]` is removed once its consumer is wired; the test exercises the public path.
+4. **Exact errors for unsupported branches.** Tests that exercise `B`, `G`, or unknown headers assert the error message contains the header bytes and branch name.
+5. **Generated output is not committed.** LZ4 decompressed payloads and full decoded engines stay in `/tmp` or test output; only small excerpts (e.g. first 80 bytes of plaintext) appear in test assertions.
+6. **Old engine first.** Old `KENCRUZR` fixtures use a simpler, better-understood pipeline; proving the Z branch with old fixtures first builds confidence before tackling the more complex modern startup-unpack.
+
 ## Decisions
 
 - Do not execute arbitrary decoded viewer JS in Rust.
@@ -216,6 +244,7 @@ The modern resource-file function has the same high-level branch structure acros
 - Split implementation into two known engine families:
   - old literal-header engines,
   - modern startup-unpack / `we.subdiv` engines with `decryptData` retained as a secondary helper behind `Rt`.
+- **Implement old engine first.** It is simpler (literal `KENC`, numeric `_[]` table, well-understood license-decoder path) and proves the Z branch end-to-end before tackling modern complexity.
 - Treat `P/P` and `R/R` as their own body-transform family until proven otherwise.
 - Keep unobserved branches (`B`, 2015 `G`) unsupported or fixture-gated until test data exists.
 - Wire `decrypt_xml` only after each stage has fixture-driven intermediate vectors.
@@ -243,13 +272,46 @@ Status: next.
 
 Goal: make the current corpus facts executable so regressions are caught immediately.
 
-Tasks:
+**Implementation plan:**
 
-1. Add a fixture metadata test that reads every encrypted XML fixture and asserts its `KENC....` header.
-2. Add a viewer-wrapper test that asserts the extracted `krp:` key length for each fixture.
-3. Add a decoded-viewer test that asserts decoded engine byte length for each fixture, with small tolerance only if the fixture changes intentionally.
-4. Update `KencHeader` tests to include `KENCRUZR`, `KENCPUZR`, and `KENCRURR`.
-5. Add a `KencBranch` or equivalent classification API for known branch values.
+1. Add a `KencBranch` enum in `encrypted.rs`:
+   ```rust
+   #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+   pub enum KencBranch {
+       OldZ,      // KENCRUZR
+       ModernZ,   // KENCPUZR
+       RR,        // KENCRURR
+       PP,        // KENCPUPR
+       B,         // KENC..B. (any mode with key_source='B')
+       Unknown,
+   }
+   impl KencHeader { pub fn branch(&self) -> KencBranch { ... } }
+   ```
+   Derive from the computed byte-6 value (`charCode - 80`), not from the raw field letter.
+
+2. Add `#[test] fn all_fixtures_have_correct_kenc_header()`:
+   - Iterates `testdata/krpano/encrypted/*/` directories.
+   - Reads the encrypted XML, runs `encrypted_payload` then `KencHeader::parse`.
+   - Asserts raw header string against fixture table.
+
+3. Add `#[test] fn all_fixtures_extract_correct_wrapper_key_length()`:
+   - Iterates viewer JS fixtures.
+   - Calls `extract_key_from_viewer_js`.
+   - Asserts key length matches corpus table.
+
+4. Add `#[test] fn all_fixtures_decode_viewer_js_to_expected_length()`:
+   - Iterates viewer JS fixtures.
+   - Calls `extract_decoded_viewer_js`.
+   - Asserts decoded byte length matches corpus table.
+
+5. Add `#[test] fn classifies_every_header_branch()`:
+   - For each fixture, calls `KencHeader::branch()`.
+   - Asserts `OldZ` for `KENCRUZR`, `ModernZ` for `KENCPUZR`, `RR` for `KENCRURR`.
+   - Asserts `KENCPUPR` → `PP`, a synthetic `KENCXXBZ` → `B`.
+
+**Files touched:** only `encrypted.rs` (additions, no structural changes).
+
+**Commit boundary:** commit 1.
 
 Acceptance checks:
 
@@ -263,46 +325,114 @@ Status: not started.
 
 Goal: make intermediate decrypt stages inspectable without committing large decoded JS files.
 
-Tasks:
+**Implementation plan:**
 
-1. Add test-only helpers or ignored diagnostics that can materialize:
-   - wrapper `krp:` key,
-   - decoded engine JS,
-   - encrypted XML payload body,
-   - body after branch body-decoding,
-   - body after byte decryption,
-   - body after LZ4 for `Z`.
-2. Keep generated decoded JS under `/tmp` or test output, not committed, unless a small fixture-specific excerpt is needed.
-3. Make diagnostics print fixture name, header, branch, and byte lengths at every stage.
+1. Add a `#[cfg(test)]` helper struct `DecryptStages` in `encrypted.rs`:
+   ```rust
+   struct DecryptStages {
+       fixture: String,
+       header: KencHeader,
+       branch: KencBranch,
+       wrapper_key: Option<String>,
+       decoded_engine_len: usize,
+       encrypted_body_len: usize,
+       body_decoded_len: Option<usize>,    // after Base85/Base64
+       byte_decrypted_len: Option<usize>,  // after decrypt_bytes
+       lz4_decompressed_len: Option<usize>,// after LZ4 (Z only)
+       plaintext_len: Option<usize>,       // after UTF-8
+       plaintext_prefix: Option<String>,   // first 80 chars
+   }
+   ```
+
+2. Add `fn collect_stages(fixture_dir: &Path) -> DecryptStages` that:
+   - Reads the encrypted XML and viewer JS from the directory.
+   - Fills every field, returning `None` for stages that fail.
+   - Prints a formatted row to stderr via `eprintln!`.
+
+3. Add `#[test] fn analysis_harness_prints_all_stages()` annotated `#[ignore]`:
+   - Iterates all fixture dirs.
+   - Calls `collect_stages`.
+   - Panics if any fixture's stages differ from known-good baselines (when those baselines exist).
+   - Running manually (`cargo test -- --ignored`) produces a stage table.
+
+4. Move `encrypted.rs` → `encrypted/` module directory **after this phase passes** (no behavior change, just file splits).
+
+**Files:**
+- Before split: `encrypted.rs` gains analysis harness helpers.
+- After split: `encrypted/{mod,header,codecs,crypto,viewer}.rs` each with their existing code.
+
+**Commit boundaries:**
+- Commit 2a: analysis harness added (still in `encrypted.rs`).
+- Commit 2b: module split (pure code motion, no logic changes, all tests still pass).
 
 Acceptance checks:
 
 - Running the harness over the corpus produces a stable stage table.
 - The harness can isolate which stage fails for each fixture.
 
-### Phase 3: Derive Old-Engine Keys
+### Phase 3: Derive Old-Engine Keys and Prove Old Z Branch
 
 Status: not started.
 
-Goal: decrypt the `KENCRUZR` fixtures from the old engine family.
+Goal: derive license keys for `KENCRUZR` fixtures and prove the full Z pipeline end-to-end with old fixtures. This is the simpler pipeline and should be completed first.
 
-Tasks:
+**Why old first:** Old engines have literal `KENC` in source, use a numeric `_[]` string table, and the Z branch decrypt path is well-understood. Proving this first builds confidence in all shared components (modified Base85, byte decryptor, LZ4, UTF-8) before adding modern complexity.
 
-1. Locate the real old license decoder in `old`, `2015-08-04`, and `2017-09-21`.
-2. Port only the path needed to process the wrapper `krp:` key and reach `case 7`.
-3. Verify the assigned key variable:
-   - `old`: `Pd`,
-   - `2015-08-04`: `od`,
-   - `2017-09-21`: `pe`.
-4. Feed the derived key into the existing `decrypt_bytes` helper.
-5. Decode the `Z` branch body with modified Base85, byte decrypt, LZ4, UTF-8.
+**Implementation plan:**
+
+**Part A — Key derivation (new file: `encrypted/old_engine.rs`):**
+
+1. Add `pub struct OldEngineContext`:
+   ```rust
+   pub struct OldEngineContext {
+       pub license_key: Vec<u8>,  // derived from wrapper krp: key
+       pub key_variable: String,  // "Pd", "od", or "pe" (for debugging)
+   }
+   ```
+
+2. Add `pub fn derive_old_license_key(decoded_engine: &[u8], wrapper_key: &str) -> Result<OldEngineContext>`:
+   - Parse decoded engine source as UTF-8.
+   - Locate the license decoder function (structurally: find `decodeLicense=function`, not the `return null` stub).
+   - Follow the `case 7` path that pads the recovered key to 128 characters.
+   - Replicate only the base64 decode, checksum, and character-lookup steps needed.
+   - Return the final padded key bytes + variable name.
+
+3. For `2015-08-04` specifically:
+   - Detect if `G` mode is requested (header inspection).
+   - If `G` mode and not supported, return `Err(EncryptedKrpanoError::UnsupportedBranch { header, reason: "G mode" })`.
+
+4. Tests in `old_engine.rs`:
+   - `fn derives_key_for_fixture_old()`: assert key bytes hash to known value.
+   - `fn derives_key_for_fixture_2017_09_21()`: same.
+   - `fn derives_key_for_fixture_2015_08_04()`: same.
+
+**Part B — Z branch wiring (new file: `encrypted/branches.rs`):**
+
+5. Add `pub fn decrypt_z_branch(body: &str, key: &[u8], widened: bool) -> Result<Vec<u8>>`:
+   - `decode_modified_base85(body)` → 32-bit big-endian chunks.
+   - Parse LZ4 block header: 3-byte LE decompressed len, 3-byte LE compressed len from packed bytes.
+   - `decrypt_bytes(packed, key, widened)`.
+   - `lz4_decompress_block(decrypted, decompressed_len, compressed_end)`.
+   - Return as raw bytes (caller does UTF-8 conversion).
+
+6. Add `pub fn z_branch_to_plaintext(body: &str, key: &[u8], widened: bool) -> Result<String>`:
+   - Calls `decrypt_z_branch`.
+   - Converts to UTF-8 via `String::from_utf8()`.
+
+7. Tests in `branches.rs`:
+   - `fn decrypts_old_z_branch()`: for each `KENCRUZR` fixture, derive key + decrypt. Assert plaintext is valid XML and parses as `KrpanoMetadata`.
+   - `fn old_z_branch_stage_vectors()`: captures Base85 input length, post-byte-decrypt length, post-LZ4 length for each old fixture.
+
+**Files:** `encrypted/old_engine.rs` (new), `encrypted/branches.rs` (new), `encrypted/mod.rs` (re-exports).
+
+**Commit boundary:** commit 3 (old engine key derivation + Z branch wiring, all old fixtures decrypting).
 
 Acceptance checks:
 
 - Each old fixture has tests for derived key length/content hash.
-- Each old fixture has tests for post-byte-decrypt length/hash.
-- Each old fixture decrypts to plaintext XML.
+- `old`, `2015-08-04`, and `2017-09-21` decrypt to valid krpano XML.
 - Unsupported 2015 `G` mode has a precise fixture-gated error unless implemented.
+- The existing plaintext krpano parser consumes decrypted XML without changes.
 
 ### Phase 4: Derive Modern Static Constants and Keys
 
@@ -310,54 +440,86 @@ Status: partially proven in temporary probes.
 
 Goal: resolve modern startup-unpacked `we.subdiv` constants into concrete strings without executing arbitrary viewer JS.
 
-Tasks:
+**Implementation plan (new file: `encrypted/modern_engine.rs`):**
 
-1. Extract the wrapper `krp:` key before decoding the engine.
-2. Find the modern `_()` wrapper structurally, then find the startup key-unpack IIFE that rebinds `_` to `we.subdiv`.
-3. Implement the source-text helpers needed by the startup unpacker:
-   - balanced function-body extraction,
-   - `Rd`-style body normalization,
-   - `qf` checksum,
-   - `Lf` permutation table,
-   - `krp:` payload unpack into row and side arrays.
-4. Reduce the computed `Xa`/`ua`/`Wa`/`Za`/`yb` helper to `String.fromCharCode`.
-5. Implement direct `we.subdiv` branch-0 row reads.
-6. Assert direct modern constants:
-   - default byte-helper key: `actions overflow`,
-   - replacement token for `P/P` and `R/R`: `z`,
-   - `KENC`, header constants, and resource branch string constants needed by branch dispatch.
-7. Defer or separately implement stateful `we.subdiv` branches for widened-key ids (`_(26890,1)`, `_(8247,1)`, `_(9525,1)`, `_(1783,1)`, `_(3255,1)`) only when a supported fixture path needs them.
-8. Keep `decodeLicense` / `decryptData` support scoped to `Rt` calls emitted by stateful `we.subdiv` branches; do not make it the primary modern extractor.
+1. Add `pub struct ModernEngineContext`:
+   ```rust
+   pub struct ModernEngineContext {
+       pub default_key: String,       // byte-helper key ("actions overflow")
+       pub replacement_token: String, // for P/P and R/R ("z")
+       pub kenc_constant: String,     // "KENC"
+       pub checksum_constant: u32,    // varies by fixture family
+       // widened-key entries deferred until needed
+   }
+   ```
+
+2. Add source-text helpers (private to the module):
+   - `fn find_function_body(source: &str, name: &str) -> Option<&str>` — finds `name=function(...){...}` or `function name(...){...}`, returns body.
+   - `fn find_iife_call(source: &str) -> Option<&str>` — finds the startup key-unpack IIFE structurally.
+   - `fn compute_checksum(input: &str) -> u32` — port of `qf` checksum.
+   - `fn unpack_krp_payload(wrapper_key: &str, side: &[u16]) -> Vec<Vec<String>>` — decode the `krp:` payload into rows.
+
+   **Reduction of computed helpers:**
+   - The `Xa`/`ua`/`Wa`/`Za`/`yb` helper is always derived from the `Ma` browser-name array. Rather than name-matching, find the computed `Ma` array index that yields `String.fromCharCode` (structural: look for the expression that composes ASCII chars 'f','r','o','m','C','h','a','r','C','o','d','e').
+
+3. `pub fn extract_modern_context(decoded_engine: &[u8], wrapper_key: &str) -> Result<ModernEngineContext>`:
+   - Detect modern engine family: check for absence of literal `KENC` in source text.
+   - Find the startup key-unpack IIFE, extract and normalize its body.
+   - Compute the checksum and extract `n`, `q` parameters.
+   - Unpack the `krp:` payload into `we.subdiv` rows.
+   - Read direct branch-0 row constants for default key and replacement token.
+
+4. Tests in `modern_engine.rs`:
+   - `fn extracts_default_key_for_all_modern_fixtures()`: assert `default_key == "actions overflow"`.
+   - `fn extracts_replacement_token_for_all_modern_fixtures()`: assert `replacement_token == "z"`.
+   - `fn extract_fails_with_missing_anchor_for_bad_input()`: assert error names the missing anchor.
+
+**Files:** `encrypted/modern_engine.rs` (new), `encrypted/mod.rs` (re-export).
+
+**Commit boundary:** commit 4.
 
 Acceptance checks:
 
-- Modern startup unpacking works for `2018-04-04`, `2023-02-07`, `2023-04-30`, `2023-12-11`, and `2024-12-20`.
-- Direct constants match the temporary probe values, including `actions overflow` and replacement token `z`.
+- Modern startup unpacking works for all 5 modern fixtures.
+- Direct constants match the temporary probe values.
 - Failures report which structural anchor was missing.
 - No code path evaluates decoded viewer JS directly.
 
-### Phase 5: Finish the `Z` Branch
+### Phase 5: Add Modern Z Branch
 
-Status: partially proven for modern `2018-04-04`; still blocked on old-engine keys for old fixtures.
+Status: partially proven in temporary probes; old Z already complete from Phase 3.
 
-Goal: prove the already-ported codecs and byte decryptor against real `Z` fixtures.
+Goal: prove the modern `2018-04-04` `KENCPUZR` fixture using the same Z pipeline, now with modern-derived default key.
 
-Tasks:
+**Implementation plan (extend `encrypted/branches.rs`):**
 
-1. Promote the `2018-04-04` (`KENCPUZR`) temporary vector to tests using default key `actions overflow`:
-   - modified Base85,
-   - byte decrypt with widened-key flag `false`,
-   - LZ4 using the eight-byte little-endian block header,
-   - UTF-8.
-2. For old `KENCRUZR` fixtures, use old derived keys and the same `Z` pipeline.
-3. Add intermediate vectors for body-decoded bytes, post-byte-decrypt bytes, post-LZ4 bytes, and plaintext XML.
+1. Tests in `branches.rs`:
+   - `fn decrypts_2018_04_04_z_branch()`:
+     - Loads `2018-04-04/tour.xml` encrypted payload.
+     - Calls `z_branch_to_plaintext` with key `b"actions overflow"`, widened `false`.
+     - Asserts decrypted byte length = 36407 (matches temp probe).
+     - Asserts plaintext starts with `<krpano` (after optional leading whitespace).
+     - Feeds output into `serde_xml_rs::from_reader` → `KrpanoMetadata`, asserts it parses.
+   - `fn modern_z_branch_stage_vectors()`:
+     - Captures Base85 input length = 7932.
+     - Captures post-byte-decrypt length = 7803.
+     - Captures post-LZ4 decompressed length = 36407.
+
+2. Add `pub fn decrypt_branch_body(header: &KencHeader, body: &str, ctx: &DecryptContext) -> Result<Vec<u8>>`:
+   - Dispatches on `header.branch()`.
+   - For `OldZ` and `ModernZ`: calls `z_branch_to_plaintext`.
+   - For `RR` and `PP`: returns `Err(Unsupported)` for now (wired in Phase 6).
+   - For `B`: returns `Err(UnsupportedBranch { header, reason: "B branch" })`.
+
+**Files:** `encrypted/branches.rs` (extend).
+
+**Commit boundary:** commit 5 (small, since Z pipeline already proven by old fixtures).
 
 Acceptance checks:
 
 - `2018-04-04` decrypts to valid krpano XML.
-- `2018-04-04` stage lengths match the temporary vector: 7932 Base85 bytes, 7803 post-byte-decrypt bytes, 36407 plaintext bytes.
-- `old`, `2015-08-04`, and `2017-09-21` decrypt to valid krpano XML.
-- The existing plaintext krpano parser consumes decrypted XML without changes.
+- Stage lengths match the temporary vector.
+- Z branch dispatches correctly for both old and modern fixtures.
 
 ### Phase 6: Resolve `P/P` and `R/R`
 
@@ -365,17 +527,35 @@ Status: narrowed by static branch trace; plaintext step still unresolved.
 
 Goal: decrypt current modern `KENCRURR` fixtures and generated/public `KENCPUPR` fixtures.
 
-Tasks:
+**Implementation plan (extend `encrypted/branches.rs`):**
 
-1. Port the currently traced branch as `body.replaceAll("z", "\\")`.
-2. Add intermediate vectors for every `KENCRURR` fixture before and after the replacement.
-3. Trace the downstream consumer after this branch returns; current post-replacement output is not plaintext XML.
-4. Identify whether another escape parser, generated action decoder, XML parser path, or call-path distinction completes plaintext recovery.
-5. Add `KENCPUPR` vectors if the generated public fixture is license-safe and small enough.
+1. Add `fn apply_rr_replace(body: &str, token: &str) -> String`:
+   - Port `body.replaceAll("z", "\\")` using the modern context replacement token.
+
+2. **Investigation step (Q1):** After `replaceAll`, the output is not yet plaintext XML. Possibilities:
+   - The body is base64-encoded and needs decoding after replacement.
+   - The body uses a custom escape/encoding that needs a second pass.
+   - The call path skips byte decryption entirely.
+   - An external action decoder or XML loader interprets the result.
+
+   **Method:** Add a test `fn dump_rr_post_replace_for_each_fixture()` (ignored) that materializes the post-replace bytes to `/tmp/`. Manually inspect for base64, binary patterns, or escape sequences.
+
+3. Once the completion step is identified, implement it as a second transform and add it to the RR branch dispatch.
+
+4. Add tests:
+   - `fn decrypts_2023_04_30_rr_branch()` and siblings for each KENCRURR fixture.
+   - Each asserts plaintext is valid XML and parses as `KrpanoMetadata`.
+   - `fn rr_branch_stage_vectors()` captures intermediate lengths.
+
+5. If PP fixtures are available and license-safe, add `fn decrypts_pp_branch()`.
+
+**Files:** `encrypted/branches.rs` (extend), possibly `/tmp` probe scripts.
+
+**Commit boundary:** commit 6 (may be multiple commits if investigation is iterative).
 
 Acceptance checks:
 
-- `2023-02-07`, `2023-04-30`, `2023-12-11`, and `2024-12-20` decrypt to valid krpano XML.
+- All `KENCRURR` fixtures decrypt to valid krpano XML.
 - The branch implementation is selected by parsed header values, not by fixture name.
 - `KENCRURR` never falls through to the `Z` pipeline.
 
@@ -385,29 +565,62 @@ Status: blocked on at least one full fixture path.
 
 Goal: replace the stub with a staged, testable decrypt function.
 
-Tasks:
+**Implementation plan (`encrypted/mod.rs`):**
 
-1. Define internal structs for extracted viewer decryption data:
-   - engine family,
-   - wrapper key,
-   - derived byte-helper keys,
-   - supported branch transforms.
-2. Keep XML payload extraction separate from viewer key extraction.
-3. Implement branch dispatch from `KencHeader` / `KencBranch`.
-4. Return precise errors for:
-   - missing viewer data,
-   - unsupported branch,
-   - missing structural anchor,
-   - bad body codec,
-   - byte decrypt failure,
-   - decompression failure,
-   - non-UTF-8 output.
-5. Feed decrypted XML into the existing krpano parser unchanged.
+1. Define `DecryptContext` enum:
+   ```rust
+   pub enum DecryptContext {
+       Old(OldEngineContext),
+       Modern(ModernEngineContext),
+   }
+   ```
+
+2. Rewrite `decrypt_xml`:
+   ```rust
+   pub fn decrypt_xml(
+       contents: &[u8],
+       viewer_data: Option<&[u8]>,  // viewer JS raw bytes
+   ) -> Result<Vec<u8>, EncryptedKrpanoError> {
+       let payload = encrypted_payload(contents)?;
+       let header = KencHeader::parse(&payload)?;
+       let body = header.payload(&payload);
+
+       let viewer = viewer_data.ok_or(EncryptedKrpanoError::MissingKey)?;
+       let wrapper_key = extract_key_from_viewer_js(viewer)
+           .ok_or(EncryptedKrpanoError::MissingKey)?;
+       let decoded_engine = extract_decoded_viewer_js(viewer)?;
+
+       let ctx = match header.branch() {
+           KencBranch::OldZ => {
+               DecryptContext::Old(old_engine::derive_old_license_key(&decoded_engine, &wrapper_key)?)
+           }
+           KencBranch::ModernZ | KencBranch::RR | KencBranch::PP => {
+               DecryptContext::Modern(modern_engine::extract_modern_context(&decoded_engine, &wrapper_key)?)
+           }
+           KencBranch::B => return Err(EncryptedKrpanoError::Unsupported),
+           KencBranch::Unknown => return Err(EncryptedKrpanoError::InvalidHeader { header: header.raw.clone() }),
+       };
+
+       let plaintext = branches::decrypt_branch_body(&header, body, &ctx)?;
+       Ok(plaintext)
+   }
+   ```
+
+3. Tests in `encrypted/mod.rs`:
+   - `fn decrypt_xml_old()`: each old fixture end-to-end.
+   - `fn decrypt_xml_2018_04_04()`: full end-to-end with real XML + viewer JS files.
+   - `fn decrypt_xml_rr()`: each KENCRURR fixture (once Phase 6 completes).
+   - `fn decrypt_xml_missing_viewer_returns_error()`: asserts `MissingKey`.
+   - `fn decrypt_xml_unsupported_branch()`: synthetic KENCXXBZ payload, asserts error.
+
+**Files:** `encrypted/mod.rs` (rewrite `decrypt_xml`).
+
+**Commit boundary:** commit 7.
 
 Acceptance checks:
 
 - Unit tests cover each successful branch that has fixtures.
-- Unit tests cover unsupported `B`, `G`, or unknown headers if not implemented.
+- Unit tests cover unsupported branches with precise errors.
 - No plaintext krpano behavior regresses.
 
 ### Phase 8: Integrate with `KrpanoDezoomer`
@@ -416,21 +629,44 @@ Status: not started.
 
 Goal: make encrypted XML work in the normal dezoomer flow without hard-coding one site layout.
 
-Tasks:
+**Implementation plan (`mod.rs`):**
 
-1. Decide how viewer JS is discovered or supplied:
-   - use `DezoomerError::NeedsData` for viewer JS,
-   - infer common `tour.js` / `krpano.js` URLs when safe,
-   - allow pre-supplied viewer/key data,
-   - or combine these.
-2. Extend `KrpanoDezoomer` state only as much as needed to hold pending encrypted XML and viewer JS.
-3. Add integration tests for encrypted XML requiring a second resource.
-4. Ensure plaintext XML still takes the existing fast path.
+1. Update `load_from_properties` and `load_images_from_properties`:
+   - Change `decrypt_xml(contents, None)?` to `decrypt_xml(contents, viewer_js.as_deref())?`.
+   - The viewer JS must come from `KrpanoDezoomer` state.
+
+2. Extend `KrpanoDezoomer`:
+   ```rust
+   pub struct KrpanoDezoomer {
+       pending_encrypted_xml: Option<Vec<u8>>,
+   }
+   ```
+
+3. Update `Dezoomer::zoom_levels`:
+   - If `is_encrypted_xml(contents)` and no viewer JS cached:
+     - Save encrypted XML in `pending_encrypted_xml`.
+     - Return `Err(DezoomerError::NeedsData { uri: infer_viewer_url(&data.uri) })`.
+   - If viewer JS IS provided (via a second `DezoomerInput` call):
+     - Call `decrypt_xml(pending_xml, Some(viewer_js))`.
+     - Proceed with normal parsing.
+
+4. Add `fn infer_viewer_url(xml_uri: &str) -> String`:
+   - If the path ends with `.xml`, replace with `tour.js` (most common).
+   - If the directory contains a known pattern, infer `krpano.js`.
+
+5. Tests in `mod.rs`:
+   - `fn encrypted_xml_triggers_needs_data()`: feed encrypted XML without viewer, assert `NeedsData`.
+   - `fn encrypted_xml_second_call_decrypts()`: feed encrypted XML, get `NeedsData`, feed viewer JS, assert levels.
+   - `fn plaintext_still_works()`: existing plaintext tests pass unchanged.
+
+**Files:** `mod.rs` (extend `KrpanoDezoomer`), `encrypted/mod.rs` (no changes).
+
+**Commit boundary:** commit 8.
 
 Acceptance checks:
 
 - A local encrypted fixture produces the same tile URL metadata as its plaintext XML.
-- Missing viewer JS produces an actionable `NeedsData` or equivalent error.
+- Missing viewer JS produces an actionable `NeedsData` error.
 - Plaintext krpano tests still pass.
 
 ### Phase 9: End-to-End Validation
@@ -439,13 +675,23 @@ Status: not started.
 
 Goal: prove the implementation against fixtures and the motivating HIROX-style capture.
 
-Tasks:
+**Implementation plan:**
 
-1. Add unit tests for each stage and branch.
-2. Add local dezooming tests comparing encrypted fixture output to plaintext output.
-3. Run existing krpano tests.
-4. Test the HIROX capture end to end.
-5. Document any unsupported branch with exact error behavior.
+1. Add an integration test `fn encrypted_fixture_produces_same_tiles_as_plaintext()`:
+   - For each fixture that has a plaintext reference.
+   - Run `KrpanoDezoomer::zoom_levels` on the encrypted path.
+   - Run `KrpanoDezoomer::zoom_levels` on the plaintext XML directly.
+   - Assert identical zoom levels, tile URLs, and sizes.
+
+2. Add a HIROX-specific test using the capture data.
+
+3. Add a `cargo test` invocation that exercises every fixture end-to-end.
+
+4. Document unsupported branches in error messages.
+
+**Files:** `mod.rs` (integration tests), `testdata/` (any new reference files).
+
+**Commit boundary:** same as Phase 8 (integration validation is test-only).
 
 Acceptance checks:
 
@@ -453,23 +699,47 @@ Acceptance checks:
 - The HIROX capture produces expected levels and tile URL structure.
 - No plaintext support regresses.
 
+## Dependency Graph
+
+```mermaid
+graph TD
+    P1[Phase 1: Fixture Metadata + KencBranch] --> P2[Phase 2: Analysis Harness + Module Split]
+    P2 --> P3[Phase 3: Old-Engine Keys + Old Z Branch]
+    P2 --> P4[Phase 4: Modern Static Constants]
+    P3 --> P5[Phase 5: Modern Z Branch]
+    P4 --> P5
+    P3 --> P7[Phase 7: Wire decrypt_xml]
+    P4 --> P6[Phase 6: P/P and R/R]
+    P5 --> P7
+    P6 --> P7
+    P7 --> P8[Phase 8: KrpanoDezoomer Integration]
+    P8 --> P9[Phase 9: E2E Validation]
+```
+
+**Key dependency:** Phase 3 (old Z) and Phase 4 (modern constants) are independent. Phase 5 (modern Z) needs both. Phase 6 (RR/PP) needs only Phase 4. Phase 7 (wire decrypt_xml) can start as soon as Phase 3 completes, and gains more fixtures as Phases 5–6 complete.
+
+Phase 3 can be done in parallel with Phase 4 if desired.
+
 ## Immediate Next Work
 
 Do these in order:
 
-1. Add fixture metadata tests and `KencBranch` classification.
-2. Build the analysis harness for intermediate vectors.
-3. Port the modern startup-unpack and direct `we.subdiv` row-read extractor.
-4. Promote the `2018-04-04` full modern `Z` vector to Rust tests and implementation.
-5. Then resolve old `KENCRUZR` key derivation and the downstream `KENCRURR` post-replacement decode path in parallel if useful.
+1. **Phase 1:** Add fixture metadata tests and `KencBranch` classification in `encrypted.rs`.
+2. **Phase 2:** Add analysis harness, then split `encrypted.rs` → `encrypted/` module.
+3. **Phase 3:** Old license key derivation + old Z branch — **first end-to-end decrypting pipeline.**
+4. **Phase 4** (in parallel with Phase 3 if desired): Modern startup-unpack in `encrypted/modern_engine.rs`.
+5. **Phase 5:** Modern Z branch (`2018-04-04`), now that old Z is proven and modern constants exist.
+6. **Phase 6:** `P/P` and `R/R` branch resolution (likely needs investigation before full implementation).
+7. **Phase 7:** Complete `decrypt_xml` dispatching all branches.
+8. **Phase 8+9:** Dezoomer integration and validation.
 
 ## Commit Strategy
 
-- Commit 1: plan and fixture metadata tests.
-- Commit 2: `KencBranch` classification and exact header coverage.
-- Commit 3: analysis harness and intermediate vector tests.
-- Commit 4: modern startup-unpack / direct `we.subdiv` constant extraction.
-- Commit 5: full `Z` branch decryption for `2018-04-04` and old `KENCRUZR` fixtures.
-- Commit 6: `P/P` and `R/R` branch decryption.
-- Commit 7: `decrypt_xml` wiring.
-- Commit 8: `KrpanoDezoomer` integration and end-to-end validation.
+- Commit 1: Phase 1 — fixture metadata tests + `KencBranch` (additions to `encrypted.rs`).
+- Commit 2: Phase 2 — analysis harness + module split `encrypted.rs` → `encrypted/{mod,header,codecs,crypto,viewer}.rs` (pure move, no logic change).
+- Commit 3: Phase 3 — `encrypted/old_engine.rs` + `encrypted/branches.rs` (Z branch), old fixtures decrypting end-to-end.
+- Commit 4: Phase 4 — `encrypted/modern_engine.rs` with context extraction + tests.
+- Commit 5: Phase 5 — modern Z branch for `2018-04-04`.
+- Commit 6: Phase 6 — RR/PP branch completion + tests (may be multiple commits if investigation is iterative).
+- Commit 7: Phase 7 — `decrypt_xml` wired, all supported fixtures decrypting.
+- Commit 8: Phase 8+9 — `KrpanoDezoomer` integration + end-to-end validation.
