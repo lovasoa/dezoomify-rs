@@ -58,18 +58,30 @@ pub fn extract_modern_context(
     decoded_engine: &[u8],
     wrapper_key: &str,
 ) -> Result<ModernEngineContext, EncryptedKrpanoError> {
+    log::debug!(
+        "extract_modern_context: engine={} bytes, wrapper_key={} chars",
+        decoded_engine.len(),
+        wrapper_key.len()
+    );
     let text = std::str::from_utf8(decoded_engine)
         .map_err(|_| EncryptedKrpanoError::MissingViewerJsPayload)?;
 
     let startup = find_startup_iife(text, wrapper_key).ok_or(EncryptedKrpanoError::Unsupported)?;
+    log::debug!(
+        "extract_modern_context: found startup IIFE, checksum_constant={}",
+        startup.constant
+    );
     let rows = unpack_krp_payload(wrapper_key, &startup.body, startup.constant)
         .map_err(|_| EncryptedKrpanoError::Unsupported)?;
+    log::debug!("extract_modern_context: unpacked {} rows", rows.len());
 
     let default_key = find_row_by_value(&rows, "actions overflow")
         .ok_or(EncryptedKrpanoError::MissingKey)?;
+    log::debug!("extract_modern_context: default_key={default_key:?}");
 
     let replacement_token = find_row_by_value(&rows, "z")
         .unwrap_or_else(|| "z".to_string());
+    log::debug!("extract_modern_context: replacement_token={replacement_token:?}");
 
     Ok(ModernEngineContext {
         default_key,

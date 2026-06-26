@@ -40,24 +40,53 @@ pub fn decrypt_xml(
 ) -> Result<Vec<u8>, EncryptedKrpanoError> {
     let payload = encrypted_payload(contents)?;
     let header = KencHeader::parse(&payload)?;
+    let branch = header.branch();
     let body = header.payload(&payload);
+    log::debug!(
+        "decrypt_xml: header={}, branch={branch:?}, body_len={}, header_raw={}",
+        header.raw,
+        body.len(),
+        header.raw
+    );
 
     let viewer_data = viewer_data.ok_or(EncryptedKrpanoError::MissingKey)?;
+    log::debug!("decrypt_xml: viewer_data = {} bytes", viewer_data.len());
 
     // Extract the wrapper key and decoded engine from the viewer JS.
     let wrapper_key =
         extract_key_from_viewer_js(viewer_data).ok_or(EncryptedKrpanoError::MissingKey)?;
+    log::debug!("decrypt_xml: wrapper_key length = {}", wrapper_key.len());
     let decoded_engine = extract_decoded_viewer_js(viewer_data)?;
+    log::debug!("decrypt_xml: decoded_engine = {} bytes", decoded_engine.len());
     let ctx = modern_engine::extract_modern_context(&decoded_engine, &wrapper_key)?;
+    log::debug!(
+        "decrypt_xml: default_key={:?}, checksum={}",
+        ctx.default_key,
+        ctx.checksum_constant
+    );
 
-    match header.branch() {
+    match branch {
         KencBranch::ModernZ | KencBranch::OldZ => {
+            log::debug!("decrypt_xml: using Z branch, key={:?}, widened=false", ctx.default_key);
             branches::z_branch_to_plaintext(body, ctx.default_key.as_bytes(), false)
                 .map(String::into_bytes)
         }
-        KencBranch::RR | KencBranch::PP => Err(EncryptedKrpanoError::Unsupported),
-        KencBranch::B => Err(EncryptedKrpanoError::Unsupported),
-        KencBranch::Unknown => Err(EncryptedKrpanoError::Unsupported),
+        KencBranch::RR => {
+            log::debug!("decrypt_xml: RR branch not yet supported");
+            Err(EncryptedKrpanoError::Unsupported)
+        }
+        KencBranch::PP => {
+            log::debug!("decrypt_xml: PP branch not yet supported");
+            Err(EncryptedKrpanoError::Unsupported)
+        }
+        KencBranch::B => {
+            log::debug!("decrypt_xml: B branch not yet supported");
+            Err(EncryptedKrpanoError::Unsupported)
+        }
+        KencBranch::Unknown => {
+            log::debug!("decrypt_xml: unknown branch");
+            Err(EncryptedKrpanoError::Unsupported)
+        }
     }
 }
 
