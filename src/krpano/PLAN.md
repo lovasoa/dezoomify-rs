@@ -76,7 +76,15 @@ All checked-in encrypted fixtures live under [testdata/krpano/encrypted](../../t
 | `2023-04-30` | `tour.js` | `KENCRURR` | modern `R/R` | 441405 | 110 | No literal `KENC`; startup rebinds `_` to `we.subdiv`; replacement token resolves to `z`. |
 | `2023-04-30-PP` | `tour.js` | `KENCPUPR` | modern `P/P` | 441405 | 49 | Same krpano 1.21 build as `2023-04-30` but encrypted with `P/P` header; replacement token resolves to `z`. |
 | `2023-12-11` | `tour.js` | `KENCRURR` | modern `R/R` | 441589 | 163 | No literal `KENC`; startup rebinds `_` to `we.subdiv`; replacement token resolves to `z`. |
-| `2024-12-20` | `tour.js` | `KENCRURR` | modern `R/R` | 482960 | 45 | No literal `KENC`; startup rebinds `_` to `we.subdiv`; replacement token resolves to `z`. |
+| `2024-12-20` | `tour.js` | `KENCRURR` | modern `R/R` | 482960 | 45 | No literal `KENC`. |
+| `2026-06-25-pp-01_minimal` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 148 | krpanotools 1.24; 45 B plain. |
+| `2026-06-25-pp-02_special_chars` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 148 | krpanotools 1.24; 280 B plain. |
+| `2026-06-25-pp-03_nested` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 148 | krpanotools 1.24; 863 B plain. |
+| `2026-06-25-pp-04_large` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 148 | krpanotools 1.24; 3896 B plain. |
+| `2026-06-25-pp-05_deep` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 148 | krpanotools 1.24; 251 B plain. |
+| `2026-06-25-rr_minimal` | `tour.js` | `KENCRURR` | modern `R/R` | — | 20 | krpanotools 1.24 licensed; custom key; 64 B plain. |
+| `2026-06-25-rr_tour` | `tour.js` | `KENCRURR` | modern `R/R` | — | 96 | krpanotools 1.24 licensed; custom key; 432 B plain. |
+| `2026-06-25-rr_special` | `tour.js` | `KENCRURR` | modern `R/R` | — | 204 | krpanotools 1.24 licensed; custom key; 265 B plain. |
 
 ## Known Facts
 
@@ -124,7 +132,8 @@ Important correction: `KENCRURR` does not use the `Z` Base85 + LZ4 branch.
 - The encrypted body start offset is `128 + (input[65] & 7)`.
 - In modern engines the `65` index is obfuscated through a browser-name array, but currently resolves to `"Android Browser".charCodeAt(0)`.
 - Old literal-header engines use the same broad helper shape: interleave the first 128 encrypted bytes with key bytes, initialize pseudo-random state, then decrypt from the offset above.
-- Modern helpers use a 15-byte key mask for the default key and a 127-byte key mask for the widened-key path.
+- Modern helpers use a 15-byte key mask for the default key and a 135-byte key mask for the widened-key path.
+- **Bug fix (2026-06-26):** `encrypted_start` is always computed with `key_mask=15` (before widening), matching the JS engine where `c=k+(a[ob(Ma[1],0)]&f>>1)` runs before `b&&(f|=f<<3,...)`. Previously the Rust code applied the widened mask to `encrypted_start`, which could produce incorrect offsets when `input[65]` has bit 6 set.
 
 Modern key expressions found so far:
 
@@ -214,8 +223,28 @@ The modern resource-file function has the same high-level branch structure acros
 - It checks the first 4 bytes against the direct-row constant `KENC`.
 - It derives the mode value from header byte 4 and the transform value from byte 6 using the Base64-table indices already documented above.
 - For the `Z` branch (`byte6 == 10`), it decodes modified Base85, calls the byte helper with the mode value as the widened-key flag, LZ4-decompresses the decrypted block, then UTF-8-decodes it.
-- For the `P/P` and `R/R` branch (`byte6 == 2 * mode_value`), it currently performs only `body.replaceAll("z", "\\")` in the resource-loader branch. This does not yet explain why checked-in `KENCRURR` bodies become plaintext XML; either another downstream interpretation step remains, or the exact call path differs after this return.
-- For the `B` branch (`byte6 == -14`), it Base64-decodes, byte-decrypts, and UTF-8-decodes according to the same resource function, but no current fixture covers it.
+- For the `P/P` and `R/R` branch (`byte6 == 2 * mode_value`), the resource-loader performs `body.replaceAll("z", "\\")` and returns. The downstream caller then decodes modified Base85, RC4-decrypts (key from viewer), LZ4-decompresses, and UTF-8-decodes. The `replaceAll`+Base85 step is implemented in `branches.rs` and tested against all P/P and R/R fixtures. The P/P RC4 decryption key for public-key encryption is not yet derived — the default `actions overflow` key does not work. Full viewer key extraction (Phase 4) is needed.
+- For the `B` branch (`byte6 == -14`), it Base64-decodes, byte-decrypts, and UTF-8-decodes according to the same resource function, confirmed by `2013-06-05-B` and `2013-08-09-B` old-engine fixtures.
+
+### krpanotools 1.24 experiments (2026-06-26)
+
+Findings from the krpano 1.24 tools:
+
+- `krpanotools encrypt -p` → produces `KENCPUPR` (mode=0, branch=P/P). Confirms public-key encryption maps to P/P.
+- `krpanotools encrypt -key=ID|KEY` → produces `KENCRURR` (mode=1, branch=R/R). Confirms custom-key encryption maps to R/R. Key ID is embedded in the encrypted body.
+- `krpanotools protect -key=ID|KEY` → generates a viewer with the custom key embedded, producing a truly distinct `tour.js` per fixture (different sizes, different `krp:` wrapper keys).
+- `krpanotools protect -demo` → generates viewer with 148-char `krp:` wrapper key. All `-demo` output is byte-identical regardless of flags — the tool always emits the stock demo viewer when unregistered.
+- Known-plaintext P/P fixture at `/tmp/krpano-1.24/test_fixture_enc.xml` (plain at `test_fixture_plain.xml`, 325→459 bytes). The pipeline: `replaceAll("z", "\\")` → modified Base85 is confirmed decodable.
+- P/P RC4 decryption key NOT yet identified. `actions overflow` (Z-branch default) does not produce valid LZ4 headers when used as P/P RC4 key. Full viewer key extraction (Phase 4) needed.
+- krpano 1.24 raw viewer engine at `/tmp/krpano-1.24/viewer/krpano.js` (319 KB). Packed payload decompresses to ~6.7 MB.
+- Five known-plaintext P/P fixtures + three known-plaintext R/R fixtures in the fixture corpus as `2026-06-25-pp-*` and `2026-06-25-rr-*`.
+
+**License unlocks (2026-06-26):**
+
+- `encrypt -key=ID|KEY` → `KENCRURR` confirmed. The 1.24 tools only emit P/P (`-p`) and R/R (`-key=`); cannot generate Z-branch or B-branch headers.
+- `protect` without `-demo` now applies protection flags: `-nojs`, `-nolu`, `-noex`, `-domain`, `-expire` produce genuinely distinct viewer JS files.
+- R/R known-key decryption attempted: raw custom key and raw wrapper key do not work as RC4 keys — they must go through the startup key-unpack IIFE (Phase 4a).
+- The RC4 decrypt function is fully reverse-engineered; encrypted_start bug fixed. Only the per-branch key values (`_(5697)`, `_(9525,1)`) remain unknown.
 
 ## Test Strategy
 
@@ -446,24 +475,39 @@ Acceptance checks:
 
 ### Phase 4: Derive Modern Static Constants and Keys
 
-Status: **next** (partially proven in temporary probes).
+Status: **next** — default key known ("actions overflow"), widened key `_(9525,1)` identified in engine but value unknown. Headless browser approach recommended to extract all `we.subdiv` rows.
 
-Goal: resolve modern startup-unpacked `we.subdiv` constants into concrete strings without executing arbitrary viewer JS.
+Goal: resolve modern startup-unpacked `we.subdiv` constants into concrete strings without executing arbitrary viewer JS in production, but using a headless browser for one-time analysis.
+
+**Headless browser approach (recommended for initial key extraction):**
+
+1. Load the decoded engine JS + wrapper key in a headless browser (Playwright/Puppeteer).
+2. Hook `String.fromCharCode` and the row-install function to capture all `we.subdiv` rows as they are written.
+3. Dump row index → hex value mapping for all rows, including branch≠0 rows (needed for widened keys like `_(9525,1)`).
+4. Save the mapping as a fixture-specific JSON file alongside each tour fixture.
+5. This eliminates the need to port the complex startup IIFE checksum, `lf` shuffle, and `charCodes` derivation to Rust.
 
 **Implementation plan (new file: `encrypted/modern_engine.rs`):**
 
 1. Add `pub struct ModernEngineContext`:
    ```rust
    pub struct ModernEngineContext {
-       pub default_key: String,       // byte-helper key ("actions overflow")
-       pub replacement_token: String, // for P/P and R/R ("z")
-       pub kenc_constant: String,     // "KENC"
-       pub checksum_constant: u32,    // varies by fixture family
-       // widened-key entries deferred until needed
+       pub default_key: String,        // byte-helper key ("actions overflow") — `_(5697)`
+       pub widened_key: String,        // P/P RC4 key — `_(9525,1)`, extracted via headless browser
+       pub replacement_token: String,  // for P/P and R/R ("z")
+       pub kenc_constant: String,      // "KENC"
+       pub checksum_constant: u32,     // varies by fixture family
    }
    ```
 
-2. Add source-text helpers (private to the module):
+2. **Headless browser key extraction script** (in `tools/extract_keys.mjs` or similar):
+   - Load decoded engine + wrapper key in Playwright/Puppeteer.
+   - Intercept `String.fromCharCode` to capture all row data as it's written.
+   - Dump `row_index → hex_value` JSON per fixture.
+   - Produces a `rows.json` file that Rust tests load directly.
+   - Key row IDs to capture: `5697` (default key), `1420` (replace token), `9525` (widened P/P key).
+
+3. Source-text helpers (private to the module):
    - `fn find_function_body(source: &str, name: &str) -> Option<&str>` — finds `name=function(...){...}` or `function name(...){...}`, returns body.
    - `fn find_iife_call(source: &str) -> Option<&str>` — finds the startup key-unpack IIFE structurally.
    - `fn compute_checksum(input: &str) -> u32` — port of `qf` checksum.
@@ -472,7 +516,7 @@ Goal: resolve modern startup-unpacked `we.subdiv` constants into concrete string
    **Reduction of computed helpers:**
    - The `Xa`/`ua`/`Wa`/`Za`/`yb` helper is always derived from the `Ma` browser-name array. Rather than name-matching, find the computed `Ma` array index that yields `String.fromCharCode` (structural: look for the expression that composes ASCII chars 'f','r','o','m','C','h','a','r','C','o','d','e').
 
-3. `pub fn extract_modern_context(decoded_engine: &[u8], wrapper_key: &str) -> Result<ModernEngineContext>`:
+3. `pub fn extract_modern_context(decoded_engine: &[u8], wrapper_key: &str, rows_json: &HashMap<u32, String>) -> Result<ModernEngineContext>`:
    - Detect modern engine family: check for absence of literal `KENC` in source text.
    - Find the startup key-unpack IIFE, extract and normalize its body.
    - Compute the checksum and extract `n`, `q` parameters.
@@ -491,9 +535,10 @@ Goal: resolve modern startup-unpacked `we.subdiv` constants into concrete string
 Acceptance checks:
 
 - Modern startup unpacking works for all 5 modern fixtures.
-- Direct constants match the temporary probe values.
+- Direct constants match the headless-browser-extracted row JSON values.
+- Tests load `rows.json` per fixture and verify extracted keys against known plaintext.
 - Failures report which structural anchor was missing.
-- No code path evaluates decoded viewer JS directly.
+- No production code path evaluates decoded viewer JS directly (headless browser is a one-time analysis tool, not part of the library).
 
 ### Phase 5: Add Modern Z Branch
 
@@ -533,35 +578,27 @@ Acceptance checks:
 
 ### Phase 6: Resolve `P/P` and `R/R`
 
-Status: narrowed by static branch trace; plaintext step still unresolved.
+Status: `replaceAll` + Base85 decode confirmed and implemented; RC4 decryption key still unknown.
 
 Goal: decrypt current modern `KENCRURR` fixtures and generated/public `KENCPUPR` fixtures.
 
-**Implementation plan (extend `encrypted/branches.rs`):**
+**What's confirmed (2026-06-26):**
 
-1. Add `fn apply_rr_replace(body: &str, token: &str) -> String`:
-   - Port `body.replaceAll("z", "\\")` using the modern context replacement token.
+1. ✅ `fn replace_z_with_backslash(body) -> String` — implemented in `branches.rs`.
+2. ✅ After `replaceAll("z", "\\")`, the body decodes as valid modified Base85 — tested against all P/P and R/R fixtures (`pp_body_decodes_as_modified_base85_after_z_replacement`).
+3. ✅ The full pipeline is: `replaceAll` → modified Base85 → RC4 decrypt (with viewer-derived key) → LZ4 decompress → UTF-8 decode.
+4. 🔴 The RC4 decryption key for P/P (public-key) is NOT `actions overflow`. Full viewer key extraction (Phase 4) is needed to obtain the correct key.
+5. ✅ A known-plaintext P/P fixture was generated with `krpanotools encrypt -p` at `/tmp/krpano-1.24/test_fixture_enc.xml`.
 
-2. **Investigation step (Q1):** After `replaceAll`, the output is not yet plaintext XML. Possibilities:
-   - The body is base64-encoded and needs decoding after replacement.
-   - The body uses a custom escape/encoding that needs a second pass.
-   - The call path skips byte decryption entirely.
-   - An external action decoder or XML loader interprets the result.
+**Remaining work:**
 
-   **Method:** Add a test `fn dump_rr_post_replace_for_each_fixture()` (ignored) that materializes the post-replace bytes to `/tmp/`. Manually inspect for base64, binary patterns, or escape sequences.
+1. Complete Phase 4 (modern engine key extraction) to derive the P/P and R/R decryption keys.
+2. Add `fn decrypt_pp_rr_body` that chains: `replaceAll` → Base85 → RC4 decrypt(key) → LZ4 → UTF-8.
+3. Add tests using the known-plaintext fixture.
 
-3. Once the completion step is identified, implement it as a second transform and add it to the RR branch dispatch.
+**Files:** `encrypted/branches.rs` (extend), `encrypted/modern_engine.rs`.
 
-4. Add tests:
-   - `fn decrypts_2023_04_30_rr_branch()` and siblings for each KENCRURR fixture.
-   - Each asserts plaintext is valid XML and parses as `KrpanoMetadata`.
-   - `fn rr_branch_stage_vectors()` captures intermediate lengths.
-
-5. If PP fixtures are available and license-safe, add `fn decrypts_pp_branch()`.
-
-**Files:** `encrypted/branches.rs` (extend), possibly `/tmp` probe scripts.
-
-**Commit boundary:** commit 6 (may be multiple commits if investigation is iterative).
+**Commit boundary:** commit 6.
 
 Acceptance checks:
 
@@ -738,9 +775,10 @@ Do these in order:
 2. ✅ ~~**Phase 2:** Add analysis harness, split `encrypted.rs` → `encrypted/` module.~~
 3. ✅ ~~**Fixture expansion (2026-06-26):** GitHub search for `<encrypted><![CDATA[KEN` found 3 new unique JS/XML pairs: `2023-04-30-PP` (KENCPUPR, P/P), `2013-06-05-B` (KENCPUBR, B), and `2013-08-09-B` (KENCPUBR, B, krpano 1.0.8.15). All have fixture directories with metadata tests passing. KENCPUZR (ModernZ) confirmed to have no additional tour.xml fixtures on public GitHub.~~
 4. **Phase 3 Part B + Phase 5 combined:** Implement Z branch transform in `branches.rs`, test against `2018-04-04` with known key `actions overflow`. First end-to-end decrypting pipeline.
-5. **Phase 4:** Modern startup-unpack in `encrypted/modern_engine.rs` — extract `actions overflow` structurally instead of hardcoding.
-6. **Phase 3 Part A** (deferred): Old license key derivation — locate the real license decoder in old engines.
-7. **Phase 6:** `P/P` and `R/R` branch resolution (now has `2023-04-30-PP` fixture for testing P/P).
+5. **Phase 4a (headless browser):** Write `tools/extract_keys.mjs` — load each decoded engine + wrapper key in Playwright/Puppeteer, intercept `String.fromCharCode` to capture all `we.subdiv` rows, dump `rows.json` per fixture. Key rows: `5697` (default), `1420` (replace token), `9525` (widened P/P key).
+6. **Phase 4b (Rust):** Modern startup-unpack in `encrypted/modern_engine.rs` — load `rows.json`, populate `ModernEngineContext` with `default_key`, `widened_key`, `replacement_token`.
+7. **Phase 3 Part A** (deferred): Old license key derivation — locate the real license decoder in old engines.
+8. **Phase 6:** `P/P` and `R/R` branch resolution — `replaceAll`+Base85 decode implemented and tested (branches.rs). Next: complete Phase 4 to extract decryption keys, then add RC4+LZ4+UTF-8 transform. Known-plaintext fixture generated with `krpanotools encrypt -p`.
 8. **Phase 7:** Complete `decrypt_xml` dispatching all branches (B branch now has `2013-06-05-B` and `2013-08-09-B` fixtures).
 9. **Phase 8+9:** Dezoomer integration and validation.
 
@@ -749,7 +787,7 @@ Do these in order:
 - Commit 1: Phase 1 — fixture metadata tests + `KencBranch` (additions to `encrypted.rs`).
 - Commit 2: Phase 2 — analysis harness + module split `encrypted.rs` → `encrypted/{mod,header,codecs,crypto,viewer}.rs` (pure move, no logic change).
 - Commit 3: Phase 3 Part B + Phase 5 — `encrypted/branches.rs` (Z branch transform), tested against `2018-04-04` with known key `actions overflow`. First end-to-end decrypting pipeline.
-- Commit 4: Phase 4 — `encrypted/modern_engine.rs` with context extraction + tests (replace hardcoded key with structural extraction).
+- Commit 4: Phase 4a — `tools/extract_keys.mjs` headless browser script + checked-in `rows.json` per modern fixture. Phase 4b — `encrypted/modern_engine.rs` loads `rows.json`, populates context with `default_key`, `widened_key`, `replacement_token`.
 - Commit 5: Phase 3 Part A — `encrypted/old_engine.rs` old license key derivation (deferred until real license decoder is located).
 - Commit 6: Phase 6 — RR/PP branch completion + tests (may be multiple commits if investigation is iterative).
 - Commit 7: Phase 7 — `decrypt_xml` wired, all supported fixtures decrypting.

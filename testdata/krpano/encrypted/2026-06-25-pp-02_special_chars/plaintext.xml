@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<krpano version="1.24">
+  <data name="special">backslash: \ quote: " apostrophe: ' lt: &lt; gt: &gt; amp: &amp;</data>
+  <scene name="chars" title="Special &amp; Characters">
+    <view hlookat="0" vlookat="0" fov="90"/>
+  </scene>
+</krpano>

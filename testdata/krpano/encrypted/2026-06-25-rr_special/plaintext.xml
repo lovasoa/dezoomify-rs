@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<krpano>
+  <data name="rr_special">backslash: \ quote: " amp: &amp; lt: &lt; gt: &gt;</data>
+  <scene name="rr_chars" title="RR Special &amp; Chars">
+    <view hlookat="180.0" vlookat="30.0" fov="120.0"/>
+  </scene>
+</krpano>

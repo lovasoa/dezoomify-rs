@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<krpano>
+  <layer name="a"><layer name="b"><layer name="c"><layer name="d"><layer name="e">
+    <events name="deep" keep="true" onresize="trace(deep_event)"/>
+  </layer></layer></layer></layer></layer>
+</krpano>

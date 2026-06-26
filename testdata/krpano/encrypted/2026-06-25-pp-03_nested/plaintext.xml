@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<krpano version="1.24" showerrors="false" logkey="true">
+  <include url="skin/vtourskin.xml"/>
+  <skin_settings maps="false" maps_type="google" maps_bing_api_key="" maps_zoombuttons="false"/>
+  <scene name="scene_one" title="First Scene" onstart="">
+    <view hlookat="0.0" vlookat="0.0" fovtype="MFOV" fov="120" maxpixelzoom="0"/>
+    <preview url="one.tiles/preview.jpg"/>
+    <image>
+      <cube url="one.tiles/pano_%s.jpg"/>
+    </image>
+  </scene>
+  <scene name="scene_two" title="Second Scene">
+    <view hlookat="180.0" vlookat="10.0" fov="90.0"/>
+    <preview url="two.tiles/preview.jpg"/>
+    <image type="CUBE" multires="true" tilesize="512" progressive="true">
+      <level tiledimagewidth="8192" tiledimageheight="8192">
+        <cube url="two.tiles/%s_%v.jpg"/>
+      </level>
+    </image>
+  </scene>
+</krpano>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<krpano version="1.24">
+  <scene name="scene_rr_custom" title="RR Custom Key Tour">
+    <view hlookat="0.0" vlookat="0.0" fov="90.0" maxpixelzoom="0"/>
+    <preview url="rr_preview.jpg"/>
+    <image type="CUBE" multires="true" tilesize="512">
+      <level tiledimagewidth="8192" tiledimageheight="8192">
+        <cube url="rr_pano_%s_%v.jpg"/>
+      </level>
+    </image>
+  </scene>
+</krpano>

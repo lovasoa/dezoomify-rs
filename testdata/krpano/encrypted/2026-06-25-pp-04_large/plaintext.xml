@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<krpano version="1.24">
+  <scene name="scene_00" title="Scene 0">
+    <view hlookat="0.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s0/preview.jpg"/>
+    <image><cube url="s0/pano_%s.jpg"/></image>
+  </scene>
+  <scene name="scene_01" title="Scene 1">
+    <view hlookat="18.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s1/preview.jpg"/>
+    <image><cube url="s1/pano_%s.jpg"/></image>
+  </scene>
+  <scene name="scene_02" title="Scene 2">
+    <view hlookat="36.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s2/preview.jpg"/>
+    <image><cube url="s2/pano_%s.jpg"/></image>
+  </scene>
+  <scene name="scene_03" title="Scene 3">
+    <view hlookat="54.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s3/preview.jpg"/>
+    <image><cube url="s3/pano_%s.jpg"/></image>
+  </scene>
+  <scene name="scene_04" title="Scene 4">
+    <view hlookat="72.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s4/preview.jpg"/>
+    <image><cube url="s4/pano_%s.jpg"/></image>
+  </scene>
+  <scene name="scene_05" title="Scene 5">
+    <view hlookat="90.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s5/preview.jpg"/>
+    <image><cube url="s5/pano_%s.jpg"/></image>
+  </scene>
+  <scene name="scene_06" title="Scene 6">
+    <view hlookat="108.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s6/preview.jpg"/>
+    <image><cube url="s6/pano_%s.jpg"/></image>
+  </scene>
+  <scene name="scene_07" title="Scene 7">
+    <view hlookat="126.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s7/preview.jpg"/>
+    <image><cube url="s7/pano_%s.jpg"/></image>
+  </scene>
+  <scene name="scene_08" title="Scene 8">
+    <view hlookat="144.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s8/preview.jpg"/>
+    <image><cube url="s8/pano_%s.jpg"/></image>
+  </scene>
+  <scene name="scene_09" title="Scene 9">
+    <view hlookat="162.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s9/preview.jpg"/>
+    <image><cube url="s9/pano_%s.jpg"/></image>
+  </scene>
+  <scene name="scene_10" title="Scene 10">
+    <view hlookat="180.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s10/preview.jpg"/>
+    <image><cube url="s10/pano_%s.jpg"/></image>
+  </scene>
+  <scene name="scene_11" title="Scene 11">
+    <view hlookat="198.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s11/preview.jpg"/>
+    <image><cube url="s11/pano_%s.jpg"/></image>
+  </scene>
+  <scene name="scene_12" title="Scene 12">
+    <view hlookat="216.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s12/preview.jpg"/>
+    <image><cube url="s12/pano_%s.jpg"/></image>
+  </scene>
+  <scene name="scene_13" title="Scene 13">
+    <view hlookat="234.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s13/preview.jpg"/>
+    <image><cube url="s13/pano_%s.jpg"/></image>
+  </scene>
+  <scene name="scene_14" title="Scene 14">
+    <view hlookat="252.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s14/preview.jpg"/>
+    <image><cube url="s14/pano_%s.jpg"/></image>
+  </scene>
+  <scene name="scene_15" title="Scene 15">
+    <view hlookat="270.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s15/preview.jpg"/>
+    <image><cube url="s15/pano_%s.jpg"/></image>
+  </scene>
+  <scene name="scene_16" title="Scene 16">
+    <view hlookat="288.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s16/preview.jpg"/>
+    <image><cube url="s16/pano_%s.jpg"/></image>
+  </scene>
+  <scene name="scene_17" title="Scene 17">
+    <view hlookat="306.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s17/preview.jpg"/>
+    <image><cube url="s17/pano_%s.jpg"/></image>
+  </scene>
+  <scene name="scene_18" title="Scene 18">
+    <view hlookat="324.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s18/preview.jpg"/>
+    <image><cube url="s18/pano_%s.jpg"/></image>
+  </scene>
+  <scene name="scene_19" title="Scene 19">
+    <view hlookat="342.0" vlookat="0.0" fov="90.0"/>
+    <preview url="s19/preview.jpg"/>
+    <image><cube url="s19/pano_%s.jpg"/></image>
+  </scene>
+</krpano>
