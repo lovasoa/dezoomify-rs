@@ -10,6 +10,7 @@ use crate::dezoomer::*;
 use crate::krpano::krpano_metadata::{ImageInfo, LevelDesc};
 use crate::network::resolve_relative;
 use encrypted::decrypt_xml;
+use log::{debug, warn};
 
 mod encrypted;
 mod krpano_metadata;
@@ -39,7 +40,31 @@ impl ZoomableImageWithLevels for KrpanoZoomableImage {
 /// A dezoomer for krpano images
 /// See https://krpano.com/docu/xml/#top
 #[derive(Default)]
-pub struct KrpanoDezoomer;
+pub struct KrpanoDezoomer {
+    /// State machine for the NeedsData resolution chain.
+    state: ResolveState,
+}
+
+/// Where we are in the HTML → JS → XML → (decrypt JS) resolution chain.
+#[derive(Default)]
+enum ResolveState {
+    #[default]
+    None,
+    /// HTML loaded; XML URL known from embedpano.  Need the viewer JS.
+    NeedJs { xml_uri: String },
+    /// Viewer JS loaded; need the XML config to proceed.
+    /// Carries the JS so it can be reused if the XML is encrypted.
+    NeedXml {
+        xml_uri: String,
+        viewer_js: Vec<u8>,
+    },
+    /// Encrypted XML is pending; need the viewer JS to decrypt it.
+    /// (Used when the entry point is XML directly, not HTML.)
+    NeedJsToDecrypt {
+        xml_uri: String,
+        xml_contents: Vec<u8>,
+    },
+}
 
 impl Dezoomer for KrpanoDezoomer {
     fn name(&self) -> &'static str {
@@ -47,15 +72,216 @@ impl Dezoomer for KrpanoDezoomer {
     }
 
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
-        let DezoomerInputWithContents { uri, contents } = data.with_contents()?;
-        let levels = load_from_properties(uri, contents)?;
-        Ok(levels)
+        self.handle_input(data, load_from_properties)
     }
 
     fn dezoomer_result(&mut self, data: &DezoomerInput) -> Result<DezoomerResult, DezoomerError> {
+        self.handle_input(data, |uri, contents| {
+            let images = load_images_from_properties(uri, contents)?;
+            Ok(dezoomer_result_from_images(images))
+        })
+    }
+}
+
+impl KrpanoDezoomer {
+    /// Navigate the HTML → JS → XML → (decrypt if encrypted) resolution chain.
+    fn handle_input<T>(
+        &mut self,
+        data: &DezoomerInput,
+        parse: impl FnOnce(&str, &[u8]) -> Result<T, DezoomerError>,
+    ) -> Result<T, DezoomerError> {
         let DezoomerInputWithContents { uri, contents } = data.with_contents()?;
-        let images = load_images_from_properties(uri, contents)?;
-        Ok(dezoomer_result_from_images(images))
+        debug!("krpano handle_input: uri={uri}, content_len={}", contents.len());
+
+        // --- State machine dispatch ---
+
+        // HTML → JS: we know the XML URL, the current call is the viewer JS.
+        // Save the JS and request the XML.
+        if matches!(&self.state, ResolveState::NeedJs { .. }) {
+            let xml_uri = match &self.state {
+                ResolveState::NeedJs { xml_uri } => xml_uri.clone(),
+                _ => unreachable!(),
+            };
+            debug!("krpano state=NeedJs → got JS ({} bytes), requesting XML: {xml_uri}", contents.len());
+            let viewer_js = contents.to_vec();
+            self.state = ResolveState::NeedXml {
+                xml_uri: xml_uri.clone(),
+                viewer_js,
+            };
+            return Err(DezoomerError::NeedsData { uri: xml_uri });
+        }
+
+        // JS → XML: we have the viewer JS; the current call is the XML.
+        // If encrypted, decrypt with the saved JS.  Otherwise parse directly.
+        if let ResolveState::NeedXml {
+            xml_uri,
+            viewer_js,
+        } = &self.state
+        {
+            let (xml_uri, viewer_js) = (xml_uri.clone(), viewer_js.clone());
+            self.state = ResolveState::None;
+            debug!("krpano state=NeedXml → got content ({} bytes), xml_uri={xml_uri}", contents.len());
+
+            if encrypted::is_encrypted_xml(contents) {
+                debug!("krpano: XML is encrypted, decrypting with saved viewer JS ({} bytes)", viewer_js.len());
+                let decrypted = decrypt_xml(contents, Some(&viewer_js))?;
+                debug!("krpano: decrypted XML = {} bytes", decrypted.len());
+                return parse(&xml_uri, &decrypted);
+            }
+            debug!("krpano: XML is plain, parsing directly");
+            return parse(&xml_uri, contents);
+        }
+
+        // Encrypted XML entry point: need viewer JS to decrypt.
+        if let ResolveState::NeedJsToDecrypt {
+            xml_uri,
+            xml_contents,
+        } = &self.state
+        {
+            let (xml_uri, xml_contents) = (xml_uri.clone(), xml_contents.clone());
+            self.state = ResolveState::None;
+
+            // Use raw contents as viewer JS (handles packed viewers).
+            let viewer_js = extract_viewer_js(contents).unwrap_or_else(|| contents.to_vec());
+            match decrypt_xml(&xml_contents, Some(&viewer_js)) {
+                Ok(decrypted) => return parse(&xml_uri, &decrypted),
+                Err(_) => {
+                    self.state = ResolveState::NeedJsToDecrypt {
+                        xml_uri,
+                        xml_contents,
+                    };
+                }
+            }
+        }
+
+        // --- Content-type detection (fresh entry) ---
+
+        if looks_like_html(contents) {
+            let html = String::from_utf8_lossy(contents);
+            let js_uri = extract_js_from_html(&html, uri);
+            let xml_uri = extract_xml_from_embedpano(&html)
+                .map(|rel| resolve_relative(uri, &rel))
+                .unwrap_or_else(|| sibling_uri(uri, "tour.xml"));
+
+            if let Some(js_uri) = js_uri {
+                self.state = ResolveState::NeedJs { xml_uri };
+                return Err(DezoomerError::NeedsData { uri: js_uri });
+            }
+            return Err(DezoomerError::NeedsData { uri: xml_uri });
+        }
+
+        if looks_like_viewer_js(contents) {
+            let xml_uri = sibling_uri(uri, "tour.xml");
+            return Err(DezoomerError::NeedsData { uri: xml_uri });
+        }
+
+        if encrypted::is_encrypted_xml(contents) {
+            self.state = ResolveState::NeedJsToDecrypt {
+                xml_uri: uri.to_string(),
+                xml_contents: contents.to_vec(),
+            };
+            let js_uri = sibling_uri(uri, "tour.js");
+            return Err(DezoomerError::NeedsData { uri: js_uri });
+        }
+
+        // Plain (non-encrypted) krpano XML — parse directly.
+        parse(uri, contents)
+    }
+}
+
+/// True if the content looks like an HTML page.
+fn looks_like_html(contents: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(contents);
+    text.contains("<html") || text.contains("<script") || text.contains("embedpano(")
+}
+
+/// True if the content looks like a krpano viewer JavaScript file.
+fn looks_like_viewer_js(contents: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(contents);
+    (text.starts_with("function ") || text.contains("eval("))
+        && (text.contains("krpano") || text.contains("loadpano") || text.contains("embedhtml5"))
+}
+
+/// Try to extract a viewer JS URL from an HTML page.
+/// Returns the first `<script src="...">` that is not inline.
+fn extract_js_from_html(html: &str, html_uri: &str) -> Option<String> {
+    // Find any <script src="..."> tag.
+    for line in html.lines() {
+        let lower = line.to_lowercase();
+        if lower.contains("<script") && lower.contains("src=") {
+            if let Some(src) = extract_src_attr(line) {
+                // Skip common non-viewer scripts.
+                if !src.ends_with(".js") {
+                    continue;
+                }
+                return Some(resolve_relative(html_uri, &src));
+            }
+        }
+    }
+    None
+}
+
+/// Extract the XML URL from an `embedpano({xml:"..."})` call in an HTML page.
+fn extract_xml_from_embedpano(html: &str) -> Option<String> {
+    // Look for xml:"..." or xml:'...' inside embedpano({...})
+    let start = html.find("embedpano(")?;
+    let body = &html[start..];
+    let end = body.find("})")?;
+    let params = &body[..end + 2];
+    // Extract xml:"..." or xml:'...'
+    if let Some(xml_start) = params.find("xml:") {
+        let rest = &params[xml_start + 4..];
+        // Skip optional whitespace after xml:
+        let rest = rest.trim_start();
+        let quote = rest.chars().next()?;
+        if quote != '"' && quote != '\'' {
+            return None;
+        }
+        let inner = &rest[1..];
+        let xml_end = inner.find(quote)?;
+        return Some(inner[..xml_end].to_string());
+    }
+    None
+}
+
+/// Extract the `src` attribute value from a <script> tag.
+fn extract_src_attr(line: &str) -> Option<String> {
+    let start = line.find("src=")?;
+    let rest = &line[start + 4..];
+    let quote = rest.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let end = rest[1..].find(quote)?;
+    Some(rest[1..=end].to_string())
+}
+
+/// Extract viewer JS from a data block — the content might be the JS itself,
+/// or an HTML wrapper.  Returns the JS bytes if found.
+fn extract_viewer_js(contents: &[u8]) -> Option<Vec<u8>> {
+    if looks_like_viewer_js(contents) {
+        return Some(contents.to_vec());
+    }
+    // If wrapped in HTML, look for inline <script> blocks.
+    let text = String::from_utf8_lossy(contents);
+    if let Some(start) = text.find("<script>") {
+        let body = &text[start + 8..];
+        if let Some(end) = body.find("</script>") {
+            let js = body[..end].trim();
+            if looks_like_viewer_js(js.as_bytes()) {
+                return Some(js.as_bytes().to_vec());
+            }
+        }
+    }
+    None
+}
+
+/// Replace the last path component of `uri` with `filename`.
+fn sibling_uri(uri: &str, filename: &str) -> String {
+    if let Some((dir, _)) = uri.rsplit_once('/') {
+        format!("{dir}/{filename}")
+    } else {
+        filename.to_string()
     }
 }
 
@@ -366,7 +592,7 @@ fn test_flat_multires() {
 
 #[test]
 fn test_dezoomer_result_single_image() {
-    let mut dezoomer = KrpanoDezoomer;
+    let mut dezoomer = KrpanoDezoomer::default();
     let data = r#"<krpano>
         <image>
             <flat url="level=%l x=%0x y=%0y" multires="1,2x3,3x4x3"/>
@@ -391,7 +617,7 @@ fn test_dezoomer_result_single_image() {
 
 #[test]
 fn test_dezoomer_result_cube_faces() {
-    let mut dezoomer = KrpanoDezoomer;
+    let mut dezoomer = KrpanoDezoomer::default();
     let data = r#"<krpano showerrors="false" logkey="false">
         <image type="cube" multires="true" tilesize="512" progressive="false" multiresthreshold="-0.3">
             <level download="view" decode="view" tiledimagewidth="1000" tiledimageheight="100">
@@ -417,7 +643,7 @@ fn test_dezoomer_result_cube_faces() {
 
 #[test]
 fn test_dezoomer_result_multiple_scenes() {
-    let mut dezoomer = KrpanoDezoomer;
+    let mut dezoomer = KrpanoDezoomer::default();
     let data = std::fs::read("testdata/krpano/krpano_scenes.xml").unwrap();
 
     let input = DezoomerInput {
@@ -441,4 +667,49 @@ fn test_dezoomer_result_multiple_scenes() {
     assert!(titles.contains(&Some(" Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_Color".to_string())));
     assert!(titles.contains(&Some(" Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_3D".to_string())));
     assert!(titles.contains(&Some(" Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_3Dcolor".to_string())));
+}
+
+#[test]
+fn encrypted_xml_triggers_needs_data() {
+    let mut dezoomer = KrpanoDezoomer::default();
+    let xml = std::fs::read("testdata/krpano/encrypted/2018-04-04/tour.xml").unwrap();
+
+    let input = DezoomerInput {
+        uri: "http://example.com/tour.xml".to_string(),
+        contents: PageContents::Success(xml),
+    };
+
+    let result = dezoomer.zoom_levels(&input);
+    match result {
+        Err(DezoomerError::NeedsData { uri }) => {
+            assert_eq!(uri, "http://example.com/tour.js");
+        }
+        other => panic!("expected NeedsData, got {other:?}"),
+    }
+}
+
+#[test]
+fn encrypted_xml_second_call_decrypts() {
+    let mut dezoomer = KrpanoDezoomer::default();
+    let xml = std::fs::read("testdata/krpano/encrypted/2018-04-04/tour.xml").unwrap();
+    let js = std::fs::read("testdata/krpano/encrypted/2018-04-04/tour.js").unwrap();
+
+    // First call: encrypted XML → NeedsData for tour.js.
+    let input_xml = DezoomerInput {
+        uri: "http://example.com/tour.xml".to_string(),
+        contents: PageContents::Success(xml),
+    };
+    let needs = dezoomer.zoom_levels(&input_xml).unwrap_err();
+    assert!(matches!(needs, DezoomerError::NeedsData { .. }));
+
+    // Second call: viewer JS (fetched by caller) → decrypt and parse.
+    let input_js = DezoomerInput {
+        uri: "http://example.com/tour.js".to_string(),
+        contents: PageContents::Success(js),
+    };
+    let result = dezoomer.zoom_levels(&input_js);
+    match result {
+        Ok(_levels) => { /* success */ }
+        Err(e) => panic!("second call failed: {e}"),
+    }
 }

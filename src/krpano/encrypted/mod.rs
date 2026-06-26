@@ -27,12 +27,38 @@ custom_error! {pub EncryptedKrpanoError
     Unsupported = "encrypted krpano XML decryption is not implemented for this payload variant yet",
 }
 
-pub fn decrypt_xml(contents: &[u8], key: Option<&str>) -> Result<Vec<u8>, EncryptedKrpanoError> {
+/// Decrypt an encrypted krpano XML payload.
+///
+/// `viewer_data` is the raw krpano viewer JavaScript (e.g. `tour.js`).
+/// When provided, the wrapper key is extracted, the packed engine is decoded,
+/// and branch-specific decryption proceeds.
+///
+/// Currently supported: Modern Z (`KENCPUZR`) — tested against `2018-04-04`.
+pub fn decrypt_xml(
+    contents: &[u8],
+    viewer_data: Option<&[u8]>,
+) -> Result<Vec<u8>, EncryptedKrpanoError> {
     let payload = encrypted_payload(contents)?;
     let header = KencHeader::parse(&payload)?;
-    let _encrypted_body = header.payload(&payload);
-    let _key = key.ok_or(EncryptedKrpanoError::MissingKey)?;
-    Err(EncryptedKrpanoError::Unsupported)
+    let body = header.payload(&payload);
+
+    let viewer_data = viewer_data.ok_or(EncryptedKrpanoError::MissingKey)?;
+
+    // Extract the wrapper key and decoded engine from the viewer JS.
+    let wrapper_key =
+        extract_key_from_viewer_js(viewer_data).ok_or(EncryptedKrpanoError::MissingKey)?;
+    let decoded_engine = extract_decoded_viewer_js(viewer_data)?;
+    let ctx = modern_engine::extract_modern_context(&decoded_engine, &wrapper_key)?;
+
+    match header.branch() {
+        KencBranch::ModernZ | KencBranch::OldZ => {
+            branches::z_branch_to_plaintext(body, ctx.default_key.as_bytes(), false)
+                .map(String::into_bytes)
+        }
+        KencBranch::RR | KencBranch::PP => Err(EncryptedKrpanoError::Unsupported),
+        KencBranch::B => Err(EncryptedKrpanoError::Unsupported),
+        KencBranch::Unknown => Err(EncryptedKrpanoError::Unsupported),
+    }
 }
 
 #[cfg(test)]
@@ -428,5 +454,22 @@ mod tests {
             s.print_row();
         }
         assert!(!stages.is_empty());
+    }
+
+    /// End-to-end decryption of a Modern Z fixture through `decrypt_xml`.
+    #[test]
+    fn decrypt_xml_2018_04_04() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata/krpano/encrypted/2018-04-04");
+        let xml = fs::read(root.join("tour.xml")).unwrap();
+        let js = fs::read(root.join("tour.js")).unwrap();
+
+        let plaintext = decrypt_xml(&xml, Some(&js)).unwrap();
+        assert_eq!(plaintext.len(), 36407, "plaintext length");
+        let text = std::str::from_utf8(&plaintext).unwrap();
+        assert!(
+            text.trim().starts_with("<krpano"),
+            "plaintext should start with <krpano>"
+        );
     }
 }

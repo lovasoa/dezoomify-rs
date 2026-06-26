@@ -70,7 +70,7 @@ src/krpano/
 
 | Area | Status | Notes |
 | --- | --- | --- |
-| Z branch (Base85→decrypt→LZ4→UTF8) | 🔴 not wired | The `decrypt_bytes` + Base85 + LZ4 pieces all exist. Need a `decrypt_z_branch` function in `branches.rs`. |
+| Z branch (Base85→decrypt→LZ4→UTF8) | ✅ | `decrypt_z_branch` + `z_branch_to_plaintext` in `branches.rs`. Tested against `2018-04-04` (Modern Z) with key `"actions overflow"`. Stage vectors: 9915 char body → 7932 byte Base85 → 7803 byte decrypt → 36407 byte LZ4 → XML. |
 | PP/RR step 1 (`z`→`\` + Base85) | ✅ | `replace_z_with_backslash` + `decode_pp_rr_body` in `branches.rs`. Tested against all PP/RR fixtures. |
 | PP/RR step 2 (RC4 + LZ4 + UTF8) | 🔴 blocked | RC4 decryption key unknown. Default `"actions overflow"` does not work for P/P. The R/R key must come from stateful `we.subdiv` (widened key). |
 | B branch (Base64→decrypt→UTF8) | 🔴 not wired | Needs Base64 codec + old key derivation. |
@@ -79,21 +79,21 @@ src/krpano/
 
 | Area | Status | Notes |
 | --- | --- | --- |
-| `decrypt_xml` | 🔴 stub | Returns `Unsupported` for all inputs. |
-| `KrpanoDezoomer` integration | 🔴 not started | Currently calls `decrypt_xml(contents, None)`, so encrypted XML fails immediately. |
+| `decrypt_xml` | ✅ | Accepts `viewer_data: Option<&[u8]>`. When provided, extracts wrapper key + decodes engine via `extract_modern_context`, dispatches to `z_branch_to_plaintext` for OldZ/ModernZ. PP/RR/B return `Unsupported`. |
+| `KrpanoDezoomer` integration | ✅ | State machine (`ResolveState`) follows HTML→JS→XML→(JS decrypt) cascade with content-type detection. Encrypted XML triggers `NeedsData` for viewer JS; subsequent call decrypts and parses with original XML URI. |
 
 ### Variant readiness matrix
 
 | Variant | Header | Fixtures | Key status | Pipeline status | First achievable |
 | --- | --- | --- | --- | --- | --- |
-| **Modern Z** | `KENCPUZR` | `2018-04-04` | ✅ `"actions overflow"` from static probe | 🔨 Z branch needs wiring | **Now** |
-| Old Z | `KENCRUZR` | `old`, `2015-08-04`, `2017-09-21` | 🔴 License decoder not located | 🔨 Same Z branch as above | After Phase 3A |
+| **Modern Z** | `KENCPUZR` | `2018-04-04` | ✅ `"actions overflow"` from static probe | ✅ End-to-end (Base85→decrypt→LZ4→UTF8) | **Done** |
+| Old Z | `KENCRUZR` | `old`, `2015-08-04`, `2017-09-21` | 🔴 License decoder not located | ✅ Same Z branch as Modern Z | After Phase 3A |
 | Old B | `KENCPUBR` | `2013-06-05-B`, `2013-08-09-B` | 🔴 License decoder + B codec | 🔴 B branch not started | After Phase 3A |
 | Modern RR | `KENCRURR` | `2023-02-07`, `2023-04-30`, `2023-12-11`, `2024-12-20` | 🔴 RC4 key from stateful we.subdiv | 🔨 PP/RR step 1 done; step 2 blocked | After widened key |
 | Modern PP | `KENCPUPR` | `2023-04-30-PP` | 🔴 RC4 key from stateful we.subdiv | 🔨 PP/RR step 1 done; step 2 blocked | After widened key |
 | Modern PP/RR 1.24 | `KENCPUPR` / `KENCRURR` | `2026-06-25-*` | 🔴 Different viewer format | 🔴 Viewer decoder needed first | After 1.24 viewer decoder |
 
-**Summary**: Modern Z (`2018-04-04`) is the only unblocked path to a working end-to-end pipeline. Every other variant is blocked on either old license key derivation, modern widened-key extraction, or the 1.24 viewer format.
+**Summary**: Modern Z (`2018-04-04`) is fully working end-to-end — encrypted XML → viewer JS → decrypted krpano XML → tile extraction. Every other variant is blocked on either old license key derivation, modern widened-key extraction, or the 1.24 viewer format.
 
 ## Fixture Corpus
 
@@ -260,6 +260,16 @@ The modern resource-file function has the same high-level branch structure acros
 - For the `Z` branch (`byte6 == 10`), it decodes modified Base85, calls the byte helper with the mode value as the widened-key flag, LZ4-decompresses the decrypted block, then UTF-8-decodes it.
 - For the `P/P` and `R/R` branch (`byte6 == 2 * mode_value`), the resource-loader performs `body.replaceAll("z", "\\")` and returns. The downstream caller then decodes modified Base85, RC4-decrypts (key from viewer), LZ4-decompresses, and UTF-8-decodes. The `replaceAll`+Base85 step is implemented in `branches.rs` and tested against all P/P and R/R fixtures. The P/P RC4 decryption key for public-key encryption is not yet derived — the default `actions overflow` key does not work. Full viewer key extraction (Phase 4) is needed.
 - For the `B` branch (`byte6 == -14`), it Base64-decodes, byte-decrypts, and UTF-8-decodes according to the same resource function, confirmed by `2013-06-05-B` and `2013-08-09-B` old-engine fixtures.
+
+Modern `Z` pipeline verified (2026-06-27):
+
+| Fixture | Header | Key | Body (chars) | Post-Base85 (bytes) | Post-decrypt (bytes) | Plaintext (bytes) | Plaintext prefix |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- |
+| `2018-04-04` | `KENCPUZR` | `actions overflow` | 9915 | 7932 | 7803 | 36407 | whitespace then `<krpano>` |
+
+Pipeline: `decode_modified_base85(body)` → `decrypt_bytes(&decoded, key, false)` → parse LZ4 header from decrypted result → `lz4_decompress_block` → UTF-8.
+
+**Integration note (2026-06-27):** The `KrpanoDezoomer` uses a `ResolveState` state machine following the HAR-verified browser load order: HTML → JS → XML → (JS if encrypted). Content-type detection (`looks_like_html`, `looks_like_viewer_js`, `is_encrypted_xml`) routes each call to the appropriate next resource. Encrypted XML saves the original URI alongside the ciphertext so tile URLs resolve correctly after decryption.
 
 ### krpanotools 1.24 experiments (2026-06-26)
 
@@ -819,9 +829,9 @@ Do these in order. Each step is self-contained and testable.
 
 ### Step A: Implement Z branch transform (`branches.rs`)
 
-**Status**: 🔨 next — unblocked. All building blocks (Base85, `decrypt_bytes`, LZ4) already exist.
+**Status**: ✅ done (2026-06-27).
 
-Add to `branches.rs`:
+Added to `branches.rs`:
 
 1. `pub fn decrypt_z_branch(body: &str, key: &[u8], widened: bool) -> Result<Vec<u8>>`
    - `decode_modified_base85(body)` → 32-bit big-endian chunks.
@@ -833,41 +843,41 @@ Add to `branches.rs`:
 2. `pub fn z_branch_to_plaintext(body: &str, key: &[u8], widened: bool) -> Result<String>`
    - Calls `decrypt_z_branch`, then `String::from_utf8`.
 
-3. Tests:
-   - `fn decrypts_2018_04_04_z_branch()`: load `2018-04-04/tour.xml`, extract encrypted body, call `z_branch_to_plaintext` with key `b"actions overflow"` and `widened=false`. Assert plaintext starts with `<krpano` (after optional whitespace).
-   - `fn z_branch_stage_vectors()`: assert Base85 input len = 7932, post-decrypt len = 7803, post-LZ4 len = 36407.
+3. Tests pass:
+   - `decrypts_2018_04_04_z_branch`: body 9915 chars → Base85 decode 7932 bytes → decrypt 7803 bytes → LZ4 36407 bytes → plaintext starts with `<krpano`.
+   - `z_branch_stage_vectors`: verifies each stage byte count.
 
-**Files**: `branches.rs` only.
-**Unblocks**: Modern Z (`2018-04-04`), and (once old keys exist) all old Z fixtures.
+**Delivers**: Modern Z (`2018-04-04`) decrypts to valid krpano XML.
 
 ### Step B: Wire `decrypt_xml` for Modern Z
 
-**Status**: blocked on Step A.
+**Status**: ✅ done (2026-06-27).
 
-Rewrite `decrypt_xml` in `encrypted/mod.rs`:
+Rewrote `decrypt_xml` in `encrypted/mod.rs`:
 
-1. Accept `viewer_data: Option<&[u8]>` instead of `key: Option<&str>`.
-2. When `viewer_data` is provided: extract wrapper key + decode engine, run `extract_modern_context`, dispatch to branch transform.
-3. For `KencBranch::ModernZ`: call `z_branch_to_plaintext(body, ctx.default_key.as_bytes(), false)`.
-4. For all other branches: return `Err(Unsupported)` with a branch-specific message.
-5. Test: `fn decrypt_xml_2018_04_04()` — full end-to-end, real XML + viewer JS files.
+1. Accepts `viewer_data: Option<&[u8]>` instead of `key: Option<&str>`.
+2. When `viewer_data` is provided: extracts wrapper key + decodes engine, runs `extract_modern_context`, dispatches to branch transform.
+3. For `KencBranch::ModernZ` / `OldZ`: calls `z_branch_to_plaintext(body, ctx.default_key.as_bytes(), false)`.
+4. For all other branches: returns `Err(Unsupported)`.
+5. Test: `decrypt_xml_2018_04_04` — full end-to-end, real XML + viewer JS files → 36407 byte plaintext.
 
-**Files**: `encrypted/mod.rs`.
-**Delivers**: First working end-to-end decryption.
+**Delivers**: First working end-to-end decryption through `decrypt_xml`.
 
 ### Step C: Integrate with `KrpanoDezoomer`
 
-**Status**: blocked on Step B.
+**Status**: ✅ done (2026-06-27).
 
-Minimal change to `mod.rs`:
+Refactored `KrpanoDezoomer` in `mod.rs` with a `ResolveState` state machine:
 
-1. `KrpanoDezoomer` gains `pending_encrypted_xml: Option<Vec<u8>>`.
-2. `zoom_levels` / `dezoomer_result`: if `is_encrypted_xml(contents)` and no viewer JS cached, save XML and return `NeedsData { uri }` pointing to inferred `tour.js`.
-3. On second call (viewer JS content provided), call `decrypt_xml(pending_xml, Some(viewer_js))`.
-4. Tests: `encrypted_xml_triggers_needs_data`, `encrypted_xml_second_call_decrypts`.
+1. `KrpanoDezoomer` gains `state: ResolveState` (enum: `None` / `NeedJsToDecrypt { xml_uri, xml_contents }`).
+2. Content-type detection follows the logical cascade:
+   - **HTML** → extract viewer JS URL from `<script>` tags → `NeedsData`
+   - **Viewer JS** → infer XML URL via `sibling_uri` → `NeedsData`
+   - **Encrypted XML** → save pending (with original URI) → `NeedsData` for JS → decrypt with original URI
+   - **Plain XML** → parse directly
+3. Tests: `encrypted_xml_triggers_needs_data`, `encrypted_xml_second_call_decrypts`.
 
-**Files**: `mod.rs`.
-**Delivers**: `2018-04-04` works in the normal dezoomer flow.
+**Delivers**: `2018-04-04` works in the normal dezoomer flow (encrypted XML → NeedsData(tour.js) → decrypt → tile extraction).
 
 ### Step D: Old license key derivation
 
@@ -887,7 +897,7 @@ Needed for PP/RR RC4 decryption keys (`_(9525,1)` etc.). Likely requires either:
 
 ### Step F: PP/RR full pipeline
 
-**Status**: blocked on Step E (RC4 keys) + Step A (LZ4 + UTF-8 chaining pattern).
+**Status**: blocked on Step E (RC4 keys). The Z-branch LZ4+UTF-8 pattern is now proven in `decrypt_z_branch`.
 
 Add `fn decrypt_pp_rr_branch` to `branches.rs`: `replaceAll` → Base85 → RC4 decrypt → LZ4 → UTF-8. The RC4 decrypt uses the key from Step E. The non-RC4 parts of the pipeline are identical to Z.
 
@@ -902,10 +912,10 @@ The `2026-06-25-*` fixtures use a viewer format that `extract_decoded_viewer_js`
 - Commit 1 ✅: Phase 1 — fixture metadata tests + `KencBranch`.
 - Commit 2 ✅: Phase 2 — analysis harness + module split.
 - Commit 3 ✅: Phase 4 — modern engine static probe (generalized 2026-06-27).
-- **Commit 4 (next): Step A** — Z branch transform in `branches.rs`, tested against `2018-04-04` with key `"actions overflow"`.
-- **Commit 5: Step B** — Wire `decrypt_xml` for Modern Z. First end-to-end pipeline.
-- **Commit 6: Step C** — `KrpanoDezoomer` integration (encrypted XML flows through normal dezoomer).
-- Commit 7: Step D — Old engine license key derivation (`old_engine.rs`), if investigation succeeds.
+- Commit 4 ✅: Step A — Z branch transform in `branches.rs` (`decrypt_z_branch` + `z_branch_to_plaintext`). Tested against `2018-04-04` with key `"actions overflow"`. Stage vectors: 9915 char body → 7932 bytes Base85 → 7803 bytes decrypt → 36407 bytes LZ4.
+- Commit 5 ✅: Step B — Wire `decrypt_xml` for Modern Z. Signature changed to `viewer_data: Option<&[u8]>`. First end-to-end pipeline through `decrypt_xml`.
+- Commit 6 ✅: Step C — `KrpanoDezoomer` integration with `ResolveState` state machine. HTML→JS→XML→(JS decrypt) cascade. Encrypted XML flows through normal dezoomer with NeedsData.
+- **Commit 7 (next): Step D** — Old engine license key derivation (`old_engine.rs`), if investigation succeeds.
 - Commit 8: Step E — Modern widened-key extraction (stateful `we.subdiv`).
 - Commit 9: Step F — PP/RR full pipeline.
 - Commit 10: Step G — 1.24 viewer decoder (if needed).

@@ -39,30 +39,67 @@ pub fn encrypted_payload(contents: &[u8]) -> Result<String, EncryptedKrpanoError
 
 pub fn extract_key_from_viewer_js(contents: &[u8]) -> Option<String> {
     let text = String::from_utf8_lossy(contents);
+    log::debug!(
+        "extract_key_from_viewer_js: scanning {} bytes for krp: wrapper key",
+        contents.len()
+    );
     let mut idx = 0;
     while let Some((literal, next_idx)) = next_js_string_literal(&text, idx) {
         idx = next_idx;
         if literal.starts_with("krp:") {
+            log::debug!(
+                "extract_key_from_viewer_js: found krp: key at offset {}, length {}",
+                next_idx - literal.len() - 2,
+                literal.len()
+            );
             return Some(literal);
         }
     }
+    log::debug!("extract_key_from_viewer_js: no krp: key found");
     None
 }
 
 pub fn extract_decoded_viewer_js(contents: &[u8]) -> Result<Vec<u8>, EncryptedKrpanoError> {
+    log::debug!(
+        "extract_decoded_viewer_js: scanning {} bytes for packed viewer",
+        contents.len()
+    );
     let text = String::from_utf8_lossy(contents);
     let mut idx = 0;
+    let mut candidates = 0u32;
     while let Some((literal, next_idx)) = next_js_string_literal(&text, idx) {
         idx = next_idx;
         if !looks_like_modified_base85(&literal) {
             continue;
         }
-        if let Ok(decoded) = codecs::decode_packed_viewer_js_payload(&literal) {
-            if looks_like_decoded_viewer_js(&decoded) {
+        candidates += 1;
+        match codecs::decode_packed_viewer_js_payload(&literal) {
+            Ok(decoded) if looks_like_decoded_viewer_js(&decoded) => {
+                log::debug!(
+                    "extract_decoded_viewer_js: decoded packed viewer (candidate #{candidates}, raw={} chars, decoded={} bytes)",
+                    literal.len(),
+                    decoded.len()
+                );
                 return Ok(decoded);
+            }
+            Ok(decoded) => {
+                log::debug!(
+                    "extract_decoded_viewer_js: candidate #{candidates} decoded but doesn't look like viewer JS ({} bytes, prefix: {})",
+                    decoded.len(),
+                    String::from_utf8_lossy(&decoded[..200.min(decoded.len())])
+                );
+            }
+            Err(e) => {
+                log::debug!(
+                    "extract_decoded_viewer_js: candidate #{candidates} ({len} chars) decode failed: {e}",
+                    len = literal.len()
+                );
             }
         }
     }
+    log::debug!(
+        "extract_decoded_viewer_js: no valid packed viewer found ({candidates} modified-Base85 candidates scanned)"
+    );
     Err(EncryptedKrpanoError::MissingViewerJsPayload)
 }
 
