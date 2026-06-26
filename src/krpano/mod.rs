@@ -9,7 +9,9 @@ use krpano_metadata::{KrpanoMetadata, TemplateString, TemplateStringPart, XY};
 use crate::dezoomer::*;
 use crate::krpano::krpano_metadata::{ImageInfo, LevelDesc};
 use crate::network::resolve_relative;
+use encrypted::decrypt_xml;
 
+mod encrypted;
 mod krpano_metadata;
 
 #[derive(Debug)]
@@ -61,14 +63,28 @@ custom_error! {pub KrpanoError
     XmlError{source: serde_xml_rs::Error} = "Unable to parse the krpano xml file: {source}",
 }
 
+impl From<encrypted::EncryptedKrpanoError> for DezoomerError {
+    fn from(err: encrypted::EncryptedKrpanoError) -> Self {
+        DezoomerError::Other { source: err.into() }
+    }
+}
+
 impl From<KrpanoError> for DezoomerError {
     fn from(err: KrpanoError) -> Self {
         DezoomerError::Other { source: err.into() }
     }
 }
 
-fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, KrpanoError> {
-    let image_properties: KrpanoMetadata = serde_xml_rs::from_reader(contents)?;
+fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, DezoomerError> {
+    let decrypted;
+    let contents = if encrypted::is_encrypted_xml(contents) {
+        decrypted = decrypt_xml(contents, None)?;
+        decrypted.as_slice()
+    } else {
+        contents
+    };
+    let image_properties: KrpanoMetadata =
+        serde_xml_rs::from_reader(contents).map_err(KrpanoError::from)?;
     let base_url = &Arc::from(url);
     let title: &Arc<str> = &Arc::from(image_properties.get_title().unwrap_or(""));
     Ok(image_properties
@@ -123,8 +139,16 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, Krpano
 fn load_images_from_properties(
     url: &str,
     contents: &[u8],
-) -> Result<Vec<Box<dyn ZoomableImageWithLevels>>, KrpanoError> {
-    let image_properties: KrpanoMetadata = serde_xml_rs::from_reader(contents)?;
+) -> Result<Vec<Box<dyn ZoomableImageWithLevels>>, DezoomerError> {
+    let decrypted;
+    let contents = if encrypted::is_encrypted_xml(contents) {
+        decrypted = decrypt_xml(contents, None)?;
+        decrypted.as_slice()
+    } else {
+        contents
+    };
+    let image_properties: KrpanoMetadata =
+        serde_xml_rs::from_reader(contents).map_err(KrpanoError::from)?;
     let base_url = Arc::from(url);
     let global_title = image_properties.get_title().unwrap_or("").to_string();
 
