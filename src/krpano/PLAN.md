@@ -17,6 +17,7 @@ Update this file as implementation progresses.
   - The byte decryption helper usually named `b(a, b)` in the minified source.
 - The XML encrypted payloads are wrapped in `<encrypted>` and may be split across multiple CDATA sections, so concatenating CDATA chunks is required before decoding.
 - Official `krpanotools encrypt` can produce public-key encrypted files via `-p`; registered/protected viewers can also use private/custom-key encryption via `-key=ID|KEY`.
+- The packed viewer JavaScript extraction/decompression path is now ported, so all encrypted viewer JS fixtures can be decoded into raw krpano engine source for analysis.
 
 ## What is still unclear
 
@@ -63,12 +64,28 @@ Status: in progress. The RC4-like byte decryptor from minified helper `b(a, b)` 
 3. Verify output before LZ4 decompression has the expected krpano size/end-offset header. Pending on fixture vectors.
 4. Repeat with the HIROX payload once key derivation is understood.
 
-### 5. Resolve key and constant derivation
+### 5. Analyze decoded engine variants and resolve constant derivation
 
-1. Isolate the smallest part of `ra.decryptData(...)` needed to decrypt the constants used by XML/file decryption.
-2. Investigate whether the constants can be replaced by stable documented values. Otherwise write rust code to extract the constants from the js files.
-3. Extract viewer keys from JavaScript (`h(t, "krp:...")`) and from protected/custom-key metadata where available.
-4. Add tests that prove the derived keys decrypt generated fixtures and the HIROX fixture. We should have a test that iterates on testdata/krpano/encrypted/ and asserts all js/xml pairs decode successfully.
+Status: next. The immediate next step is not to guess at constants in Rust, but to analyze every decoded krpano engine variant in the encrypted test corpus and document how each version reaches the XML/file decryptor. That analysis should define the extraction algorithm for the constants and keys needed by XML decoding.
+
+Expected output of this step:
+
+- A version-by-version map of the decoded JS variants under `testdata/krpano/encrypted/`, including the names/structural anchors for:
+  - the encrypted string-constant decryptor (`ra.decryptData(...)`, `_()`, or equivalent),
+  - the internal file/XML resource decoder (`w(a, d)` or equivalent),
+  - the byte decryption helper (`b(a, b)` or equivalent),
+  - the `KENC....` header branch logic.
+- A list of the exact decrypted constants and viewer keys that feed XML/file decryption.
+- A decision on whether one structural extractor can cover the known versions, or whether extraction must be version-specific.
+- Fixture-driven test vectors showing the derived constants/keys before they are wired into `decrypt_xml`.
+
+1. Decode or materialize the raw engine source for every encrypted viewer JS fixture, including `2015-06-21`, `2017-02-02`, `2018-12-18`, `2023-02-07`, `2023-04-30`, `2023-12-11`, `2024-12-20`, and `old`.
+2. For each decoded engine, locate the string-constant decryptor, XML/file resource decoder, byte decryption helper, and `KENC....` branch logic.
+3. Compare those locations across versions and identify stable structural anchors that are safer than minified symbol names.
+4. Trace the XML/file decryptor inputs backward to the decrypted constants and viewer-specific keys it uses.
+5. Determine which constants are stable/documented and which must be extracted from each viewer JS.
+6. Write focused tests that assert the extracted constants/keys for each decoded JS variant.
+7. Only after the above map is complete, port the minimal constant/key extraction code needed by XML decoding.
 
 ### 6. Integrate into `KrpanoDezoomer`
 
@@ -90,5 +107,5 @@ Status: in progress. The RC4-like byte decryptor from minified helper `b(a, b)` 
 - Commit 2: fixtures and header parser tests. In progress: header parsing is implemented; committed fixtures will be added when they are small and license-safe.
 - Commit 3: modified Base85 and LZ4 codec ports with tests. In progress: Base85 and LZ4 are ported; Base64 remains pending until a header variant requires it.
 - Commit 4: byte decryption helper port with fixture-driven tests. In progress: helper is ported with synthetic coverage; fixture vectors are pending key derivation.
-- Commit 5: key/constant derivation support.
+- Commit 5: decoded JS variant analysis, followed by key/constant derivation support once the extraction strategy is clear.
 - Commit 6: `KrpanoDezoomer` integration and end-to-end tests.
