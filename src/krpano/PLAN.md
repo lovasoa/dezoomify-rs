@@ -42,23 +42,29 @@ The previous implementation only added detection/extraction scaffolding in `src/
 
 ### 2. Port payload extraction and header parsing
 
-1. Keep the current `<encrypted>` detection and split-CDATA concatenation tests.
-2. Add a `KencHeader` parser for the leading `KENC....` marker.
-3. Add unit tests for known headers from generated public fixtures and the HIROX fixture.
-4. Make unsupported/unknown header variants fail with a precise error that includes the header bytes.
+Status: in progress. `KencHeader` now parses the eight-byte `KENC....` prefix and has tests for the generated public header `KENCPUPR` and the HIROX header `KENCRURR`. The exact semantics of each flag byte are still being investigated.
+
+1. Keep the current `<encrypted>` detection and split-CDATA concatenation tests. ✅
+2. Add a `KencHeader` parser for the leading `KENC....` marker. ✅
+3. Add unit tests for known headers from generated public fixtures and the HIROX fixture. ✅
+4. Make unsupported/unknown header variants fail with a precise error that includes the header bytes. ✅
 
 ### 3. Port the low-level codecs independently
 
-1. Port the modified Base85 decoder used by krpano encrypted payloads.
-2. Port the standard LZ4 block decoder used by krpano.
-3. Port the Base64 decoder only if the encrypted XML path still needs it after header parsing is understood.
-4. Add small unit tests for each codec using vectors extracted from generated fixtures or from the supplied decoded source.
+Status: in progress. The modified Base85 decoder and standalone LZ4 block decoder are now ported and covered by focused unit tests. They are not wired into `decrypt_xml` until the byte-decryption/key step is implemented.
+
+1. Port the modified Base85 decoder used by krpano encrypted payloads. ✅
+2. Port the standard LZ4 block decoder used by krpano. ✅
+3. Port the Base64 decoder only if the encrypted XML path still needs it after header parsing is understood. Pending; the current known `KENC...U...` samples use the modified Base85 branch.
+4. Add small unit tests for each codec using vectors extracted from generated fixtures or from the supplied decoded source. ✅
 
 ### 4. Port the byte decryption helper
 
-1. Translate the minified helper `b(a, b)` into readable Rust with named variables.
-2. Write tests around intermediate buffers from generated public encrypted fixtures.
-3. Verify output before LZ4 decompression has the expected krpano size/end-offset header.
+Status: in progress. The RC4-like byte decryptor from minified helper `b(a, b)` has been translated to Rust and has a focused synthetic round-trip test. Fixture-driven tests still need real krpano-derived keys/constants.
+
+1. Translate the minified helper `b(a, b)` into readable Rust with named variables. ✅
+2. Write tests around intermediate buffers from generated public encrypted fixtures. Pending on key/constant derivation.
+3. Verify output before LZ4 decompression has the expected krpano size/end-offset header. Pending on fixture vectors.
 4. Repeat with the HIROX payload once key derivation is understood.
 
 ### 5. Resolve key and constant derivation
@@ -85,8 +91,8 @@ The previous implementation only added detection/extraction scaffolding in `src/
 ## Commit strategy
 
 - Commit 1: this plan document.
-- Commit 2: fixtures and header parser tests.
-- Commit 3: modified Base85 and LZ4 codec ports with tests.
-- Commit 4: byte decryption helper port with fixture-driven tests.
+- Commit 2: fixtures and header parser tests. In progress: header parsing is implemented; committed fixtures will be added when they are small and license-safe.
+- Commit 3: modified Base85 and LZ4 codec ports with tests. In progress: Base85 and LZ4 are ported; Base64 remains pending until a header variant requires it.
+- Commit 4: byte decryption helper port with fixture-driven tests. In progress: helper is ported with synthetic coverage; fixture vectors are pending key derivation.
 - Commit 5: key/constant derivation support.
 - Commit 6: `KrpanoDezoomer` integration and end-to-end tests.
