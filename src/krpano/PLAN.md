@@ -6,6 +6,43 @@ Add support for krpano XML files whose top-level content is an `<encrypted>` ele
 
 This plan is the working source of truth. When new facts are learned, update the relevant "Known facts", "Open questions", and "Action plan" sections in the same change.
 
+## Target Code Structure
+
+After all phases, the code should live in an `encrypted/` module directory under `src/krpano/`:
+
+```
+src/krpano/
+├── mod.rs              # KrpanoDezoomer, Level, load_from_properties (unchanged)
+├── krpano_metadata.rs  # XML metadata deserialization (unchanged)
+├── encrypted/
+│   ├── mod.rs          # Re-exports, EncryptedKrpanoError, is_encrypted_xml,
+│   │                   #   encrypted_payload, decrypt_xml (branch dispatch)
+│   ├── header.rs       # KencHeader, KencBranch enum, branch classification
+│   ├── codecs.rs       # decode_modified_base85, lz4_decompress_block,
+│   │                   #   decode_packed_viewer_js_payload
+│   ├── crypto.rs       # decrypt_bytes (RC4-like)
+│   ├── viewer.rs       # extract_key_from_viewer_js, extract_decoded_viewer_js,
+│   │                   #   next_js_string_literal, looks_like_* helpers
+│   ├── old_engine.rs   # Old engine license key derivation, old Z pipeline assembly
+│   ├── modern_engine.rs# Startup key-unpack IIFE extraction, we.subdiv row reads,
+│   │                   #   static constant resolution
+│   └── branches.rs     # Branch transform dispatch: Z, P/P, R/R body transforms
+└── PLAN.md
+```
+
+**Incremental split plan:**
+1. After Phase 2: move `encrypted.rs` → `encrypted/` module; split into `mod.rs` (public API + errors), `header.rs`, `codecs.rs`, `crypto.rs`, `viewer.rs`.
+2. Phase 3: add `old_engine.rs`.
+3. Phase 4: add `modern_engine.rs`.
+4. Phases 5–6: add `branches.rs`.
+5. Phase 7: complete `decrypt_xml` in `mod.rs`, wiring all branch modules together.
+
+**Rationale:**
+- Each module has a single, well-scoped responsibility.
+- Tests stay co-located in `#[cfg(test)] mod tests` blocks within each module.
+- The split is done incrementally so no commit contains both a refactor and new logic.
+- No module exceeds ~300 lines, keeping code reviewable.
+
 ## Current Code Status
 
 | Area | Current state | Next action |
