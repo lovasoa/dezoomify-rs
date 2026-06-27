@@ -355,10 +355,31 @@ If a JS candidate fails to decrypt (e.g. an analytics script that coincidentally
 
 | Variant | Status | Notes |
 |---------|--------|-------|
-| 1.24 Subdiv, both modes | Decoded | Prefixes parsed (`%*` / `$*<key-id>@`). Both PP (f=0) and RR (f=-1) paths work via branch 5. RR uses Mf table from `uk=` side record for key mixing. Stream offset: `k+2*g` vs `2*(1+g)` for earlier engines. |
+| 1.24 Subdiv, both modes, minimal and non-minimal bodies | Decoded | Prefixes parsed (`%*` / `$*<key-id>@`). PP (f=0) and RR (f=-1) paths work via branch 5 for all eight 2026 fixtures. RR uses Mf table from `uk=` side record for key mixing. Engine context (136 rows, checksum=23293) and side data extract correctly for all fixtures. |
 | `G` mode (old engine byte-4) | No fixture | Appears in `2015-08-04` engine source switch cases. No observed tour uses it. |
 | ClassicB Protected (`KENCRUBR`) | No fixture | Parsable header combination, but never observed. If it exists, it would likely use the old engine's protected key. |
 | Cross-family combinations (e.g. ClassicZ Protected with modern engine) | No fixture | ClassicZ Protected has only been observed with old engines; Public only with modern engines. Other combinations are theoretically possible but unobserved. |
+
+### 6.1. Resolved 1.24 non-minimal fixture failure
+
+All 2026 fixtures share the same engine (550,911-byte decoded viewer JS, checksum=23293, 136 rows) and the same krp: wrapper key (`AGp{e$ghq` for PP, varying per-fixture for RR). The header, cipher, mode, and engine family classification are correct for all 8 fixtures.
+
+The earlier non-minimal failure was not in branch-5 decompression. The larger bodies decrypted correctly, but several plaintext fixtures begin with a normal XML declaration (`<?xml version="1.0" encoding="UTF-8"?>`) before the `<krpano>` root. `pp_rr_branch_to_plaintext` previously required the normalized plaintext to start directly with `<krpano`, so it rejected valid XML with `EncryptedKrpanoError::Unsupported`.
+
+The root check now skips a leading BOM, XML processing instructions, and comments before checking for `<krpano>`. The all-fixtures test also uses this XML-prolog-aware check and asserts exact output against every available `plaintext.xml`.
+
+| Fixture | Body len | Status |
+|---------|----------|--------|
+| `pp-01_minimal` | 146 | ✅ works |
+| `pp-02_special_chars` | 401 | ✅ works |
+| `pp-03_nested` | 776 | ✅ works |
+| `pp-04_large` | 921 | ✅ works |
+| `pp-05_deep` | 296 | ✅ works |
+| `rr_minimal` | 185 | ✅ works |
+| `rr_special` | 400 | ✅ works |
+| `rr_tour` | 532 | ✅ works |
+
+The decompressor's key derivation is identical across fixtures (same `g`, `h`, `v`, `q`, `t`, `big_b`, `big_f`, `coeff_x`, `a`). The keys read from `d[2..2+2*g]` differ per fixture (as expected — they are ciphertext-derived), and the compressed data region (`d[stream+2*g..]`) differs in both length and content. All observed 1.24 bodies now decrypt end-to-end.
 
 ---
 
@@ -379,10 +400,16 @@ All fixtures under `testdata/krpano/encrypted/`. Each directory contains `tour.x
 | `2023-04-30-PP` | `KENCPUPR` | Subdiv | Public | modern (1.21) | Yes |
 | `2023-12-11` | `KENCRURR` | Subdiv | Protected | modern | Yes |
 | `2024-12-20` | `KENCRURR` | Subdiv | Protected | modern | Yes |
-| `2026-06-25-pp-*` (5 fixtures) | `KENCPUPR` | Subdiv | Public | modern (1.24) | Yes |
-| `2026-06-25-rr-*` (3 fixtures) | `KENCRURR` | Subdiv | Protected | modern (1.24) | Yes |
+| `2026-06-25-pp-01_minimal` | `KENCPUPR` | Subdiv | Public | modern (1.24) | Yes |
+| `2026-06-25-pp-02_special_chars` | `KENCPUPR` | Subdiv | Public | modern (1.24) | Yes |
+| `2026-06-25-pp-03_nested` | `KENCPUPR` | Subdiv | Public | modern (1.24) | Yes |
+| `2026-06-25-pp-04_large` | `KENCPUPR` | Subdiv | Public | modern (1.24) | Yes |
+| `2026-06-25-pp-05_deep` | `KENCPUPR` | Subdiv | Public | modern (1.24) | Yes |
+| `2026-06-25-rr_minimal` | `KENCRURR` | Subdiv | Protected | modern (1.24) | Yes |
+| `2026-06-25-rr_special` | `KENCRURR` | Subdiv | Protected | modern (1.24) | Yes |
+| `2026-06-25-rr_tour` | `KENCRURR` | Subdiv | Protected | modern (1.24) | Yes |
 
-All 2026 fixtures: prefix `%*` for PP, `$*<key-id>@` for RR. RR key IDs: `FIXTURE_rr_minimal`, `PFIXTURE_rr_special...` (85 chars), `MFIXTURE_rr_tour...` (85 chars). Engine context (136 rows, checksum=23293) and pk= side data (128 chars) extracted successfully. PP decrypts via branch 5 (f=0, same as 2023/2024). RR decrypts via branch 5 (f=-1) with Mf table lookup from `uk=` side record.
+All 2026 fixtures: prefix `%*` for PP, `$*<key-id>@` for RR. RR key IDs: `FIXTURE_rr_minimal`, `PFIXTURE_rr_special...` (85 chars), `MFIXTURE_rr_tour...` (85 chars). Engine context (136 rows, checksum=23293), pk= side data (128 chars), and Mf table data extract successfully for all 8 fixtures. All observed 2026 fixtures decrypt end-to-end and match their expected `plaintext.xml` files.
 
 ---
 

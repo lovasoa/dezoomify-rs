@@ -459,11 +459,32 @@ pub fn pp_rr_branch_to_plaintext(
     let protection_key = extract_protection_key(ctx)?;
     let mf = build_mf_table(ctx).unwrap_or_default();
     let plaintext = subdiv_branch5_decode(&replaced, row, protection_key.as_deref(), Some(&mf))?;
-    let normalized = plaintext.trim_start_matches('\u{feff}').trim_start();
-    if normalized.starts_with("<krpano") {
+    if plaintext_has_krpano_root(&plaintext) {
         Ok(plaintext)
     } else {
         Err(EncryptedKrpanoError::Unsupported)
+    }
+}
+
+fn plaintext_has_krpano_root(text: &str) -> bool {
+    let mut text = text.trim_start_matches('\u{feff}').trim_start();
+    loop {
+        if text.starts_with("<krpano") {
+            return true;
+        }
+        if text.starts_with("<?")
+            && let Some(end) = text.find("?>")
+        {
+            text = text[end + 2..].trim_start();
+            continue;
+        }
+        if text.starts_with("<!--")
+            && let Some(end) = text.find("-->")
+        {
+            text = text[end + 3..].trim_start();
+            continue;
+        }
+        return false;
     }
 }
 
@@ -1078,6 +1099,18 @@ mod tests {
         let key = extract_protection_key(&ctx).unwrap().expect("pk= record");
         assert_eq!(key.len(), 128);
         assert!(key.starts_with("UZbbbXZHUbbb"));
+    }
+
+    #[test]
+    fn plaintext_root_check_accepts_xml_prolog() {
+        assert!(plaintext_has_krpano_root("<krpano/>"));
+        assert!(plaintext_has_krpano_root(
+            "\u{feff}<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<krpano/>"
+        ));
+        assert!(plaintext_has_krpano_root(
+            "<?xml version=\"1.0\"?><!-- generated --><krpano/>"
+        ));
+        assert!(!plaintext_has_krpano_root("<?xml version=\"1.0\"?><tour/>"));
     }
 
     #[test]

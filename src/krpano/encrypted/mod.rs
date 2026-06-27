@@ -198,6 +198,28 @@ mod tests {
             .find(|path| path.exists())
     }
 
+    fn looks_like_krpano_xml(text: &str) -> bool {
+        let mut text = text.trim_start_matches('\u{feff}').trim_start();
+        loop {
+            if text.starts_with("<krpano") {
+                return true;
+            }
+            if text.starts_with("<?")
+                && let Some(end) = text.find("?>")
+            {
+                text = text[end + 2..].trim_start();
+                continue;
+            }
+            if text.starts_with("<!--")
+                && let Some(end) = text.find("-->")
+            {
+                text = text[end + 3..].trim_start();
+                continue;
+            }
+            return false;
+        }
+    }
+
     #[test]
     fn decodes_packed_viewer_js_payload() {
         let js = fs::read(
@@ -627,7 +649,7 @@ mod tests {
         assert_eq!(plaintext.len(), 36407, "plaintext length");
         let text = std::str::from_utf8(&plaintext).unwrap();
         assert!(
-            text.trim().starts_with("<krpano"),
+            looks_like_krpano_xml(text),
             "plaintext should start with <krpano>"
         );
     }
@@ -651,7 +673,7 @@ mod tests {
                 .unwrap_or_else(|err| panic!("{fixture}: plaintext is not UTF-8: {err}"));
             let normalized = text.trim_start_matches('\u{feff}').trim_start();
             assert!(
-                normalized.starts_with("<krpano"),
+                looks_like_krpano_xml(text),
                 "{fixture}: plaintext should start with <krpano>, got prefix: {:?}",
                 &normalized[..normalized.len().min(200)]
             );
@@ -677,9 +699,8 @@ mod tests {
             decrypt_xml(&xml, Some(&js)).unwrap_or_else(|err| panic!("{fixture}: {err}"));
         let text = std::str::from_utf8(&plaintext)
             .unwrap_or_else(|err| panic!("{fixture}: plaintext is not UTF-8: {err}"));
-        let normalized = text.trim_start_matches('\u{feff}').trim_start();
         assert!(
-            normalized.starts_with("<krpano"),
+            looks_like_krpano_xml(text),
             "{fixture}: plaintext should start with <krpano>"
         );
         let _parsed: PlaintextKrpanoRoot = serde_xml_rs::from_reader(text.as_bytes())
@@ -709,14 +730,77 @@ mod tests {
                 decrypt_xml(&xml, Some(&js)).unwrap_or_else(|err| panic!("{fixture}: {err}"));
             let text = std::str::from_utf8(&plaintext)
                 .unwrap_or_else(|err| panic!("{fixture}: plaintext is not UTF-8: {err}"));
-            let normalized = text.trim_start_matches('\u{feff}').trim_start();
             assert!(
-                normalized.starts_with("<krpano"),
+                looks_like_krpano_xml(text),
                 "{fixture}: plaintext should start with <krpano>"
             );
             let _parsed: PlaintextKrpanoRoot = serde_xml_rs::from_reader(text.as_bytes())
                 .unwrap_or_else(|err| panic!("{fixture}: plaintext XML did not parse: {err}"));
         }
+    }
+
+    /// End-to-end: iterate every encrypted krpano fixture subfolder, decrypt,
+    /// and assert the result is valid XML. When a `plaintext.xml` is present,
+    /// also assert exact byte-for-byte match.
+    #[test]
+    fn decrypt_xml_all_fixtures_to_valid_xml() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/krpano/encrypted");
+        let mut tested = 0;
+        for entry in fs::read_dir(&root).unwrap() {
+            let dir = entry.unwrap().path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let dir_name = dir.file_name().unwrap().to_str().unwrap();
+
+            let xml_path = match encrypted_xml_path(&dir) {
+                Some(p) => p,
+                None => continue,
+            };
+            let js_path = match viewer_js_path(&dir) {
+                Some(p) => p,
+                None => continue,
+            };
+
+            let xml = fs::read(&xml_path).unwrap();
+            let js = fs::read(&js_path).unwrap();
+
+            let plaintext =
+                decrypt_xml(&xml, Some(&js)).unwrap_or_else(|err| panic!("{dir_name}: {err}"));
+            let text = std::str::from_utf8(&plaintext)
+                .unwrap_or_else(|err| panic!("{dir_name}: plaintext is not UTF-8: {err}"));
+            let normalized = text.trim_start_matches('\u{feff}').trim_start();
+            assert!(
+                looks_like_krpano_xml(text),
+                "{dir_name}: plaintext should start with <krpano>, got prefix: {:?}",
+                &normalized[..normalized.len().min(200)]
+            );
+            let _parsed: PlaintextKrpanoRoot = serde_xml_rs::from_reader(text.as_bytes())
+                .unwrap_or_else(|err| panic!("{dir_name}: plaintext XML did not parse: {err}"));
+
+            // If an expected plaintext file exists, assert exact match.
+            let expected_path = dir.join("plaintext.xml");
+            if expected_path.exists() {
+                let mut expected = fs::read(&expected_path).unwrap();
+                if expected.last() == Some(&b'\n') {
+                    expected.pop();
+                }
+                let mut actual = plaintext.clone();
+                if actual.last() == Some(&b'\n') {
+                    actual.pop();
+                }
+                assert_eq!(
+                    actual, expected,
+                    "{dir_name}: plaintext does not match expected plaintext.xml"
+                );
+            }
+
+            tested += 1;
+        }
+        assert!(
+            tested >= 18,
+            "expected at least 18 fixture directories, found {tested}"
+        );
     }
 
     #[derive(serde::Deserialize)]
