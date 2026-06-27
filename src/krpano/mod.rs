@@ -273,10 +273,36 @@ fn looks_like_html(contents: &[u8]) -> bool {
 }
 
 /// True if the content looks like a krpano viewer JavaScript file.
+///
+/// Krpano viewer JS files have a UTF-8 BOM followed by either:
+/// - A `/* krpano ... */` comment header (krpano 1.16+), or
+/// - `function createPanoViewer(` / `function embedpano(` (very old versions).
 fn looks_like_viewer_js(contents: &[u8]) -> bool {
-    let text = String::from_utf8_lossy(contents);
-    (text.starts_with("function ") || text.contains("eval("))
-        && (text.contains("krpano") || text.contains("loadpano") || text.contains("embedhtml5"))
+    // Strip optional UTF-8 BOM.
+    let contents = if contents.starts_with(b"\xef\xbb\xbf") {
+        &contents[3..]
+    } else {
+        contents
+    };
+
+    // Modern krpano viewer JS (1.16+) starts with "/* krpano ... */" comment.
+    // Require "krpano" within the first 512 bytes to avoid false positives
+    // from unrelated JS files that happen to start with a comment.
+    if contents.starts_with(b"/*") {
+        let window = &contents[..contents.len().min(512)];
+        return window.windows(6).any(|w| w == b"krpano");
+    }
+
+    // Very old krpano viewer JS starts with "function ".
+    // Look for "krpano" or "embedpano" in the first 8 KB to avoid
+    // false positives on random JS files that start with "function ".
+    if contents.starts_with(b"function ") {
+        let window = &contents[..contents.len().min(8192)];
+        return window.windows(6).any(|w| w == b"krpano")
+            || window.windows(9).any(|w| w == b"embedpano");
+    }
+
+    false
 }
 
 /// Try to extract viewer JS candidates from an HTML page.
@@ -991,4 +1017,39 @@ fn html_encrypted_xml_falls_back_to_next_viewer_candidate() {
     };
     let result = dezoomer.zoom_levels(&input_real_js);
     assert!(result.is_ok(), "fallback viewer JS failed: {result:?}");
+}
+
+#[test]
+fn all_viewer_js_files_are_recognized() {
+    // Collect all viewer JS files from the encrypted testdata.
+    let encrypted_dir = std::path::Path::new("testdata/krpano/encrypted");
+    let mut viewer_js_files: Vec<std::path::PathBuf> = Vec::new();
+
+    for entry in std::fs::read_dir(encrypted_dir).unwrap() {
+        let entry = entry.unwrap();
+        let dir = entry.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        for file_entry in std::fs::read_dir(&dir).unwrap() {
+            let file = file_entry.unwrap().path();
+            let name = file.file_name().unwrap().to_str().unwrap();
+            // tour.js and krpano.js are the viewer JS files.
+            // decoded.js is a decrypted result, not a viewer JS source.
+            if name.ends_with(".js") && name != "decoded.js" {
+                viewer_js_files.push(file);
+            }
+        }
+    }
+
+    assert!(!viewer_js_files.is_empty(), "no viewer JS files found");
+
+    for path in &viewer_js_files {
+        let contents = std::fs::read(path).unwrap();
+        assert!(
+            looks_like_viewer_js(&contents),
+            "viewer JS file should be recognized: {}",
+            path.display()
+        );
+    }
 }
