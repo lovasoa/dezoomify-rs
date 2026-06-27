@@ -8,9 +8,7 @@ pub mod modern_engine;
 pub mod old_engine;
 pub mod viewer;
 
-#[allow(unused_imports)]
-pub use header::{KencBranch, KencHeader};
-#[allow(unused_imports)]
+pub use header::{BodyCipher, CipherMode, KencHeader};
 pub use viewer::{
     encrypted_payload, extract_decoded_viewer_js, extract_key_from_viewer_js, is_encrypted_xml,
 };
@@ -27,27 +25,64 @@ custom_error! {pub EncryptedKrpanoError
     Unsupported = "encrypted krpano XML decryption is not implemented for this payload variant yet",
 }
 
+// ---------------------------------------------------------------------------
+// Engine family detection
+// ---------------------------------------------------------------------------
+
+/// Which engine family a decoded viewer JS belongs to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EngineFamily {
+    /// Old engine — literal `KENC` in source, numeric `_[]` table.
+    Old,
+    /// Modern engine — no literal `KENC`, uses `we.subdiv` closure.
+    Modern,
+}
+
+fn detect_engine(decoded_engine: &[u8]) -> EngineFamily {
+    let text = match std::str::from_utf8(decoded_engine) {
+        Ok(t) => t,
+        Err(_) => return EngineFamily::Old,
+    };
+    if text.contains("KENC") {
+        EngineFamily::Old
+    } else {
+        EngineFamily::Modern
+    }
+}
+
+// ---------------------------------------------------------------------------
+// decrypt_xml — the main entry point
+// ---------------------------------------------------------------------------
+
 /// Decrypt an encrypted krpano XML payload.
 ///
 /// `viewer_data` is the raw krpano viewer JavaScript (e.g. `tour.js`).
-/// When provided, the wrapper key is extracted, the packed engine is decoded,
-/// and branch-specific decryption proceeds.
+/// When provided, the wrapper `krp:` key is extracted, the packed engine is
+/// decoded, and the header's `BodyCipher` and `CipherMode` determine which
+/// key and transform pipeline to use.
 ///
-/// Currently supported: Modern Z (`KENCPUZR`), old Z/B, and 2023/2024
-/// modern P/P + R/R branch-5 payloads.
+/// Supported combinations:
+///
+/// | Cipher     | Mode      | Engine | Header     |
+/// |------------|-----------|--------|------------|
+/// | ClassicZ   | Public    | modern | `KENCPUZR` |
+/// | ClassicZ   | Protected | old    | `KENCRUZR` |
+/// | ClassicB   | Public    | old    | `KENCPUBR` |
+/// | Subdiv     | Public    | modern | `KENCPUPR` |
+/// | Subdiv     | Protected | modern | `KENCRURR` |
 pub fn decrypt_xml(
     contents: &[u8],
     viewer_data: Option<&[u8]>,
 ) -> Result<Vec<u8>, EncryptedKrpanoError> {
     let payload = encrypted_payload(contents)?;
     let header = KencHeader::parse(&payload)?;
-    let branch = header.branch();
     let body = header.payload(&payload);
     log::debug!(
-        "decrypt_xml: header={}, branch={branch:?}, body_len={}, header_raw={}",
+        "decrypt_xml: header={}, cipher={:?}, mode={:?}, body_len={}",
         header.raw,
-        body.len(),
-        header.raw
+        header.cipher,
+        header.mode,
+        body.len()
     );
 
     let viewer_data = viewer_data.ok_or(EncryptedKrpanoError::MissingKey)?;
@@ -62,65 +97,92 @@ pub fn decrypt_xml(
         "decrypt_xml: decoded_engine = {} bytes",
         decoded_engine.len()
     );
+    let engine = detect_engine(&decoded_engine);
+    log::debug!("decrypt_xml: detected engine family = {engine:?}");
 
-    match branch {
-        KencBranch::ModernZ => {
+    match (header.cipher, header.mode, engine) {
+        // ── ClassicZ (Modified Base85 → RC4 → LZ4 → UTF-8) ──
+
+        (BodyCipher::ClassicZ, CipherMode::Public, EngineFamily::Modern) => {
             let ctx = modern_engine::extract_modern_context(&decoded_engine, &wrapper_key)?;
-            log::debug!(
-                "decrypt_xml: modern default_key={:?}, checksum={}",
-                ctx.default_key,
-                ctx.checksum_constant
-            );
-            log::debug!("decrypt_xml: using modern Z branch, widened=false");
+            log::debug!("decrypt_xml: modern ClassicZ, default_key={:?}", ctx.default_key);
             branches::z_branch_to_plaintext(body, ctx.default_key.as_bytes(), false)
                 .map(String::into_bytes)
         }
-        KencBranch::OldZ => {
+
+        (BodyCipher::ClassicZ, CipherMode::Protected, EngineFamily::Old) => {
             let ctx = old_engine::derive_old_license_key(&decoded_engine, &wrapper_key)?;
             let key = ctx.protected_key.ok_or(EncryptedKrpanoError::MissingKey)?;
             log::debug!(
-                "decrypt_xml: using old Z branch, key_variable={}",
+                "decrypt_xml: old ClassicZ, key_variable={}",
                 ctx.key_variable
             );
             branches::z_branch_to_plaintext(body, &key, true).map(String::into_bytes)
         }
-        KencBranch::B => {
+
+        // ── ClassicB (Base64 → RC4 → UTF-8) ──
+
+        (BodyCipher::ClassicB, CipherMode::Public, EngineFamily::Old) => {
             let ctx = old_engine::derive_old_license_key(&decoded_engine, &wrapper_key)?;
-            let key = if header.mode == 'R' {
-                ctx.protected_key
-                    .as_deref()
-                    .ok_or(EncryptedKrpanoError::MissingKey)?
-            } else {
-                &ctx.default_key
-            };
+            let key = &ctx.default_key;
             if key.is_empty() || ctx.base64_alphabet.is_empty() {
                 return Err(EncryptedKrpanoError::MissingKey);
             }
-            log::debug!("decrypt_xml: using old B branch, mode={}", header.mode);
+            log::debug!("decrypt_xml: old ClassicB, default key");
             branches::b_branch_to_plaintext_with_alphabet(
                 body,
                 &ctx.base64_alphabet,
                 key,
-                header.mode == 'R',
+                false,
             )
             .map(String::into_bytes)
         }
-        KencBranch::RR | KencBranch::PP => {
-            log::debug!("decrypt_xml: {branch:?} branch");
+
+        // ── Subdiv (token replacement → we.subdiv branch 5) ──
+
+        (BodyCipher::Subdiv, _, EngineFamily::Modern) => {
             let ctx = modern_engine::extract_modern_context(&decoded_engine, &wrapper_key)?;
             log::debug!(
-                "decrypt_xml: modern context checksum={}, default_key={:?}",
-                ctx.checksum_constant,
-                ctx.default_key
+                "decrypt_xml: modern Subdiv, mode={:?}, checksum={}",
+                header.mode,
+                ctx.checksum_constant
             );
             modern_engine::pp_rr_branch_to_plaintext(body, &ctx).map(String::into_bytes)
         }
-        KencBranch::Unknown => {
-            log::debug!("decrypt_xml: unknown branch");
+
+        // ── Unsupported combinations ──
+
+        (BodyCipher::Subdiv, _, EngineFamily::Old) => {
+            log::debug!("decrypt_xml: Subdiv cipher with old engine — unsupported");
+            Err(EncryptedKrpanoError::Unsupported)
+        }
+        (BodyCipher::ClassicB, CipherMode::Protected, EngineFamily::Old) => {
+            // ClassicB with protected mode — not observed, but try protected key
+            let ctx = old_engine::derive_old_license_key(&decoded_engine, &wrapper_key)?;
+            let key = ctx
+                .protected_key
+                .as_deref()
+                .ok_or(EncryptedKrpanoError::MissingKey)?;
+            if key.is_empty() || ctx.base64_alphabet.is_empty() {
+                return Err(EncryptedKrpanoError::MissingKey);
+            }
+            log::debug!("decrypt_xml: old ClassicB, protected key");
+            branches::b_branch_to_plaintext_with_alphabet(body, &ctx.base64_alphabet, key, true)
+                .map(String::into_bytes)
+        }
+
+        (cipher, mode, engine) => {
+            log::debug!(
+                "decrypt_xml: unsupported combination cipher={cipher:?} mode={mode:?} engine={engine:?}"
+            );
             Err(EncryptedKrpanoError::Unsupported)
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -176,7 +238,7 @@ mod tests {
             let js = fs::read(&js_path).unwrap();
             let decoded = match extract_decoded_viewer_js(&js) {
                 Ok(d) => d,
-                Err(_) => continue, // skip fixtures with undecodable engines (1.24+)
+                Err(_) => continue,
             };
             let decoded_text = std::str::from_utf8(&decoded).unwrap();
             assert!(
@@ -204,32 +266,46 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Phase 1: Fixture metadata tests
+    // Fixture metadata
     // -----------------------------------------------------------------
 
-    fn fixture_header_info(dir_name: &str) -> Option<(&'static str, KencBranch)> {
+    fn fixture_header_info(dir_name: &str) -> Option<(&'static str, BodyCipher, CipherMode)> {
         match dir_name {
-            "old" => Some(("KENCRUZR", KencBranch::OldZ)),
-            "2013-06-05-B" => Some(("KENCPUBR", KencBranch::B)),
-            "2013-08-09-B" => Some(("KENCPUBR", KencBranch::B)),
-            "2015-08-04" => Some(("KENCRUZR", KencBranch::OldZ)),
-            "2017-09-21" => Some(("KENCRUZR", KencBranch::OldZ)),
-            "2018-04-04" => Some(("KENCPUZR", KencBranch::ModernZ)),
-            "2023-02-07" => Some(("KENCRURR", KencBranch::RR)),
-            "2023-04-30" => Some(("KENCRURR", KencBranch::RR)),
-            "2023-04-30-PP" => Some(("KENCPUPR", KencBranch::PP)),
-            "2023-12-11" => Some(("KENCRURR", KencBranch::RR)),
-            "2024-12-20" => Some(("KENCRURR", KencBranch::RR)),
-            // krpanotools-generated P/P fixtures (krpano 1.24 build 2026-06-25)
-            "2026-06-25-pp-01_minimal" => Some(("KENCPUPR", KencBranch::PP)),
-            "2026-06-25-pp-02_special_chars" => Some(("KENCPUPR", KencBranch::PP)),
-            "2026-06-25-pp-03_nested" => Some(("KENCPUPR", KencBranch::PP)),
-            "2026-06-25-pp-04_large" => Some(("KENCPUPR", KencBranch::PP)),
-            "2026-06-25-pp-05_deep" => Some(("KENCPUPR", KencBranch::PP)),
-            // krpanotools-generated R/R fixtures (krpano 1.24, licensed custom keys)
-            "2026-06-25-rr_minimal" => Some(("KENCRURR", KencBranch::RR)),
-            "2026-06-25-rr_tour" => Some(("KENCRURR", KencBranch::RR)),
-            "2026-06-25-rr_special" => Some(("KENCRURR", KencBranch::RR)),
+            "old" => Some(("KENCRUZR", BodyCipher::ClassicZ, CipherMode::Protected)),
+            "2013-06-05-B" => Some(("KENCPUBR", BodyCipher::ClassicB, CipherMode::Public)),
+            "2013-08-09-B" => Some(("KENCPUBR", BodyCipher::ClassicB, CipherMode::Public)),
+            "2015-08-04" => Some(("KENCRUZR", BodyCipher::ClassicZ, CipherMode::Protected)),
+            "2017-09-21" => Some(("KENCRUZR", BodyCipher::ClassicZ, CipherMode::Protected)),
+            "2018-04-04" => Some(("KENCPUZR", BodyCipher::ClassicZ, CipherMode::Public)),
+            "2023-02-07" => Some(("KENCRURR", BodyCipher::Subdiv, CipherMode::Protected)),
+            "2023-04-30" => Some(("KENCRURR", BodyCipher::Subdiv, CipherMode::Protected)),
+            "2023-04-30-PP" => Some(("KENCPUPR", BodyCipher::Subdiv, CipherMode::Public)),
+            "2023-12-11" => Some(("KENCRURR", BodyCipher::Subdiv, CipherMode::Protected)),
+            "2024-12-20" => Some(("KENCRURR", BodyCipher::Subdiv, CipherMode::Protected)),
+            "2026-06-25-pp-01_minimal" => {
+                Some(("KENCPUPR", BodyCipher::Subdiv, CipherMode::Public))
+            }
+            "2026-06-25-pp-02_special_chars" => {
+                Some(("KENCPUPR", BodyCipher::Subdiv, CipherMode::Public))
+            }
+            "2026-06-25-pp-03_nested" => {
+                Some(("KENCPUPR", BodyCipher::Subdiv, CipherMode::Public))
+            }
+            "2026-06-25-pp-04_large" => {
+                Some(("KENCPUPR", BodyCipher::Subdiv, CipherMode::Public))
+            }
+            "2026-06-25-pp-05_deep" => {
+                Some(("KENCPUPR", BodyCipher::Subdiv, CipherMode::Public))
+            }
+            "2026-06-25-rr_minimal" => {
+                Some(("KENCRURR", BodyCipher::Subdiv, CipherMode::Protected))
+            }
+            "2026-06-25-rr_tour" => {
+                Some(("KENCRURR", BodyCipher::Subdiv, CipherMode::Protected))
+            }
+            "2026-06-25-rr_special" => {
+                Some(("KENCRURR", BodyCipher::Subdiv, CipherMode::Protected))
+            }
             _ => None,
         }
     }
@@ -272,13 +348,11 @@ mod tests {
             "2023-04-30-PP" => Some(2795),
             "2023-12-11" => Some(2823),
             "2024-12-20" => Some(2874),
-            // krpanotools 1.24 demo viewer: all share the same key (2549 chars after unescaping).
             "2026-06-25-pp-01_minimal"
             | "2026-06-25-pp-02_special_chars"
             | "2026-06-25-pp-03_nested"
             | "2026-06-25-pp-04_large"
             | "2026-06-25-pp-05_deep" => Some(2549),
-            // krpanotools R/R: each viewer embeds a distinct custom key.
             "2026-06-25-rr_minimal" => Some(3061),
             "2026-06-25-rr_tour" => Some(3053),
             "2026-06-25-rr_special" => Some(3055),
@@ -296,10 +370,11 @@ mod tests {
                 continue;
             }
             let dir_name = dir.file_name().unwrap().to_str().unwrap();
-            let (expected_header, _expected_branch) = match fixture_header_info(dir_name) {
-                Some(v) => v,
-                None => continue,
-            };
+            let (expected_header, _expected_cipher, _expected_mode) =
+                match fixture_header_info(dir_name) {
+                    Some(v) => v,
+                    None => continue,
+                };
 
             let xml_path = encrypted_xml_path(&dir)
                 .unwrap_or_else(|| panic!("missing encrypted XML fixture in {}", dir.display()));
@@ -309,8 +384,7 @@ mod tests {
             let header = KencHeader::parse(&payload)
                 .unwrap_or_else(|err| panic!("{}: {err}", xml_path.display()));
             assert_eq!(
-                header.raw,
-                expected_header,
+                header.raw, expected_header,
                 "{}: header mismatch",
                 xml_path.display()
             );
@@ -323,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn classifies_every_header_branch() {
+    fn all_fixtures_classify_correctly() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/krpano/encrypted");
         let mut checked = 0;
         for entry in fs::read_dir(&root).unwrap() {
@@ -332,10 +406,11 @@ mod tests {
                 continue;
             }
             let dir_name = dir.file_name().unwrap().to_str().unwrap();
-            let (_expected_header, expected_branch) = match fixture_header_info(dir_name) {
-                Some(v) => v,
-                None => continue,
-            };
+            let (_expected_header, expected_cipher, expected_mode) =
+                match fixture_header_info(dir_name) {
+                    Some(v) => v,
+                    None => continue,
+                };
 
             let xml_path = encrypted_xml_path(&dir)
                 .unwrap_or_else(|| panic!("missing encrypted XML fixture in {}", dir.display()));
@@ -345,9 +420,14 @@ mod tests {
             let header = KencHeader::parse(&payload)
                 .unwrap_or_else(|err| panic!("{}: {err}", xml_path.display()));
             assert_eq!(
-                header.branch(),
-                expected_branch,
-                "{}: branch mismatch for header {}",
+                header.cipher, expected_cipher,
+                "{}: cipher mismatch for header {}",
+                xml_path.display(),
+                header.raw
+            );
+            assert_eq!(
+                header.mode, expected_mode,
+                "{}: mode mismatch for header {}",
                 xml_path.display(),
                 header.raw
             );
@@ -428,14 +508,15 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Phase 2: Analysis harness
+    // Analysis harness
     // -----------------------------------------------------------------
 
     #[allow(dead_code)]
     struct DecryptStages {
         fixture: String,
         header: KencHeader,
-        branch: KencBranch,
+        cipher: BodyCipher,
+        mode: CipherMode,
         wrapper_key: Option<String>,
         decoded_engine_len: usize,
         encrypted_body_len: usize,
@@ -449,10 +530,11 @@ mod tests {
     impl DecryptStages {
         fn print_row(&self) {
             eprintln!(
-                "| {fixture:14} | {header:10} | {branch:?} | {key_len:>3} | {engine:>7} | {body:>5} | {b85:>5} | {dec:>5} | {lz4:>6} | {plain:>6} | {prefix}",
+                "| {fixture:14} | {header:10} | {cipher:?} | {mode:?} | {key_len:>3} | {engine:>7} | {body:>5} | {b85:>5} | {dec:>5} | {lz4:>6} | {plain:>6} | {prefix}",
                 fixture = self.fixture,
                 header = self.header.raw,
-                branch = self.branch,
+                cipher = self.cipher,
+                mode = self.mode,
                 key_len = self
                     .wrapper_key
                     .as_ref()
@@ -490,7 +572,8 @@ mod tests {
         let xml = fs::read(&xml_path).unwrap();
         let payload = viewer::encrypted_payload(&xml).unwrap();
         let header = KencHeader::parse(&payload).unwrap();
-        let branch = header.branch();
+        let cipher = header.cipher;
+        let mode = header.mode;
         let body = header.payload(&payload);
         let encrypted_body_len = body.len();
 
@@ -508,7 +591,8 @@ mod tests {
         DecryptStages {
             fixture: dir_name,
             header,
-            branch,
+            cipher,
+            mode,
             wrapper_key,
             decoded_engine_len,
             encrypted_body_len,
@@ -539,7 +623,10 @@ mod tests {
         assert!(!stages.is_empty());
     }
 
-    /// End-to-end decryption of a Modern Z fixture through `decrypt_xml`.
+    // -----------------------------------------------------------------
+    // End-to-end decryption tests
+    // -----------------------------------------------------------------
+
     #[test]
     fn decrypt_xml_2018_04_04() {
         let root =
@@ -557,7 +644,7 @@ mod tests {
     }
 
     #[test]
-    fn decrypt_xml_rr_fixtures() {
+    fn decrypt_xml_protected_subdiv_fixtures() {
         for fixture in ["2023-02-07", "2023-04-30", "2023-12-11", "2024-12-20"] {
             let root = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("testdata/krpano/encrypted")
@@ -585,7 +672,7 @@ mod tests {
     }
 
     #[test]
-    fn decrypt_xml_pp_fixture() {
+    fn decrypt_xml_public_subdiv_fixture() {
         let fixture = "2023-04-30-PP";
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("testdata/krpano/encrypted")

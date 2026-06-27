@@ -1,14 +1,67 @@
-//! Old krpano engine license-key extraction.
+//! Old krpano engine — key extraction from decoded engine JS and wrapper.
 //!
-//! Old engines keep the encrypted XML key in the `krp:` wrapper payload.  The
-//! decoded engine first unpacks that payload into the `_[]` string table plus a
-//! hidden Base64 license blob, then `pc.init` parses the license records and
-//! stores record `case 7` as the XML decryption key (`Pd`, `od`, or `pe`
-//! depending on the build).
+//! Old engines (pre-2018) store constants in a literal `_[]` string table and a
+//! hidden Base64 license blob, both unpacked from the `krp:` wrapper string.
+//!
+//! The wrapper string is decoded with a reverse-substitution cipher (salted,
+//! rolling-checksummed) into two pieces:
+//!
+//! 1. **`_[]` rows** — a table of pipe-delimited strings.  Row 188 carries
+//!    license field tags (e.g. `xx=lz=rg=ma=dm=ed=eu=ek=rd=pt=id=`).  Row
+//!    references near the byte-helper function carry the default key and the
+//!    Base64 alphabet used by the B cipher.
+//!
+//! 2. **License blob** — a hidden Base64-encoded string of semicolon-separated
+//!    `key=value` records.  The record whose tag matches the field extracted
+//!    from row 188 (e.g. `ek=`) is the **protected key**.  The engine's
+//!    `pc.init` function processes this record in `case 7` of a switch
+//!    statement: it Base64-decodes the value, computes a `ck=` checksum,
+//!    looks up each character via `charCodeAt(i) & 255`, and pads the result
+//!    to 128 characters.
 
 use base64::Engine;
 
 use super::EncryptedKrpanoError;
+
+// ---------------------------------------------------------------------------
+// Engine trait
+// ---------------------------------------------------------------------------
+
+/// Context produced by key derivation for a given engine family.
+///
+/// Both old and modern engines produce a context that the branch transform
+/// reads to obtain the decryption key and any auxiliary data (Base64
+/// alphabet for ClassicB, replacement token for Subdiv, etc.).
+#[allow(dead_code)]
+pub trait EngineContext: Clone + std::fmt::Debug {
+    /// The default (non-license) key used when the header's cipher mode is
+    /// `Public`.
+    fn default_key(&self) -> &[u8];
+
+    /// The license-derived key used when the cipher mode is `Protected`,
+    /// or `None` if the engine does not carry a license.
+    fn protected_key(&self) -> Option<&[u8]>;
+}
+
+/// Key derivation for an engine family.
+#[allow(dead_code)]
+pub trait KeyDerivation {
+    type Ctx: EngineContext;
+
+    /// Detect whether this engine family matches the decoded engine JS.
+    fn matches(&self, decoded_engine: &str) -> bool;
+
+    /// Derive the engine context from the decoded engine and wrapper key.
+    fn derive(
+        &self,
+        decoded_engine: &[u8],
+        wrapper_key: &str,
+    ) -> Result<Self::Ctx, EncryptedKrpanoError>;
+}
+
+// ---------------------------------------------------------------------------
+// Old engine context
+// ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OldEngineContext {
@@ -18,24 +71,57 @@ pub struct OldEngineContext {
     pub key_variable: String,
 }
 
+impl EngineContext for OldEngineContext {
+    fn default_key(&self) -> &[u8] {
+        &self.default_key
+    }
+
+    fn protected_key(&self) -> Option<&[u8]> {
+        self.protected_key.as_deref()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Old engine key derivation
+// ---------------------------------------------------------------------------
+
+#[allow(dead_code)]
+pub struct OldEngine;
+
+impl KeyDerivation for OldEngine {
+    type Ctx = OldEngineContext;
+
+    fn matches(&self, decoded_engine: &str) -> bool {
+        decoded_engine.contains("KENC")
+    }
+
+    fn derive(
+        &self,
+        decoded_engine: &[u8],
+        wrapper_key: &str,
+    ) -> Result<Self::Ctx, EncryptedKrpanoError> {
+        derive_old_license_key(decoded_engine, wrapper_key)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Implementation
+// ---------------------------------------------------------------------------
+
 struct OldWrapperPayload {
     rows: Vec<String>,
     license_blob: String,
 }
 
-/// Derive the old-engine XML decryption key from the decoded engine and the
-/// wrapper `krp:` payload.
+/// Derive the old-engine keys from the decoded engine and wrapper string.
 pub fn derive_old_license_key(
     decoded_engine: &[u8],
     wrapper_key: &str,
 ) -> Result<OldEngineContext, EncryptedKrpanoError> {
     let decoded_engine =
         std::str::from_utf8(decoded_engine).map_err(|_| EncryptedKrpanoError::Unsupported)?;
-    if !decoded_engine.contains("KENC") {
-        return Err(EncryptedKrpanoError::Unsupported);
-    }
 
-    let unpacked = unpack_old_wrapper_key(wrapper_key)?;
+    let unpacked = unpack_old_wrapper(wrapper_key)?;
     let key_tag = unpacked
         .rows
         .get(188)
@@ -50,7 +136,7 @@ pub fn derive_old_license_key(
         .and_then(|index| unpacked.rows.get(index))
         .cloned()
         .unwrap_or_default();
-    let protected_key = extract_case7_key(&unpacked.license_blob, key_tag)
+    let protected_key = extract_license_record(&unpacked.license_blob, key_tag)
         .ok()
         .map(String::into_bytes);
 
@@ -95,7 +181,10 @@ fn find_old_key_variable(decoded_engine: &str) -> String {
     "unknown".to_string()
 }
 
-fn unpack_old_wrapper_key(wrapper_key: &str) -> Result<OldWrapperPayload, EncryptedKrpanoError> {
+/// Unpack the `krp:` wrapper string into the `_[]` row table and the hidden
+/// license blob.  The cipher is a reverse-substitution with a per-fixture
+/// salt (byte 4), a fixed shuffle array, and a rolling checksum.
+fn unpack_old_wrapper(wrapper_key: &str) -> Result<OldWrapperPayload, EncryptedKrpanoError> {
     let bytes = wrapper_key.as_bytes();
     if bytes.len() < 8 || !wrapper_key.starts_with("krp:") {
         return Err(EncryptedKrpanoError::MissingKey);
@@ -157,10 +246,23 @@ fn unpack_old_wrapper_key(wrapper_key: &str) -> Result<OldWrapperPayload, Encryp
         return Err(EncryptedKrpanoError::MissingKey);
     }
 
-    Ok(OldWrapperPayload { rows, license_blob })
+    Ok(OldWrapperPayload {
+        rows,
+        license_blob,
+    })
 }
 
-fn extract_case7_key(license_blob: &str, key_tag: &str) -> Result<String, EncryptedKrpanoError> {
+/// Extract the protected key from the license blob's `case 7` record.
+///
+/// The engine's `pc.init` function processes license records in a switch
+/// statement.  Case 7 (the 8th branch) handles the XML encryption key:
+/// it Base64-decodes the value, validates a `ck=` checksum, maps each
+/// character through `charCodeAt(i) & 255`, and pads to 128 characters
+/// by cycling through the key.
+fn extract_license_record(
+    license_blob: &str,
+    key_tag: &str,
+) -> Result<String, EncryptedKrpanoError> {
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(license_blob)
         .map_err(|_| EncryptedKrpanoError::MissingKey)?;
@@ -198,6 +300,7 @@ fn extract_case7_key(license_blob: &str, key_tag: &str) -> Result<String, Encryp
         if key.is_empty() {
             return Err(EncryptedKrpanoError::MissingKey);
         }
+        // Pad to 128 characters (case 7 behavior)
         if key.len() < 128 {
             let original = key.clone();
             let mut original_chars = original.chars().cycle();
