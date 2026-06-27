@@ -15,9 +15,6 @@
 //! The static probe is the production path — it works with any modern engine
 //! without pre-existing data.
 
-use serde::Deserialize;
-use std::collections::HashMap;
-
 use super::EncryptedKrpanoError;
 
 /// Context extracted from a modern krpano engine.
@@ -75,12 +72,11 @@ pub fn extract_modern_context(
         .map_err(|_| EncryptedKrpanoError::Unsupported)?;
     log::debug!("extract_modern_context: unpacked {} rows", rows.len());
 
-    let default_key = find_row_by_value(&rows, "actions overflow")
-        .ok_or(EncryptedKrpanoError::MissingKey)?;
+    let default_key =
+        find_row_by_value(&rows, "actions overflow").ok_or(EncryptedKrpanoError::MissingKey)?;
     log::debug!("extract_modern_context: default_key={default_key:?}");
 
-    let replacement_token = find_row_by_value(&rows, "z")
-        .unwrap_or_else(|| "z".to_string());
+    let replacement_token = find_row_by_value(&rows, "z").unwrap_or_else(|| "z".to_string());
     log::debug!("extract_modern_context: replacement_token={replacement_token:?}");
 
     Ok(ModernEngineContext {
@@ -116,10 +112,14 @@ fn find_startup_iife(source: &str, wrapper_key: &str) -> Option<StartupIife> {
         // The checksum constant is a numeric literal in the IIFE body
         // (e.g. `r=22248-v`).  Try every number >= 100 as a candidate.
         for constant in extract_numeric_literals(&body) {
-            if constant < 100 { continue; }
+            if constant < 100 {
+                continue;
+            }
             let k = compute_checksum(function_body(&body));
             let n = constant.wrapping_sub(k);
-            if n <= 1 || ((n.wrapping_sub(1)) >> 3) >= 32 { continue; }
+            if n <= 1 || ((n.wrapping_sub(1)) >> 3) >= 32 {
+                continue;
+            }
             if unpack_krp_payload(wrapper_key, &body, constant).is_ok() {
                 return Some(StartupIife { constant, body });
             }
@@ -138,7 +138,9 @@ fn extract_numeric_literals(src: &str) -> Vec<u32> {
     while i < bytes.len() {
         if bytes[i].is_ascii_digit() {
             let start = i;
-            while i < bytes.len() && bytes[i].is_ascii_digit() { i += 1; }
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
             if let Ok(v) = src[start..i].parse::<u32>() {
                 out.push(v);
             }
@@ -167,10 +169,14 @@ fn matching_brace(text: &str, open: usize) -> Option<usize> {
             i = next;
             continue;
         }
-        if ch == b'{' { depth += 1; }
+        if ch == b'{' {
+            depth += 1;
+        }
         if ch == b'}' {
             depth -= 1;
-            if depth == 0 { return Some(i); }
+            if depth == 0 {
+                return Some(i);
+            }
         }
         i += 1;
     }
@@ -187,7 +193,8 @@ fn compute_checksum(source: &str) -> u32 {
     for &byte in source.as_bytes() {
         let d = u32::from(byte);
         let g = d.wrapping_sub(36);
-        let skip = (g == 0) || (12..=21).contains(&g) || (28..=54).contains(&g) || (61..=86).contains(&g);
+        let skip =
+            (g == 0) || (12..=21).contains(&g) || (28..=54).contains(&g) || (61..=86).contains(&g);
         if !skip {
             c = c.wrapping_add(d);
         }
@@ -224,7 +231,10 @@ fn build_lf_shuffle() -> Vec<usize> {
 }
 
 fn charcodes_offset(s: &str, offset: i32) -> Vec<u32> {
-    s.as_bytes().iter().map(|&b| (i32::from(b) + offset) as u32).collect()
+    s.as_bytes()
+        .iter()
+        .map(|&b| (i32::from(b) + offset) as u32)
+        .collect()
 }
 
 // =========================================================================
@@ -237,9 +247,15 @@ fn function_body(source: &str) -> &str {
     let end = source.rfind('}').unwrap();
     let mut s = start;
     let mut e = end - 1;
-    while s < source.len() && source.as_bytes()[s] <= 32 { s += 1; }
-    while e > s && source.as_bytes()[e] <= 32 { e -= 1; }
-    if source.as_bytes()[e] == b';' { e -= 1; }
+    while s < source.len() && source.as_bytes()[s] <= 32 {
+        s += 1;
+    }
+    while e > s && source.as_bytes()[e] <= 32 {
+        e -= 1;
+    }
+    if source.as_bytes()[e] == b';' {
+        e -= 1;
+    }
     &source[s..=e]
 }
 
@@ -263,14 +279,21 @@ fn unpack_krp_payload(
     let x = (n.wrapping_sub(1)).wrapping_mul(q).wrapping_sub(1);
 
     // E = (v << (B+1)) + ((n-q)*z + x) — all 32-bit wrapping
-    let e_val = (v as i32).wrapping_shl(b_val + 1)
-        .wrapping_add((n.wrapping_sub(q) as i32).wrapping_mul(z_orig as i32).wrapping_add(x as i32));
+    let e_val = (v as i32).wrapping_shl(b_val + 1).wrapping_add(
+        (n.wrapping_sub(q) as i32)
+            .wrapping_mul(z_orig as i32)
+            .wrapping_add(x as i32),
+    );
 
     // r array: r[d] = d - (d > 1) - (d > 59)
-    let r: Vec<i32> = (0..=v as i32).map(|d| d - i32::from(d > 1) - i32::from(d > 59)).collect();
+    let r: Vec<i32> = (0..=v as i32)
+        .map(|d| d - i32::from(d > 1) - i32::from(d > 59))
+        .collect();
 
     let u_i32: Vec<i32> = charcodes_offset(&format!("<{}>", MA[0]), 0)
-        .into_iter().map(|v| v as i32).collect();
+        .into_iter()
+        .map(|v| v as i32)
+        .collect();
 
     let key_bytes = key.as_bytes();
     let d_len = key_bytes.len().saturating_sub(q as usize);
@@ -288,12 +311,12 @@ fn unpack_krp_payload(
         let rv = r[r_idx];
         let ud = u_i32[d & (b_val as usize)];
         // JS: (rv + d*q + ud + t) % (x + 1)
-        let lf_idx = (rv + (d as i32) * (q as i32) + ud + t)
-            .rem_euclid(x as i32 + 1) as usize;
+        let lf_idx = (rv + (d as i32) * (q as i32) + ud + t).rem_euclid(x as i32 + 1) as usize;
         let g: i32 = lf[lf_idx] as i32;
 
         // JS: t = ((t << (q+1)) + t*B + g) % E
-        t = t.wrapping_shl((q + 1) as u32)
+        t = t
+            .wrapping_shl((q + 1) as u32)
             .wrapping_add(t.wrapping_mul(b_val as i32))
             .wrapping_add(g)
             .rem_euclid(e_val);
@@ -311,12 +334,16 @@ fn unpack_krp_payload(
             }
         } else {
             let gv = (g + n as i32) as u16;
-            if h == 0 { current.push(gv); }
+            if h == 0 {
+                current.push(gv);
+            }
             e_flag += 1;
         }
         d += 1;
     }
-    if e_flag > 0 { rows.push(current); }
+    if e_flag > 0 {
+        rows.push(current);
+    }
 
     // Final checksum verification (q more bytes) — uses ORIGINAL z, not widened
     // JS: for (D += q; d < D;) g = (g << z) | (key.charCodeAt(d++) - (10 * z + q));
@@ -344,8 +371,11 @@ fn unpack_krp_payload(
 /// Search all unpacked rows for a row whose string value equals `target`.
 fn find_row_by_value(rows: &[Vec<u16>], target: &str) -> Option<String> {
     for row in rows {
-        if row.is_empty() { continue; }
-        let s: String = row.iter()
+        if row.is_empty() {
+            continue;
+        }
+        let s: String = row
+            .iter()
             .map(|&c| char::from_u32(u32::from(c)).unwrap_or('?'))
             .collect();
         if s == target {
@@ -360,6 +390,12 @@ fn find_row_by_value(rows: &[Vec<u16>], target: &str) -> Option<String> {
 // =========================================================================
 
 /// The JSON format produced by `tools/extract_modern_rows.mjs`.
+#[cfg(test)]
+use serde::Deserialize;
+#[cfg(test)]
+use std::collections::HashMap;
+
+#[cfg(test)]
 #[derive(Deserialize)]
 struct RowsJson {
     checksum_constant: u32,
@@ -368,12 +404,16 @@ struct RowsJson {
 }
 
 /// Search all JSON rows for a row whose decoded value equals `target`.
+#[cfg(test)]
 fn find_row_json_by_value(rows: &HashMap<String, String>, target: &str) -> Option<String> {
     for hex in rows.values() {
-        let bytes: Vec<u8> = (0..hex.len()).step_by(2)
-            .filter_map(|i| u8::from_str_radix(&hex[i..i+2], 16).ok())
+        let bytes: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .filter_map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
             .collect();
-        if bytes.is_empty() { continue; }
+        if bytes.is_empty() {
+            continue;
+        }
         if let Ok(s) = String::from_utf8(bytes) {
             if s == target {
                 return Some(s);
@@ -385,11 +425,12 @@ fn find_row_json_by_value(rows: &HashMap<String, String>, target: &str) -> Optio
 
 /// Parse a rows.json file and extract the `ModernEngineContext`.
 /// Used as a cross-check in tests.
+#[cfg(test)]
 pub fn parse_rows_json(json: &str) -> Option<ModernEngineContext> {
     let data: RowsJson = serde_json::from_str(json).ok()?;
     let default_key = find_row_json_by_value(&data.rows, "actions overflow")?;
-    let replacement_token = find_row_json_by_value(&data.rows, "z")
-        .unwrap_or_else(|| "z".to_string());
+    let replacement_token =
+        find_row_json_by_value(&data.rows, "z").unwrap_or_else(|| "z".to_string());
     Some(ModernEngineContext {
         default_key,
         replacement_token,
@@ -406,15 +447,21 @@ fn next_js_string_literal(text: &str, start: usize) -> Option<(String, usize)> {
     let bytes = text.as_bytes();
     let mut idx = start;
     let quote = bytes.get(idx)?;
-    if *quote != b'"' && *quote != b'\'' { return None; }
+    if *quote != b'"' && *quote != b'\'' {
+        return None;
+    }
     idx += 1;
     let mut literal = String::new();
     while idx < bytes.len() {
         let byte = bytes[idx];
-        if byte == *quote { return Some((literal, idx + 1)); }
+        if byte == *quote {
+            return Some((literal, idx + 1));
+        }
         if byte == b'\\' {
             idx += 1;
-            if idx >= bytes.len() { return None; }
+            if idx >= bytes.len() {
+                return None;
+            }
             match bytes[idx] {
                 b'x' => {
                     let v = hex_digit(bytes.get(idx + 1)?)? as u32 * 16
@@ -430,15 +477,43 @@ fn next_js_string_literal(text: &str, start: usize) -> Option<(String, usize)> {
                     literal.push(char::from_u32(v)?);
                     idx += 5;
                 }
-                b'\r' => { idx += 1; if idx < bytes.len() && bytes[idx] == b'\n' { idx += 1; } }
-                b'\n' => { idx += 1; }
-                b'b' => { literal.push('\u{0008}'); idx += 1; }
-                b'f' => { literal.push('\u{000c}'); idx += 1; }
-                b'n' => { literal.push('\n'); idx += 1; }
-                b'r' => { literal.push('\r'); idx += 1; }
-                b't' => { literal.push('\t'); idx += 1; }
-                b'v' => { literal.push('\u{000b}'); idx += 1; }
-                escaped => { literal.push(char::from(escaped)); idx += 1; }
+                b'\r' => {
+                    idx += 1;
+                    if idx < bytes.len() && bytes[idx] == b'\n' {
+                        idx += 1;
+                    }
+                }
+                b'\n' => {
+                    idx += 1;
+                }
+                b'b' => {
+                    literal.push('\u{0008}');
+                    idx += 1;
+                }
+                b'f' => {
+                    literal.push('\u{000c}');
+                    idx += 1;
+                }
+                b'n' => {
+                    literal.push('\n');
+                    idx += 1;
+                }
+                b'r' => {
+                    literal.push('\r');
+                    idx += 1;
+                }
+                b't' => {
+                    literal.push('\t');
+                    idx += 1;
+                }
+                b'v' => {
+                    literal.push('\u{000b}');
+                    idx += 1;
+                }
+                escaped => {
+                    literal.push(char::from(escaped));
+                    idx += 1;
+                }
             }
             continue;
         }
@@ -470,8 +545,12 @@ mod tests {
 
     fn load_fixture(fixture: &str) -> Option<(Vec<u8>, String)> {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("testdata/krpano/encrypted").join(fixture);
-        let js = ["tour.js", "krpano.js"].iter().map(|n| root.join(n)).find(|p| p.exists())?;
+            .join("testdata/krpano/encrypted")
+            .join(fixture);
+        let js = ["tour.js", "krpano.js"]
+            .iter()
+            .map(|n| root.join(n))
+            .find(|p| p.exists())?;
         let js_data = fs::read(&js).ok()?;
         let decoded = viewer::extract_decoded_viewer_js(&js_data).ok()?;
         let key = viewer::extract_key_from_viewer_js(&js_data)?;
@@ -482,20 +561,37 @@ mod tests {
 
     #[test]
     fn static_probe_extracts_default_key() {
-        for name in ["2018-04-04", "2023-02-07", "2023-04-30", "2023-12-11", "2024-12-20"] {
+        for name in [
+            "2018-04-04",
+            "2023-02-07",
+            "2023-04-30",
+            "2023-12-11",
+            "2024-12-20",
+            "2026-06-25-pp-01_minimal",
+            "2026-06-25-rr_minimal",
+        ] {
             let (decoded, key) = load_fixture(name).expect(name);
-            let ctx = extract_modern_context(&decoded, &key)
-                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let ctx =
+                extract_modern_context(&decoded, &key).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(ctx.default_key, "actions overflow", "{name}");
         }
     }
 
     #[test]
     fn static_probe_extracts_replacement_token() {
-        for name in ["2018-04-04", "2023-02-07", "2023-04-30", "2023-04-30-PP", "2023-12-11", "2024-12-20"] {
+        for name in [
+            "2018-04-04",
+            "2023-02-07",
+            "2023-04-30",
+            "2023-04-30-PP",
+            "2023-12-11",
+            "2024-12-20",
+            "2026-06-25-pp-01_minimal",
+            "2026-06-25-rr_minimal",
+        ] {
             let (decoded, key) = load_fixture(name).expect(name);
-            let ctx = extract_modern_context(&decoded, &key)
-                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let ctx =
+                extract_modern_context(&decoded, &key).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(ctx.replacement_token, "z", "{name}");
         }
     }
@@ -508,11 +604,13 @@ mod tests {
             ("2023-04-30", 23293),
             ("2023-12-11", 23293),
             ("2024-12-20", 23293),
+            ("2026-06-25-pp-01_minimal", 23293),
+            ("2026-06-25-rr_minimal", 23293),
         ];
         for (name, exp) in expected {
             let (decoded, key) = load_fixture(name).expect(name);
-            let ctx = extract_modern_context(&decoded, &key)
-                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let ctx =
+                extract_modern_context(&decoded, &key).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(ctx.checksum_constant, exp, "{name}");
         }
     }
@@ -523,24 +621,139 @@ mod tests {
         assert!(extract_modern_context(&decoded, &key).is_err());
     }
 
+    #[test]
+    #[ignore]
+    fn analysis_prints_krpano_124_context_clues() {
+        for name in ["2026-06-25-pp-01_minimal", "2026-06-25-rr_minimal"] {
+            let (decoded, key) = load_fixture(name).expect(name);
+            let text = std::str::from_utf8(&decoded).expect(name);
+            eprintln!("{name}: decoded={} wrapper={}", decoded.len(), key.len());
+            for needle in [
+                "KENC",
+                "actions overflow",
+                "decodeLicense",
+                "decryptData",
+                "subdiv",
+                "loadpano",
+                "embedhtml5",
+                "String.fromCharCode",
+                "replaceAll",
+                ".replace",
+            ] {
+                match text.find(needle) {
+                    Some(idx) => {
+                        let start = idx.saturating_sub(120);
+                        let end = (idx + needle.len() + 240).min(text.len());
+                        eprintln!("{name}: {needle:?} at {idx}: {}", &text[start..end]);
+                    }
+                    None => eprintln!("{name}: {needle:?} not found"),
+                }
+            }
+            match extract_modern_context(&decoded, &key) {
+                Ok(ctx) => eprintln!("{name}: context={ctx:?}"),
+                Err(err) => eprintln!("{name}: context error={err}"),
+            }
+            if let Some(startup) = find_startup_iife(text, &key) {
+                let rows = unpack_krp_payload(&key, &startup.body, startup.constant).unwrap();
+                eprintln!("{name}: rows={}", rows.len());
+                for (idx, row) in rows.iter().enumerate() {
+                    let value: String = row
+                        .iter()
+                        .map(|&c| char::from_u32(u32::from(c)).unwrap_or('?'))
+                        .collect();
+                    if value == "KENC"
+                        || value == "z"
+                        || value == "\\"
+                        || value.contains("actions")
+                        || value.contains("encrypt")
+                        || value.contains("xml")
+                    {
+                        eprintln!("{name}: row[{idx}]={value:?}");
+                    }
+                }
+                for row in [82usize, 87, 89, 114, 119] {
+                    for id in possible_direct_row_ids(row) {
+                        let needle = format!("_({id}");
+                        if let Some(idx) = text.find(&needle) {
+                            let start = idx.saturating_sub(300);
+                            let end = (idx + 2600).min(text.len());
+                            eprintln!(
+                                "{name}: row {row} call {needle:?} at {idx}: {}",
+                                &text[start..end]
+                            );
+                        }
+                    }
+                }
+                for needle in [
+                    "37==",
+                    "42==",
+                    "charCodeAt(0)",
+                    "charCodeAt(1)",
+                    "slice(2",
+                    "indexOf(\"@\"",
+                    "indexOf('@'",
+                ] {
+                    print_first_matches(name, text, needle, 4);
+                }
+            }
+        }
+    }
+
+    fn possible_direct_row_ids(row: usize) -> Vec<usize> {
+        let mut ids = Vec::new();
+        for branch in 0..16usize {
+            ids.push((branch << 11) | (row << 2));
+            ids.push(1 | (row << 7) | (branch << 2));
+        }
+        ids
+    }
+
+    fn print_first_matches(name: &str, text: &str, needle: &str, limit: usize) {
+        let mut search_from = 0;
+        let mut found = 0;
+        while found < limit {
+            let Some(rel) = text[search_from..].find(needle) else {
+                break;
+            };
+            let idx = search_from + rel;
+            let start = idx.saturating_sub(180);
+            let end = (idx + needle.len() + 360).min(text.len());
+            eprintln!("{name}: {needle:?} at {idx}: {}", &text[start..end]);
+            search_from = idx + needle.len();
+            found += 1;
+        }
+    }
+
     // ---- JSON cross-check path ----
 
     fn load_rows_json(fixture: &str) -> String {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("testdata/krpano/encrypted").join(fixture).join("rows.json");
+            .join("testdata/krpano/encrypted")
+            .join(fixture)
+            .join("rows.json");
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("{fixture}: {e}"))
     }
 
     #[test]
     fn json_and_static_probe_agree_on_rows() {
-        for name in ["2018-04-04", "2023-02-07", "2023-04-30", "2023-04-30-PP", "2023-12-11", "2024-12-20"] {
+        for name in [
+            "2018-04-04",
+            "2023-02-07",
+            "2023-04-30",
+            "2023-04-30-PP",
+            "2023-12-11",
+            "2024-12-20",
+        ] {
             let (decoded, key) = load_fixture(name).expect(name);
             let ctx_static = extract_modern_context(&decoded, &key)
                 .unwrap_or_else(|e| panic!("{name} static: {e}"));
             let json = load_rows_json(name);
-            let ctx_json = parse_rows_json(&json)
-                .unwrap_or_else(|| panic!("{name} json parse failed"));
-            assert_eq!(ctx_static, ctx_json, "{name}: static probe and JSON disagree");
+            let ctx_json =
+                parse_rows_json(&json).unwrap_or_else(|| panic!("{name} json parse failed"));
+            assert_eq!(
+                ctx_static, ctx_json,
+                "{name}: static probe and JSON disagree"
+            );
         }
     }
 }

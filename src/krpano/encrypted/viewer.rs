@@ -1,8 +1,8 @@
 use lazy_static::lazy_static;
 use regex::Regex;
 
-use super::codecs;
 use super::EncryptedKrpanoError;
+use super::codecs;
 
 lazy_static! {
     static ref ENCRYPTED_RE: Regex =
@@ -73,7 +73,7 @@ pub fn extract_decoded_viewer_js(contents: &[u8]) -> Result<Vec<u8>, EncryptedKr
             continue;
         }
         candidates += 1;
-        match codecs::decode_packed_viewer_js_payload(&literal) {
+        match decode_packed_viewer_candidate(&literal) {
             Ok(decoded) if looks_like_decoded_viewer_js(&decoded) => {
                 log::debug!(
                     "extract_decoded_viewer_js: decoded packed viewer (candidate #{candidates}, raw={} chars, decoded={} bytes)",
@@ -103,6 +103,21 @@ pub fn extract_decoded_viewer_js(contents: &[u8]) -> Result<Vec<u8>, EncryptedKr
     Err(EncryptedKrpanoError::MissingViewerJsPayload)
 }
 
+fn decode_packed_viewer_candidate(input: &str) -> Result<Vec<u8>, EncryptedKrpanoError> {
+    match codecs::decode_packed_viewer_js_payload(input) {
+        Ok(decoded) if looks_like_decoded_viewer_js(&decoded) => Ok(decoded),
+        Ok(decoded) => match codecs::decode_packed_viewer_js_payload_little_endian(input) {
+            Ok(little_endian) => Ok(little_endian),
+            Err(_) => Ok(decoded),
+        },
+        Err(big_endian_error) => match codecs::decode_packed_viewer_js_payload_little_endian(input)
+        {
+            Ok(decoded) => Ok(decoded),
+            Err(_) => Err(big_endian_error),
+        },
+    }
+}
+
 pub fn next_js_string_literal(text: &str, start: usize) -> Option<(String, usize)> {
     let bytes = text.as_bytes();
     let mut idx = start;
@@ -130,8 +145,7 @@ pub fn next_js_string_literal(text: &str, start: usize) -> Option<(String, usize
                         if idx + 2 >= bytes.len() {
                             return None;
                         }
-                        let value =
-                            (hex_digit(bytes[idx + 1])? << 4) | hex_digit(bytes[idx + 2])?;
+                        let value = (hex_digit(bytes[idx + 1])? << 4) | hex_digit(bytes[idx + 2])?;
                         literal.push(char::from(value));
                         idx += 3;
                     }

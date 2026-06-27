@@ -23,11 +23,12 @@ pub fn decrypt_bytes(
         key_mask_base
     };
 
-    let mut mixed_key = vec![0u8; prefix_len * 2];
+    let mut mixed_key = vec![Some(0u8); prefix_len * 2];
     let mut out = 0;
     for idx in 0..prefix_len {
-        mixed_key[out] = input[idx];
-        mixed_key[out + 1] = key[(idx & key_mask) % key.len()];
+        let key_idx = idx & key_mask;
+        mixed_key[out] = Some(input[idx]);
+        mixed_key[out + 1] = key.get(key_idx).copied();
         out += 2;
     }
 
@@ -37,7 +38,11 @@ pub fn decrypt_bytes(
     }
     let mut j = 0usize;
     for idx in 0..256 {
-        j = (j + usize::from(state[idx]) + usize::from(mixed_key[idx])) & 255;
+        j = if let Some(mixed) = mixed_key[idx] {
+            (j + usize::from(state[idx]) + usize::from(mixed)) & 255
+        } else {
+            0
+        };
         state.swap(idx, j);
     }
 

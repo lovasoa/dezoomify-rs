@@ -40,9 +40,7 @@ impl KencHeader {
     pub fn parse(payload: &str) -> Result<Self, EncryptedKrpanoError> {
         let header = payload
             .get(..Self::LEN)
-            .ok_or(EncryptedKrpanoError::HeaderTooShort {
-                len: payload.len(),
-            })?;
+            .ok_or(EncryptedKrpanoError::HeaderTooShort { len: payload.len() })?;
         if !header.starts_with("KENC") {
             return Err(EncryptedKrpanoError::InvalidHeader {
                 header: header.to_string(),

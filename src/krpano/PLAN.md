@@ -52,7 +52,7 @@ src/krpano/
 | --- | --- | --- |
 | Encrypted XML detection | ✅ | Detects `<encrypted>`, concatenates CDATA chunks. |
 | `KENC....` header parser | ✅ | Parses 8-byte marker, classifies branch (`OldZ`, `ModernZ`, `RR`, `PP`, `B`). |
-| Packed viewer JS extraction | ✅ | Modified Base85 + LZ4 → decoded engine JS. Works for all pre-1.24 fixtures. |
+| Packed viewer JS extraction | ✅ | Modified Base85 + LZ4 → decoded engine JS. Works for pre-1.24 big-endian wrappers and 1.24 little-endian wrappers. |
 | Modified Base85 codec | ✅ | Unit-tested. |
 | LZ4 block codec | ✅ | Unit-tested. |
 | Byte decryptor | ✅ | RC4-like `decrypt_bytes`. Synthetic round-trip coverage; needs fixture vectors. |
@@ -63,7 +63,7 @@ src/krpano/
 | Area | Status | Notes |
 | --- | --- | --- |
 | Modern static extraction (Phase 4) | ✅ | **Generalized 2026-06-27.** `find_startup_iife` finds the startup IIFE structurally — no hardcoded checksum constants. `extract_modern_context` searches all unpacked rows for `"actions overflow"` and `"z"` by value — no hardcoded row IDs. Works for any modern engine. |
-| Old license key derivation | 🔴 stub | `old_engine.rs` is a placeholder. Blocked on locating the real license decoder that processes `krp:` → `Pd`/`od`/`pe`. |
+| Old license key derivation | ✅ | `old_engine.rs` unpacks the old wrapper table/license blob, extracts protected `ek=` keys when present, and extracts default byte-helper keys/Base64 alphabets from decoded-engine `_[]` row references. |
 | Modern widened key (stateful `we.subdiv`) | 🔴 deferred | `_(9525,1)` etc. needed for PP/RR RC4 keys. No current unblocked fixture needs it. |
 
 ### Branch transforms
@@ -71,15 +71,15 @@ src/krpano/
 | Area | Status | Notes |
 | --- | --- | --- |
 | Z branch (Base85→decrypt→LZ4→UTF8) | ✅ | `decrypt_z_branch` + `z_branch_to_plaintext` in `branches.rs`. Tested against `2018-04-04` (Modern Z) with key `"actions overflow"`. Stage vectors: 9915 char body → 7932 byte Base85 → 7803 byte decrypt → 36407 byte LZ4 → XML. |
-| PP/RR step 1 (`z`→`\` + Base85) | ✅ | `replace_z_with_backslash` + `decode_pp_rr_body` in `branches.rs`. Tested against all PP/RR fixtures. |
-| PP/RR step 2 (RC4 + LZ4 + UTF8) | 🔴 blocked | RC4 decryption key unknown. Default `"actions overflow"` does not work for P/P. The R/R key must come from stateful `we.subdiv` (widened key). |
-| B branch (Base64→decrypt→UTF8) | 🔴 not wired | Needs Base64 codec + old key derivation. |
+| PP/RR step 1 (`z`→`\` + envelope-aware Base85) | ✅ | `replace_z_with_backslash` + `decode_pp_rr_body` in `branches.rs`. For 1.24, strips `%*` public-key and `$*<id>@` custom-key envelopes before Base85. R/R key IDs are parsed and regression-tested. Tested against all PP/RR fixtures. |
+| PP/RR step 2 (second-level decrypt) | 🔴 blocked | 1.24 P/P and R/R payloads are not the Z RC4/LZ4 path; the engine returns the token-replaced `%*`/`$*...@` envelope for later handling. Existing byte decryptor does not explain the stripped bytes. |
+| B branch (Base64→decrypt→UTF8) | ✅ | `b_branch_to_plaintext_with_alphabet` in `branches.rs`, using old-engine extracted Base64 alphabet + default/protected key. Tested against both old B fixtures. |
 
 ### Integration
 
 | Area | Status | Notes |
 | --- | --- | --- |
-| `decrypt_xml` | ✅ | Accepts `viewer_data: Option<&[u8]>`. When provided, extracts wrapper key + decodes engine via `extract_modern_context`, dispatches to `z_branch_to_plaintext` for OldZ/ModernZ. PP/RR/B return `Unsupported`. |
+| `decrypt_xml` | ✅ | Accepts `viewer_data: Option<&[u8]>`. Modern Z uses `extract_modern_context`; Old Z/B use `derive_old_license_key`; PP/RR validate replacement+Base85 then return `Unsupported`. |
 | `KrpanoDezoomer` integration | ✅ | State machine (`ResolveState`) follows HTML→JS→XML→(JS decrypt) cascade with content-type detection. HTML script selection ranks krpano viewer candidates before analytics/library scripts and carries fallback JS candidates through encrypted XML decryption. Encrypted XML triggers `NeedsData` for viewer JS; subsequent call decrypts and parses with original XML URI. |
 
 ### Variant readiness matrix
@@ -87,13 +87,13 @@ src/krpano/
 | Variant | Header | Fixtures | Key status | Pipeline status | First achievable |
 | --- | --- | --- | --- | --- | --- |
 | **Modern Z** | `KENCPUZR` | `2018-04-04` | ✅ `"actions overflow"` from static probe | ✅ End-to-end (Base85→decrypt→LZ4→UTF8) | **Done** |
-| Old Z | `KENCRUZR` | `old`, `2015-08-04`, `2017-09-21` | 🔴 License decoder not located | ✅ Same Z branch as Modern Z | After Phase 3A |
-| Old B | `KENCPUBR` | `2013-06-05-B`, `2013-08-09-B` | 🔴 License decoder + B codec | 🔴 B branch not started | After Phase 3A |
+| Old Z | `KENCRUZR` | `old`, `2015-08-04`, `2017-09-21` | ✅ Protected key from wrapper `ek=` license record | ✅ End-to-end (Base85→decrypt→LZ4→UTF8) | **Done** |
+| Old B | `KENCPUBR` | `2013-06-05-B`, `2013-08-09-B` | ✅ Default key from decoded-engine `_[]` reference | ✅ End-to-end (Base64→decrypt→UTF8) | **Done** |
 | Modern RR | `KENCRURR` | `2023-02-07`, `2023-04-30`, `2023-12-11`, `2024-12-20` | 🔴 RC4 key from stateful we.subdiv | 🔨 PP/RR replacement + Base85 done; decrypt/LZ4 unresolved | After widened key |
 | Modern PP | `KENCPUPR` | `2023-04-30-PP` | 🔴 Post-replacement key/stage unresolved; `actions overflow` attempt failed at LZ4 | 🔨 PP/RR replacement + Base85 done; decrypt/LZ4 unresolved | After PP trace fix |
-| Modern PP/RR 1.24 | `KENCPUPR` / `KENCRURR` | `2026-06-25-*` | 🔴 Different viewer format | 🔴 Viewer decoder needed first | After 1.24 viewer decoder |
+| Modern PP/RR 1.24 | `KENCPUPR` / `KENCRURR` | `2026-06-25-*` | 🔨 Default context extraction works; custom RR key path unresolved | 🔨 Viewer decoder/context done; PP/RR body decrypt unresolved | After PP/RR body trace |
 
-**Summary**: Modern Z (`2018-04-04`) is fully working end-to-end — encrypted XML → viewer JS → decrypted krpano XML → tile extraction. Every other variant is blocked on either old license key derivation, modern widened-key extraction, or the 1.24 viewer format.
+**Summary**: Modern Z, Old Z, and Old B are fully working end-to-end — encrypted XML → viewer JS → decrypted krpano XML → tile extraction/plaintext verification. All checked-in viewer JS wrappers, including krpano 1.24, now decode to engine JS, and 1.24 default context extraction resolves through the existing modern path. Remaining blocked variants are modern PP/RR and 1.24 PP/RR body decryption/custom-key handling.
 
 ## Fixture Corpus
 
@@ -112,14 +112,14 @@ All checked-in encrypted fixtures live under [testdata/krpano/encrypted](../../t
 | `2023-04-30-PP` | `tour.js` | `KENCPUPR` | modern `P/P` | 441405 | 2795 | Same krpano 1.21 build as `2023-04-30` but encrypted with `P/P` header; replacement token resolves to `z`. |
 | `2023-12-11` | `tour.js` | `KENCRURR` | modern `R/R` | 441589 | 2823 | No literal `KENC`; startup rebinds `_` to `we.subdiv`; replacement token resolves to `z`. |
 | `2024-12-20` | `tour.js` | `KENCRURR` | modern `R/R` | 482960 | 2874 | No literal `KENC`. |
-| `2026-06-25-pp-01_minimal` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 2549 | krpanotools 1.24; 45 B plain. |
-| `2026-06-25-pp-02_special_chars` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 2549 | krpanotools 1.24; 280 B plain. |
-| `2026-06-25-pp-03_nested` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 2549 | krpanotools 1.24; 863 B plain. |
-| `2026-06-25-pp-04_large` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 2549 | krpanotools 1.24; 3896 B plain. |
-| `2026-06-25-pp-05_deep` | `tour.js` | `KENCPUPR` | modern `P/P` | — | 2549 | krpanotools 1.24; 251 B plain. |
-| `2026-06-25-rr_minimal` | `tour.js` | `KENCRURR` | modern `R/R` | — | 3061 | krpanotools 1.24 licensed; custom key; 64 B plain. |
-| `2026-06-25-rr_tour` | `tour.js` | `KENCRURR` | modern `R/R` | — | 3053 | krpanotools 1.24 licensed; custom key; 432 B plain. |
-| `2026-06-25-rr_special` | `tour.js` | `KENCRURR` | modern `R/R` | — | 3055 | krpanotools 1.24 licensed; custom key; 265 B plain. |
+| `2026-06-25-pp-01_minimal` | `tour.js` | `KENCPUPR` | modern `P/P` | 550911 | 2549 | krpanotools 1.24; 45 B plain. |
+| `2026-06-25-pp-02_special_chars` | `tour.js` | `KENCPUPR` | modern `P/P` | 550911 | 2549 | krpanotools 1.24; 280 B plain. |
+| `2026-06-25-pp-03_nested` | `tour.js` | `KENCPUPR` | modern `P/P` | 550911 | 2549 | krpanotools 1.24; 863 B plain. |
+| `2026-06-25-pp-04_large` | `tour.js` | `KENCPUPR` | modern `P/P` | 550911 | 2549 | krpanotools 1.24; 3896 B plain. |
+| `2026-06-25-pp-05_deep` | `tour.js` | `KENCPUPR` | modern `P/P` | 550911 | 2549 | krpanotools 1.24; 251 B plain. |
+| `2026-06-25-rr_minimal` | `tour.js` | `KENCRURR` | modern `R/R` | 550911 | 3061 | krpanotools 1.24 licensed; custom key; 64 B plain. |
+| `2026-06-25-rr_tour` | `tour.js` | `KENCRURR` | modern `R/R` | 550911 | 3053 | krpanotools 1.24 licensed; custom key; 432 B plain. |
+| `2026-06-25-rr_special` | `tour.js` | `KENCRURR` | modern `R/R` | 550911 | 3055 | krpanotools 1.24 licensed; custom key; 265 B plain. |
 
 ## Known Facts
 
@@ -135,6 +135,7 @@ All checked-in encrypted fixtures live under [testdata/krpano/encrypted](../../t
 - The outer viewer-loader obfuscation is modified Base85 followed by LZ4 block decompression.
 - The decoded result is raw krpano engine JS that the original loader executes with `new Function(...)`.
 - The wrapper `krp:` key exists in the packed viewer wrapper, not in the decoded engine source.
+- krpano 1.24 wrappers decode Base85 groups into 32-bit words and write those words little-endian (`h&255`, `h>>8`, `h>>16`, `h>>24`) before reading the same LZ4 block header. Pre-1.24 wrappers use big-endian output for those words.
 - A direct Node VM attempt to evaluate `2023-04-30/decoded.js` failed because the decoded source expects the loader invocation environment and uses top-level `arguments`. Do not build the Rust implementation around executing arbitrary viewer JS.
 
 ### Header arithmetic
@@ -169,6 +170,7 @@ Important correction: `KENCRURR` does not use the `Z` Base85 + LZ4 branch.
 - Old literal-header engines use the same broad helper shape: interleave the first 128 encrypted bytes with key bytes, initialize pseudo-random state, then decrypt from the offset above.
 - Modern helpers use a 15-byte key mask for the default key and a 135-byte key mask for the widened-key path.
 - **Bug fix (2026-06-26):** `encrypted_start` is always computed with `key_mask=15` (before widening), matching the JS engine where `c=k+(a[ob(Ma[1],0)]&f>>1)` runs before `b&&(f|=f<<3,...)`. Previously the Rust code applied the widened mask to `encrypted_start`, which could produce incorrect offsets when `input[65]` has bit 6 set.
+- **Bug fix (2026-06-27):** The byte-helper key mixing must preserve JavaScript `charCodeAt` out-of-range behavior for short keys. `String(key).charCodeAt(index & mask)` returns `NaN`; in the JS KSA expression the whole `(j + state + NaN) & 255` becomes `0`. Rust now models this instead of wrapping key indices modulo the key length. This is required for old B default keys.
 
 Modern key expressions found so far:
 
@@ -202,11 +204,13 @@ Modern `Z` vector proven by `/tmp/krpano_decrypt_2018_probe.js`:
 - `2015-08-04` accepts `P`, `R`, and an embedded-key `G` mode. Its `R` branch can use license-derived key variable `od`, but also has a default-key fallback not seen in later old engines.
 - The old license decoder has a `case 7` branch that pads the recovered key string to 128 characters when needed, then stores it in the helper key variable (`od`, `pe`, or `Pd` depending on version).
 - The `decodeLicense=function(a){return null}` found inside the resource module is not the old license decoder that assigns those variables.
+- **2026-06-27 implementation progress:** The old wrapper-key unpacker has been ported to Rust in `old_engine.rs`. It recovers the old `_[]` row table and hidden license blob from the `krp:` wrapper key without executing viewer JS. For the `old` fixture it recovers 598 rows, including row 188 (`xx=lz=rg=ma=dm=ed=eu=ek=rd=pt=id=`), so the case-7 license field tag is structurally identified as `ek=`. License checksum validation now matches JavaScript (`charCodeAt(i) & 255`), and old protected Z fixtures decrypt with the padded `ek=` key.
+- **2026-06-27 B/default-key findings:** Old B engines use the default byte-helper key path for `KENCPUBR` mode `P`, not the protected `ek=` key. The default key row and Base64 alphabet are extracted from decoded-engine `_[]` references adjacent to the byte-helper (`String(e).charCodeAt(...)`) and `b64u8` helper. Current B fixtures resolve the default key to `actions overflow` and the alphabet to standard Base64.
 - **2026-06-26 probe findings:**
   - Decryptor usage pattern confirmed: `if(82==b)if(Pd)f=127,h=Pd;else return null` (where `Pd` is the key variable, varies by fixture).
   - Z body transform sequence in the old decoded engine: Base85-decode body → `decrypt_bytes` with mode='R' (82) and key=`Pd`/`od`/`pe` → parse LZ4 header from decrypted result → LZ4 decompress → UTF-8. B branch uses Base64 instead of Base85 for the first stage.
   - The wrapper `krp:` key is NOT directly the decrypt key. Passing the wrapper key value (stripped of `krp:` prefix, padded to 128 chars) to `decrypt_bytes` produces garbage — the key must first go through the real license-decoder (Base64 decode + checksum + character lookup) before reaching `case 7`.
-  - The real license decoder that processes the `krp:` wrapper key into `Pd`/`od`/`pe` has not yet been structurally located. This blocks old-fixture decryption.
+  - Superseded 2026-06-27: the real old wrapper/license path is now ported in `old_engine.rs`; old-fixture decryption is no longer blocked.
 
 ### Modern engine family
 
@@ -219,6 +223,7 @@ Modern `Z` vector proven by `/tmp/krpano_decrypt_2018_probe.js`:
 - The resource module's modern `decodeLicense` body has the shape `decodeLicense=function(x){ accumulator += x; return null }`.
 - The modern `decryptData` body repeatedly Base64-decodes and UTF-8-decodes an expression, then feeds generated `_("<id>","<license-fragment>")` calls back through the same accumulator until a `#` sentinel is reached.
 - The decrypted constant owner name changes across builds (`pa`, `ra`, `la`, etc.). Extraction must use structure, not minified object names.
+- 1.24 viewer JS now decodes through little-endian packed words before LZ4. The existing `extract_modern_context` startup-IIFE path then recovers the same default key (`actions overflow`), replacement token (`z`), and checksum constant (`23293`) for demo P/P fixtures.
 
 ### Modern static extraction facts
 
@@ -258,7 +263,7 @@ The modern resource-file function has the same high-level branch structure acros
 - It checks the first 4 bytes against the direct-row constant `KENC`.
 - It derives the mode value from header byte 4 and the transform value from byte 6 using the Base64-table indices already documented above.
 - For the `Z` branch (`byte6 == 10`), it decodes modified Base85, calls the byte helper with the mode value as the widened-key flag, LZ4-decompresses the decrypted block, then UTF-8-decodes it.
-- For the `P/P` and `R/R` branch (`byte6 == 2 * mode_value`), the resource-loader performs `body.replaceAll("z", "\\")` and returns. The downstream caller is still unresolved. The `replaceAll`+Base85 step is implemented in `branches.rs` and tested against all P/P and R/R fixtures.
+- For the `P/P` and `R/R` branch (`byte6 == 2 * mode_value`), the 1.24 resource-loader performs `body.replaceAll("z", "\\")` and returns an inner envelope (`%*...` for public-key P/P, `$*<key-id>@...` for custom-key R/R). The later consumer of that envelope is still unresolved. `decode_pp_rr_body` now strips the envelope before the diagnostic Base85 stage.
 - **RC4 key/stage trace (partial, 2026-06-27):** The same `decrypt_bytes`-style RC4 function (`b` in `ra`) is visible near the resource-loader, but the exact downstream PP/RR call path still needs proof:
   - Z (mode_value=0): `e = gd(_(5697))` = default key `actions overflow`, key-mask=15, no widening.
   - PP (mode_value=0): a direct Rust attempt using `replaceAll("z", "\\")` → modified Base85 → `decrypt_bytes(..., "actions overflow", false)` → LZ4 failed with `InvalidLz4Block` on `2023-04-30-PP`. The default-key hypothesis is therefore not sufficient as implemented.
@@ -285,7 +290,12 @@ Findings from the krpano 1.24 tools:
 - `krpanotools protect -key=ID|KEY` → generates a viewer with the custom key embedded, producing a truly distinct `tour.js` per fixture (different sizes, different `krp:` wrapper keys).
 - `krpanotools protect -demo` → generates viewer with 148-char `krp:` wrapper key. All `-demo` output is byte-identical regardless of flags — the tool always emits the stock demo viewer when unregistered.
 - Known-plaintext P/P fixture at `/tmp/krpano-1.24/test_fixture_enc.xml` (plain at `test_fixture_plain.xml`, 325→459 bytes). The pipeline: `replaceAll("z", "\\")` → modified Base85 is confirmed decodable.
-- P/P RC4 decryption key NOT yet identified. `actions overflow` (Z-branch default) does not produce valid LZ4 headers when used as P/P RC4 key. Full viewer key extraction (Phase 4) needed.
+- P/P second-level decrypt NOT yet identified. `actions overflow` with the existing byte decryptor does not apply; small P/P fixtures produce fewer than 128 bytes after envelope stripping + Base85, so they cannot use the same prefix-based byte helper as Z.
+- 1.24 known-plaintext stage facts after token replacement and envelope stripping:
+  - P/P inner Base85 decoded lengths: 112, 316, 616, 732, 232 bytes for plaintext lengths 45, 280, 863, 3896, 251 bytes.
+  - R/R inner Base85 decoded lengths: 128, 372, 256 bytes for plaintext lengths 64, 432, 265 bytes.
+  - R/R custom-key IDs are embedded in the `$*<key-id>@...` envelope and now parsed by `parse_pp_rr_envelope`; fixtures expose `PFIXTURE_rr_minimal`, a longer `PFIXTURE_rr_special...` id, and a longer `MFIXTURE_rr_tour...` id.
+  - The larger fixtures prove the second-level format includes compression or packing, but it is not the Z-branch Base85→byte-helper→LZ4 pipeline.
 - krpano 1.24 raw viewer engine at `/tmp/krpano-1.24/viewer/krpano.js` (319 KB). Packed payload decompresses to ~6.7 MB.
 - Five known-plaintext P/P fixtures + three known-plaintext R/R fixtures in the fixture corpus as `2026-06-25-pp-*` and `2026-06-25-rr-*`.
 
@@ -459,9 +469,9 @@ Acceptance checks:
 
 ### Phase 3: Derive Old-Engine Keys and Prove Old Z Branch
 
-Status: **Part A blocked** — license decoder not located. **Part B** (Z branch transform) is engine-family-agnostic and will be done in Step A (see Immediate Next Work).
+Status: **done** (2026-06-27).
 
-**2026-06-26 revision:** Part B (Z branch wiring in `branches.rs`) is engine-family-agnostic. It will be implemented and tested against the modern `2018-04-04` fixture (key = `actions overflow`) as part of Step A. Part A (old license key derivation) remains blocked until the real license decoder is structurally located in the old decoded engines.
+**2026-06-27 revision:** Old wrapper/license extraction, Old Z, and Old B are implemented and covered by branch-level and `decrypt_xml` tests. The old wrapper unpacker extracts the `_[]` rows and hidden license blob; protected Z uses padded `ek=` keys, while B mode `P` uses the decoded-engine default key row and Base64 alphabet.
 
 Goal: derive license keys for `KENCRUZR` fixtures and prove the full Z pipeline end-to-end with old fixtures. This is the simpler pipeline and should be completed first.
 
@@ -514,14 +524,14 @@ Goal: derive license keys for `KENCRUZR` fixtures and prove the full Z pipeline 
 
 **Files:** `encrypted/old_engine.rs` (new), `encrypted/branches.rs` (new), `encrypted/mod.rs` (re-exports).
 
-**Commit boundary:** commit 3 (old engine key derivation + Z branch wiring, all old fixtures decrypting).
+**Commit boundary:** included in the current krpano encrypted implementation work.
 
 Acceptance checks:
 
-- Each old fixture has tests for derived key length/content hash.
+- Each old fixture has key/context extraction tests.
 - `old`, `2015-08-04`, and `2017-09-21` decrypt to valid krpano XML.
-- Unsupported 2015 `G` mode has a precise fixture-gated error unless implemented.
-- The existing plaintext krpano parser consumes decrypted XML without changes.
+- `2013-06-05-B` and `2013-08-09-B` decrypt to valid krpano XML.
+- `decrypt_xml_old_fixtures` verifies all old encoded plaintext is UTF-8, well-formed XML, and rooted at `<krpano>`.
 
 ### Phase 4: Derive Modern Static Constants and Keys
 

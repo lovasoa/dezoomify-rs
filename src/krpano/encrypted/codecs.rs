@@ -5,6 +5,17 @@ pub const MIN_PACKED_VIEWER_PAYLOAD_LEN: usize = 100;
 pub const MAX_DECODED_VIEWER_JS_LEN: usize = 8 * 1024 * 1024;
 
 pub fn decode_modified_base85(input: &str) -> Result<Vec<u8>, EncryptedKrpanoError> {
+    decode_modified_base85_with_order(input, u32::to_be_bytes)
+}
+
+pub fn decode_modified_base85_little_endian(input: &str) -> Result<Vec<u8>, EncryptedKrpanoError> {
+    decode_modified_base85_with_order(input, u32::to_le_bytes)
+}
+
+fn decode_modified_base85_with_order(
+    input: &str,
+    byte_order: fn(u32) -> [u8; 4],
+) -> Result<Vec<u8>, EncryptedKrpanoError> {
     let complete_len = input.len() / 5 * 5;
     let mut decoded = Vec::with_capacity(complete_len / 5 * 4);
     for chunk in input.as_bytes()[..complete_len].chunks_exact(5) {
@@ -21,7 +32,7 @@ pub fn decode_modified_base85(input: &str) -> Result<Vec<u8>, EncryptedKrpanoErr
             }
             value = value * 85 + u64::from(digit);
         }
-        decoded.extend_from_slice(&(value as u32).to_be_bytes());
+        decoded.extend_from_slice(&byte_order(value as u32));
     }
     Ok(decoded)
 }
@@ -95,6 +106,17 @@ fn read_lz4_len(
 
 pub fn decode_packed_viewer_js_payload(input: &str) -> Result<Vec<u8>, EncryptedKrpanoError> {
     let packed = decode_modified_base85(input)?;
+    decode_packed_lz4_payload(&packed)
+}
+
+pub fn decode_packed_viewer_js_payload_little_endian(
+    input: &str,
+) -> Result<Vec<u8>, EncryptedKrpanoError> {
+    let packed = decode_modified_base85_little_endian(input)?;
+    decode_packed_lz4_payload(&packed)
+}
+
+fn decode_packed_lz4_payload(packed: &[u8]) -> Result<Vec<u8>, EncryptedKrpanoError> {
     if packed.len() < PACKED_VIEWER_HEADER_LEN {
         return Err(EncryptedKrpanoError::InvalidLz4Block);
     }

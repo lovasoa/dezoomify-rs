@@ -57,30 +57,63 @@ pub fn decrypt_xml(
         extract_key_from_viewer_js(viewer_data).ok_or(EncryptedKrpanoError::MissingKey)?;
     log::debug!("decrypt_xml: wrapper_key length = {}", wrapper_key.len());
     let decoded_engine = extract_decoded_viewer_js(viewer_data)?;
-    log::debug!("decrypt_xml: decoded_engine = {} bytes", decoded_engine.len());
-    let ctx = modern_engine::extract_modern_context(&decoded_engine, &wrapper_key)?;
     log::debug!(
-        "decrypt_xml: default_key={:?}, checksum={}",
-        ctx.default_key,
-        ctx.checksum_constant
+        "decrypt_xml: decoded_engine = {} bytes",
+        decoded_engine.len()
     );
 
     match branch {
-        KencBranch::ModernZ | KencBranch::OldZ => {
-            log::debug!("decrypt_xml: using Z branch, key={:?}, widened=false", ctx.default_key);
+        KencBranch::ModernZ => {
+            let ctx = modern_engine::extract_modern_context(&decoded_engine, &wrapper_key)?;
+            log::debug!(
+                "decrypt_xml: modern default_key={:?}, checksum={}",
+                ctx.default_key,
+                ctx.checksum_constant
+            );
+            log::debug!("decrypt_xml: using modern Z branch, widened=false");
             branches::z_branch_to_plaintext(body, ctx.default_key.as_bytes(), false)
                 .map(String::into_bytes)
         }
+        KencBranch::OldZ => {
+            let ctx = old_engine::derive_old_license_key(&decoded_engine, &wrapper_key)?;
+            let key = ctx.protected_key.ok_or(EncryptedKrpanoError::MissingKey)?;
+            log::debug!(
+                "decrypt_xml: using old Z branch, key_variable={}",
+                ctx.key_variable
+            );
+            branches::z_branch_to_plaintext(body, &key, true).map(String::into_bytes)
+        }
+        KencBranch::B => {
+            let ctx = old_engine::derive_old_license_key(&decoded_engine, &wrapper_key)?;
+            let key = if header.mode == 'R' {
+                ctx.protected_key
+                    .as_deref()
+                    .ok_or(EncryptedKrpanoError::MissingKey)?
+            } else {
+                &ctx.default_key
+            };
+            if key.is_empty() || ctx.base64_alphabet.is_empty() {
+                return Err(EncryptedKrpanoError::MissingKey);
+            }
+            log::debug!("decrypt_xml: using old B branch, mode={}", header.mode);
+            branches::b_branch_to_plaintext_with_alphabet(
+                body,
+                &ctx.base64_alphabet,
+                key,
+                header.mode == 'R',
+            )
+            .map(String::into_bytes)
+        }
         KencBranch::RR => {
             log::debug!("decrypt_xml: RR branch not yet supported");
+            let decoded_len = branches::decode_pp_rr_body(body)?.len();
+            log::debug!("decrypt_xml: RR replacement/Base85 stage decoded {decoded_len} bytes");
             Err(EncryptedKrpanoError::Unsupported)
         }
         KencBranch::PP => {
             log::debug!("decrypt_xml: PP branch not yet supported");
-            Err(EncryptedKrpanoError::Unsupported)
-        }
-        KencBranch::B => {
-            log::debug!("decrypt_xml: B branch not yet supported");
+            let decoded_len = branches::decode_pp_rr_body(body)?.len();
+            log::debug!("decrypt_xml: PP replacement/Base85 stage decoded {decoded_len} bytes");
             Err(EncryptedKrpanoError::Unsupported)
         }
         KencBranch::Unknown => {
@@ -215,8 +248,6 @@ mod tests {
             "2023-04-30-PP" => Some(441_405),
             "2023-12-11" => Some(441_589),
             "2024-12-20" => Some(482_960),
-            // krpanotools 1.24 fixtures: engine uses a different packed format,
-            // not decodable by current extract_decoded_viewer_js.
             "2026-06-25-pp-01_minimal"
             | "2026-06-25-pp-02_special_chars"
             | "2026-06-25-pp-03_nested"
@@ -224,7 +255,7 @@ mod tests {
             | "2026-06-25-pp-05_deep"
             | "2026-06-25-rr_minimal"
             | "2026-06-25-rr_tour"
-            | "2026-06-25-rr_special" => None,
+            | "2026-06-25-rr_special" => Some(550_911),
             _ => None,
         }
     }
@@ -266,11 +297,10 @@ mod tests {
                 continue;
             }
             let dir_name = dir.file_name().unwrap().to_str().unwrap();
-            let (expected_header, _expected_branch) =
-                match fixture_header_info(dir_name) {
-                    Some(v) => v,
-                    None => continue,
-                };
+            let (expected_header, _expected_branch) = match fixture_header_info(dir_name) {
+                Some(v) => v,
+                None => continue,
+            };
 
             let xml_path = encrypted_xml_path(&dir)
                 .unwrap_or_else(|| panic!("missing encrypted XML fixture in {}", dir.display()));
@@ -280,13 +310,17 @@ mod tests {
             let header = KencHeader::parse(&payload)
                 .unwrap_or_else(|err| panic!("{}: {err}", xml_path.display()));
             assert_eq!(
-                header.raw, expected_header,
+                header.raw,
+                expected_header,
                 "{}: header mismatch",
                 xml_path.display()
             );
             checked += 1;
         }
-        assert!(checked >= 19, "expected at least 19 fixture directories, found {checked}");
+        assert!(
+            checked >= 19,
+            "expected at least 19 fixture directories, found {checked}"
+        );
     }
 
     #[test]
@@ -299,11 +333,10 @@ mod tests {
                 continue;
             }
             let dir_name = dir.file_name().unwrap().to_str().unwrap();
-            let (_expected_header, expected_branch) =
-                match fixture_header_info(dir_name) {
-                    Some(v) => v,
-                    None => continue,
-                };
+            let (_expected_header, expected_branch) = match fixture_header_info(dir_name) {
+                Some(v) => v,
+                None => continue,
+            };
 
             let xml_path = encrypted_xml_path(&dir)
                 .unwrap_or_else(|| panic!("missing encrypted XML fixture in {}", dir.display()));
@@ -321,7 +354,10 @@ mod tests {
             );
             checked += 1;
         }
-        assert!(checked >= 19, "expected at least 19 fixture directories, found {checked}");
+        assert!(
+            checked >= 19,
+            "expected at least 19 fixture directories, found {checked}"
+        );
     }
 
     #[test]
@@ -352,7 +388,10 @@ mod tests {
             );
             checked += 1;
         }
-        assert!(checked >= 19, "expected at least 19 fixture directories, found {checked}");
+        assert!(
+            checked >= 19,
+            "expected at least 19 fixture directories, found {checked}"
+        );
     }
 
     #[test]
@@ -383,7 +422,10 @@ mod tests {
             );
             checked += 1;
         }
-        assert!(checked >= 11, "expected at least 11 fixture directories, found {checked}");
+        assert!(
+            checked >= 11,
+            "expected at least 11 fixture directories, found {checked}"
+        );
     }
 
     // -----------------------------------------------------------------
@@ -418,17 +460,30 @@ mod tests {
                     .map_or_else(|| "-".to_string(), |k| k.len().to_string()),
                 engine = self.decoded_engine_len,
                 body = self.encrypted_body_len,
-                b85 = self.body_decoded_len.map_or_else(|| "-".to_string(), |v| v.to_string()),
-                dec = self.byte_decrypted_len.map_or_else(|| "-".to_string(), |v| v.to_string()),
-                lz4 = self.lz4_decompressed_len.map_or_else(|| "-".to_string(), |v| v.to_string()),
-                plain = self.plaintext_len.map_or_else(|| "-".to_string(), |v| v.to_string()),
+                b85 = self
+                    .body_decoded_len
+                    .map_or_else(|| "-".to_string(), |v| v.to_string()),
+                dec = self
+                    .byte_decrypted_len
+                    .map_or_else(|| "-".to_string(), |v| v.to_string()),
+                lz4 = self
+                    .lz4_decompressed_len
+                    .map_or_else(|| "-".to_string(), |v| v.to_string()),
+                plain = self
+                    .plaintext_len
+                    .map_or_else(|| "-".to_string(), |v| v.to_string()),
                 prefix = self.plaintext_prefix.as_deref().unwrap_or("-"),
             );
         }
     }
 
     fn collect_stages(fixture_dir: &Path) -> DecryptStages {
-        let dir_name = fixture_dir.file_name().unwrap().to_str().unwrap().to_string();
+        let dir_name = fixture_dir
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let xml_path = encrypted_xml_path(fixture_dir).unwrap_or_else(|| {
             panic!("missing encrypted XML fixture in {}", fixture_dir.display())
@@ -488,8 +543,8 @@ mod tests {
     /// End-to-end decryption of a Modern Z fixture through `decrypt_xml`.
     #[test]
     fn decrypt_xml_2018_04_04() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("testdata/krpano/encrypted/2018-04-04");
+        let root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/krpano/encrypted/2018-04-04");
         let xml = fs::read(root.join("tour.xml")).unwrap();
         let js = fs::read(root.join("tour.js")).unwrap();
 
@@ -500,5 +555,51 @@ mod tests {
             text.trim().starts_with("<krpano"),
             "plaintext should start with <krpano>"
         );
+    }
+
+    #[test]
+    fn decrypt_xml_old_fixtures() {
+        for fixture in [
+            "old",
+            "2013-06-05-B",
+            "2013-08-09-B",
+            "2015-08-04",
+            "2017-09-21",
+        ] {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("testdata/krpano/encrypted")
+                .join(fixture);
+            let xml_path = encrypted_xml_path(&root)
+                .unwrap_or_else(|| panic!("{fixture}: missing encrypted XML"));
+            let js_path =
+                viewer_js_path(&root).unwrap_or_else(|| panic!("{fixture}: missing viewer JS"));
+            let xml = fs::read(xml_path).unwrap();
+            let js = fs::read(js_path).unwrap();
+
+            let plaintext =
+                decrypt_xml(&xml, Some(&js)).unwrap_or_else(|err| panic!("{fixture}: {err}"));
+            let text = std::str::from_utf8(&plaintext)
+                .unwrap_or_else(|err| panic!("{fixture}: plaintext is not UTF-8: {err}"));
+            let normalized = text.trim_start_matches('\u{feff}').trim_start();
+            assert!(
+                normalized.starts_with("<krpano"),
+                "{fixture}: plaintext should start with <krpano>"
+            );
+            let parsed: PlaintextKrpanoRoot = serde_xml_rs::from_reader(text.as_bytes())
+                .unwrap_or_else(|err| panic!("{fixture}: plaintext XML did not parse: {err}"));
+            assert!(
+                parsed.version.is_some() || parsed.title.is_some(),
+                "{fixture}: parsed krpano root had no identifying attributes"
+            );
+        }
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename = "krpano")]
+    struct PlaintextKrpanoRoot {
+        #[serde(rename = "@version")]
+        version: Option<String>,
+        #[serde(rename = "@title")]
+        title: Option<String>,
     }
 }
