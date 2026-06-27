@@ -408,19 +408,17 @@ mod tests {
             let g = i64::from(row[5]) / 3;
             eprintln!("  krpano row[5]={} g={g}", row[5]);
 
-            let replaced = body.replace('z', "\\");
+            let replaced = body.replace(&ctx.replacement_token, "\\");
             if name.contains("pp") {
-                match modern_engine::subdiv_branch5_decode(&replaced, row, None) {
+                match modern_engine::subdiv_branch5_decode(&replaced, row, None, None) {
                     Ok(text) => eprintln!("  OK plaintext ({} bytes): {:?}", text.len(), &text[..(<str as AsRef<str>>::as_ref(&text)).len().min(200)]),
                     Err(e) => eprintln!("  FAIL: {e:?}"),
                 }
             } else {
-                let records = modern_engine::side_records(&ctx).unwrap();
-                if let Some(pk) = records.iter().find_map(|r| r.strip_prefix("pk=")) {
-                    match modern_engine::subdiv_branch5_decode(&replaced, row, Some(pk)) {
-                        Ok(text) => eprintln!("  OK plaintext ({} bytes): {:?}", text.len(), &text[..(<str as AsRef<str>>::as_ref(&text)).len().min(200)]),
-                        Err(e) => eprintln!("  FAIL: {e:?}"),
-                    }
+                let mf = modern_engine::build_mf_table(&ctx).unwrap_or_default();
+                match modern_engine::subdiv_branch5_decode(&replaced, row, None, Some(&mf)) {
+                    Ok(text) => eprintln!("  OK plaintext ({} bytes): {:?}", text.len(), &text[..(<str as AsRef<str>>::as_ref(&text)).len().min(200)]),
+                    Err(e) => eprintln!("  FAIL: {e:?}"),
                 }
             }
         }

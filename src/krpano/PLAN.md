@@ -243,59 +243,98 @@ The Base64 alphabet is extracted from the old engine's `_[]` table (the row refe
 
 Only observed in Public mode, with old engines. Fixtures: `2013-06-05-B`, `2013-08-09-B`.
 
-### 4.4. Subdiv (2023/2024 path)
+### 4.4. Subdiv
 
-This cipher does **not** use RC4. Instead:
+This cipher uses the `we.subdiv` branch-5 decompressor instead of RC4.
+It appears in modern engines (2023+) with two key-mixing strategies depending
+on the engine version.
 
-1. Replace every occurrence of the replacement token (`"z"`) with the byte `0x5C` (backslash). The token is extracted from a `we.subdiv` row whose value is `"z"`. In the Subdiv body encoding, `"z"` serves as an escape marker and does not appear literally.
-2. The first two bytes after replacement form a mode prefix: `%*` for public, `&*` for protected. This prefix is expected to be consistent with the header byte 4.
-3. Locate the `we.subdiv` row whose value is `"krpano"` (searching all unpacked rows by value).
-4. Decompress using `we.subdiv` branch 5. The row's 6th character (JS `charCodeAt(5)`) divided by 3 gives a parameter `g` (e.g. `111 / 3 = 37` for `"krpano"`). The decompressor is krpano-specific: skip leading zero bytes, skip a BOM (byte sequence `EF BB BF`), then decode up to 3-byte UTF-8 sequences with a JavaScript-semantic length-extension loop. All arithmetic uses signed 32-bit wrapping. **The full algorithm is not yet documented in detail.**
-5. In protected mode, branch 5 reads the side data (Base64-decoded, krpano-UTF-8-decoded, semicolon-separated key=value records) and extracts the `pk=` entry, which serves as a validation/access token consumed by the decompressor.
+**Body format:**
 
-### 4.5. Subdiv (1.24 path — not yet decoded)
+1. Replace every occurrence of the replacement token (`"z"`) with `0x5C`
+   (backslash). The token is extracted from a `we.subdiv` row whose value is
+   `"z"`. In the Subdiv body encoding, `"z"` serves as an escape marker.
+2. The first two bytes after replacement determine the mode and engine version:
+   - `%*` (37, 42) = public (all engines)
+   - `&*` (38, 42) = protected, 2023/2024 engines
+   - `$*<key-id>@...` (36, 42) = protected, 1.24+ engines
+3. Compute `f = d[0] - g` where `g = row[5] / 3` from the `"krpano"` row.
+   - `f = 0` — public (no key mixing)
+   - `f = 1` — protected, 2023/2024 key-mix path
+   - `f = -1` — protected, 1.24 key-mix path (with key-ID prefix at body[3..])
 
-In krpano 1.24, Subdiv bodies use different inner prefixes from the 2023/2024 path:
-- Public: `%*...` (same prefix bytes, different payload structure after the prefix)
-- Protected: `$*<key-id>@...` (vs `&*` in 2023/2024)
+**Branch 5 decompressor (shared):**
 
-**Confirmed prefix/payload facts (2026-06-27 instrumentation):**
+All Subdiv bodies are decompressed by `we.subdiv` branch 5. Constants are
+computed from the `"krpano"` row (e.g. `g = 111 / 3 = 37`):
+`h = body[1] - g`, `v = h + 2`, `q = (v*h + h) / h`,
+`T = v + h*2`. From these: `W = T*T*h`, `P = W*T*h`,
+`coeff_B = P*h*h`, `coeff_F = coeff_B*v*h`,
+`coeff_X = (P + W)*(g - 2) + 2*v*(g + v - 1)`,
+`coeff_C = P*3 / W`.
 
-| Fixture | Mode | Prefix | Key ID | Raw B85 len | Decoded bytes | Plaintext len |
-|---------|------|--------|--------|-------------|---------------|---------------|
-| pp-01_minimal | Public | `%*` | — | 144 | 112 | 44 |
-| pp-02_special_chars | Public | `%*` | — | 399 | 316 | 279 |
-| pp-03_nested | Public | `%*` | — | 774 | 616 | 862 |
-| pp-04_large | Public | `%*` | — | 919 | 732 | 3895 |
-| pp-05_deep | Public | `%*` | — | 294 | 232 | 250 |
-| rr_minimal | Protected | `$*` | `PFIXTURE_rr_minimal` | 163 | 128 | 63 |
-| rr_special | Protected | `$*` | `PFIXTURE_rr_special...` (85 chars total) | 322 | 256 | 264 |
-| rr_tour | Protected | `$*` | `MFIXTURE_rr_tour...` (85 chars total) | 466 | 372 | 431 |
+Keys are read from `stream..stream+2*g` as
+`coeff_B * body[i] * v + (body[i+1] - g + h) * W` (37 keys).
+Compressed data follows. Decompression processes 5 input bytes per 4 output
+bytes, cycling through the 37 keys. Arithmetic uses signed 32-bit wrapping.
+After decompression the output is krpano-UTF-8-decoded: skip leading zeros,
+skip BOM, reconstruct 3-byte sequences with JS length-extension semantics.
 
-**Key findings:**
+**Stream offset:**
 
-1. The inner payload decodes as modified Base85 (5-to-4, big-endian, same alphabet as ClassicZ).
-2. **The decoded payload is too short for ClassicZ RC4** — the RC4 key-mix requires >=128 bytes of prefix. PP minimal decodes to 112 bytes; RR minimal at 128 bytes is exactly at the boundary but RC4 still fails with `InvalidByteCipherInput` because `encrypted_start` (128 + input[65]&7) exceeds the decoded length.
-3. Both BE and LE endianness were tried, as well as widened and narrow RC4 key modes — all combinations fail.
-4. This confirms a **different decompression scheme** from both ClassicZ (Base85->RC4->LZ4) and Subdiv branch 5 (custom decompressor using `g` parameter from "krpano" row).
+| Mode | Engine | f | Stream start | Keys at | Compressed at |
+|------|--------|---|-------------|---------|---------------|
+| Public | all | 0 | 2 | 2 | 2*(1+g) = 76 |
+| Protected | 2023/24 | 1 | 2 | 2 | 2*(1+g) = 76 |
+| Protected | 1.24 | -1 | 2+1+c | k | k + 2*g |
 
-**Engine context for 2026 engines:**
-- Engine context extraction succeeds: 136 unpacked rows, checksum constant 23293 (same as 2023-2024).
-- The `pk=` protection key IS present in side data for RR fixtures (128 chars, same format as 2023/2024).
-- The "krpano" row exists and yields `g=37` (111/3).
-- The replacement token is `"z"` (same as 2023/2024).
+Where `c = body[2] - g - (T + q)` (18 for rr_minimal). The stream start
+`k = 2 + 1 + c` advances past the key-ID prefix in the 1.24 body.
+For rr_minimal: k=21, compressed data starts at 95 (vs 76 for other paths).
 
-**Why branch 5 cannot handle 1.24 bodies:**
-- The first two bytes of the 1.24 body after `z->\\` replacement are `%*` (37, 42) for PP and `$*` (36, 42) for RR.
-- For branch 5 these would be bytes `d[0]` and `d[1]`; with `g=37`: PP gives `f=0, h=5` (public) and RR gives `f=-1, h=5` (invalid — `f` must be 0 or 1).
-- Since RR gives `f=-1`, the 1.24 engine MUST use a different branch than branch 5 for RR bodies.
+**Key mixing — 2023/2024 protected path (f=1):**
 
-**Next steps to trace:**
-- The 1.24 engine's `F` function likely calls a DIFFERENT `we.subdiv` branch (not branch 5) when the body prefix is `%*` or `$*`.
-- This new branch needs to be traced from the decoded engine source.
-- The decoded Base85 payload might feed into a compression-only scheme (no encryption), or a dictionary/keyed transform using the `$*<key-id>` for key selection.
+The `pk=` side data record provides a 128-byte key. Each byte becomes
+`pk_byte + 1` to form a lookup vector `trie`. The mixing formula:
+```
+keys[i] = (keys[i] + coeff_X*(trie[idx1] + trie_offset)
+            + T*(trie[idx2] + trie_offset)
+            - coeff_C*(trie[idx3] + trie_offset)) & 0xFFFFFFFF
+```
+Where `trie_offset = -1`, indices depend on `v`, `T`, and the original `m=3`.
 
----
+**Key mixing — 1.24 protected path (f=-1):**
+
+The 1.24 engine uses an **Mf (mixing-factor) table** built from side records
+containing `|`. The `uk=` side record stores the mixing key:
+
+    uk=<lookup-key>|<mixing-value>
+
+`Mf[lookup_key] = Cd(mixing_value, 37)` where `Cd(str, offset)` returns each
+byte + offset. The body carries the lookup key at `body[3..3+c]`
+(e.g. `body[3..21] = "FIXTURE_rr_minimal"`).
+
+The mixing formula (JS lines ~7219-7227, rendered with descriptive names):
+```
+for i in 0..key_count:
+    mix = Mf[lookup_key]            // the mixing vector n
+    keys[i] = ((keys[i]
+        + coeff_K * (mix[i % mix_len] + mix_offset)
+        + coeff_X * (mix[(2*coeff_I + i) % mix_len] + mix_offset)
+        + coeff_I * (mix[(coeff_T*coeff_T + i) % mix_len] + mix_offset)
+        - coeff_C * (mix[(2*coeff_T*coeff_T - 1 - i) % mix_len] + mix_offset)
+    ) & mask) >>> 0;
+```
+
+The `pk=` protection key is **not** used for mixing in the 1.24 path.
+
+**Status:**
+
+| Path | Engines | Status |
+|------|---------|--------|
+| Public (f=0) | 2023+ | Decoded |
+| Protected, pk= mix (f=1) | 2023/2024 | Decoded |
+| Protected, Mf mix (f=-1) | 1.24 | Decoded |
 
 ## 5. File discovery and decryption flow
 
@@ -316,7 +355,7 @@ If a JS candidate fails to decrypt (e.g. an analytics script that coincidentally
 
 | Variant | Status | Notes |
 |---------|--------|-------|
-| 1.24 Subdiv, both modes | Not decoded | Prefixes parsed (`%*` / `$*<key-id>@`). Base85 decode succeeds but payload is too short for RC4 (112 bytes PP, 128 bytes RR). Branch 5 rejects RR (`f=-1`). Different branch/transform needed. Engine context extraction works (136 rows, checksum=23293). pk= present in RR side data (128 chars). |
+| 1.24 Subdiv, both modes | Decoded | Prefixes parsed (`%*` / `$*<key-id>@`). Both PP (f=0) and RR (f=-1) paths work via branch 5. RR uses Mf table from `uk=` side record for key mixing. Stream offset: `k+2*g` vs `2*(1+g)` for earlier engines. |
 | `G` mode (old engine byte-4) | No fixture | Appears in `2015-08-04` engine source switch cases. No observed tour uses it. |
 | ClassicB Protected (`KENCRUBR`) | No fixture | Parsable header combination, but never observed. If it exists, it would likely use the old engine's protected key. |
 | Cross-family combinations (e.g. ClassicZ Protected with modern engine) | No fixture | ClassicZ Protected has only been observed with old engines; Public only with modern engines. Other combinations are theoretically possible but unobserved. |
@@ -340,10 +379,10 @@ All fixtures under `testdata/krpano/encrypted/`. Each directory contains `tour.x
 | `2023-04-30-PP` | `KENCPUPR` | Subdiv | Public | modern (1.21) | Yes |
 | `2023-12-11` | `KENCRURR` | Subdiv | Protected | modern | Yes |
 | `2024-12-20` | `KENCRURR` | Subdiv | Protected | modern | Yes |
-| `2026-06-25-pp-*` (5 fixtures) | `KENCPUPR` | Subdiv | Public | modern (1.24) | No (1.24 path) |
-| `2026-06-25-rr-*` (3 fixtures) | `KENCRURR` | Subdiv | Protected | modern (1.24) | No (1.24 path) |
+| `2026-06-25-pp-*` (5 fixtures) | `KENCPUPR` | Subdiv | Public | modern (1.24) | Yes |
+| `2026-06-25-rr-*` (3 fixtures) | `KENCRURR` | Subdiv | Protected | modern (1.24) | Yes |
 
-All 2026 fixtures: prefix `%*` for PP, `$*<key-id>@` for RR. RR key IDs: `PFIXTURE_rr_minimal`, `PFIXTURE_rr_special...`, `MFIXTURE_rr_tour...`. Engine context (136 rows, checksum=23293) and pk= side data (128 chars) extracted successfully. Base85 decode succeeds but decoded payload too short for ClassicZ RC4; branch 5 rejects RR bodies.
+All 2026 fixtures: prefix `%*` for PP, `$*<key-id>@` for RR. RR key IDs: `FIXTURE_rr_minimal`, `PFIXTURE_rr_special...` (85 chars), `MFIXTURE_rr_tour...` (85 chars). Engine context (136 rows, checksum=23293) and pk= side data (128 chars) extracted successfully. PP decrypts via branch 5 (f=0, same as 2023/2024). RR decrypts via branch 5 (f=-1) with Mf table lookup from `uk=` side record.
 
 ---
 
@@ -360,7 +399,7 @@ src/krpano/
 │   ├── crypto.rs           # RC4-like byte decryptor
 │   ├── viewer.rs           # Extract wrapper string + decode packed engine
 │   ├── old_engine.rs       # Old engine key derivation (unwrap wrapper, license blob)
-│   ├── modern_engine.rs    # Modern engine key extraction (startup IIFE, we.subdiv, branch 5)
+│   ├── modern_engine.rs    # Modern engine key extraction (startup IIFE, we.subdiv, branch 5, Mf table, build_mf_table)
 │   └── branches.rs         # ClassicZ/ClassicB/Subdiv body transforms
 └── PLAN.md
 ```

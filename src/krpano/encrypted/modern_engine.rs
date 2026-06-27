@@ -12,6 +12,8 @@
 //! `we.subdiv` closure.  This module replicates the unpacking statically
 //! (no JS execution) and searches rows by **value** (no hardcoded row IDs).
 
+use std::collections::HashMap;
+
 use base64::{Engine as _, engine::general_purpose};
 
 use super::EncryptedKrpanoError;
@@ -455,7 +457,8 @@ pub fn pp_rr_branch_to_plaintext(
     let replaced = body.replace(&ctx.replacement_token, "\\");
     let row = find_krpano_row(&ctx.rows).ok_or(EncryptedKrpanoError::Unsupported)?;
     let protection_key = extract_protection_key(ctx)?;
-    let plaintext = subdiv_branch5_decode(&replaced, row, protection_key.as_deref())?;
+    let mf = build_mf_table(ctx).unwrap_or_default();
+    let plaintext = subdiv_branch5_decode(&replaced, row, protection_key.as_deref(), Some(&mf))?;
     let normalized = plaintext.trim_start_matches('\u{feff}').trim_start();
     if normalized.starts_with("<krpano") {
         Ok(plaintext)
@@ -508,10 +511,41 @@ pub(crate) fn side_records(ctx: &ModernEngineContext) -> Result<Vec<String>, Enc
     Ok(text.split(';').map(str::to_owned).collect())
 }
 
+/// Build the Mf (mixing-factor) table from side data records.
+///
+/// In the JS engine, side records with format `uk=KEY|VALUE` are split:
+///   `Mf[KEY] = Cd(VALUE, 37)` where Cd = each byte + 37.
+///
+/// This table is used by RR 1.24 subdiv branch 5 for key mixing.
+pub(crate) fn build_mf_table(
+    ctx: &ModernEngineContext,
+) -> Result<HashMap<String, Vec<i64>>, EncryptedKrpanoError> {
+    let records = side_records(ctx)?;
+    let mut mf = HashMap::new();
+    for record in &records {
+        // Strip prefix like "uk=" (3 chars) to get the value
+        let value = if let Some(eq_pos) = record.find('=') {
+            &record[eq_pos + 1..]
+        } else {
+            record.as_str()
+        };
+        // Check for "|" split — Mf[part0] = Cd(part1, 37)
+        if let Some(bar_pos) = value.find('|') {
+            let key = value[..bar_pos].to_string();
+            let raw_val = &value[bar_pos + 1..];
+            let cd: Vec<i64> = raw_val.bytes().map(|b| i64::from(b) + 37).collect();
+            log::debug!("build_mf_table: Mf[{key:?}] = Cd({raw_val:?}, 37) -> {} bytes", cd.len());
+            mf.insert(key, cd);
+        }
+    }
+    Ok(mf)
+}
+
 pub(crate) fn subdiv_branch5_decode(
     input: &str,
     row: &[u16],
     protection_key: Option<&str>,
+    mf_table: Option<&HashMap<String, Vec<i64>>>,
 ) -> Result<String, EncryptedKrpanoError> {
     let d = input.as_bytes();
     if d.len() < 2 || row.len() <= 5 {
@@ -527,9 +561,6 @@ pub(crate) fn subdiv_branch5_decode(
     if f != 0 && f * f != 1 {
         return Err(EncryptedKrpanoError::Unsupported);
     }
-    if f != 0 && protection_key.is_none() {
-        return Err(EncryptedKrpanoError::MissingKey);
-    }
     if h <= 0 {
         return Err(EncryptedKrpanoError::Unsupported);
     }
@@ -543,7 +574,7 @@ pub(crate) fn subdiv_branch5_decode(
     let p = w * t * h;
     let big_b = p * h * h;
     let big_f = big_b * v * h;
-    let big_n = (p + w) * (g - k) + k * v * (g + v - 1);
+    let coeff_x = (p + w) * (g - k) + k * v * (g + v - 1);
     let a = p * m / w;
 
     // JS: 0 > f && ((c = b.x(2) - e - (I + t)), (m += 1 + c));
@@ -558,46 +589,47 @@ pub(crate) fn subdiv_branch5_decode(
         0
     };
 
-    let g_len = usize::try_from(g).map_err(|_| EncryptedKrpanoError::Unsupported)?;
+    let key_count = usize::try_from(g).map_err(|_| EncryptedKrpanoError::Unsupported)?;
     let mut stream = usize::try_from(k).map_err(|_| EncryptedKrpanoError::Unsupported)?;
-    let mut keys = vec![0_i64; g_len];
+    let mut keys = vec![0_i64; key_count];
 
-    eprintln!("  BRANCH5: reading {} keys from stream={}", g_len, stream);
     for key in &mut keys {
         if stream + 1 >= d.len() {
-            eprintln!("  BRANCH5: key read failed at stream={stream} d.len={}", d.len());
             return Err(EncryptedKrpanoError::Unsupported);
         }
         *key = big_b * i64::from(d[stream]) * v + (i64::from(d[stream + 1]) - g + h) * w;
         stream += 2;
     }
-    eprintln!("  BRANCH5: keys[0]={} keys[{}]={}", keys[0], g_len-1, keys[g_len-1]);
 
     if f != 0 {
-        let key = protection_key.ok_or(EncryptedKrpanoError::MissingKey)?;
         let mask = a * (1 + (a + 1) * (1 + (a + 1) * (1 + (a + 1))));
-        eprintln!("  BRANCH5: key_mix f={f} rr_c={rr_c} mask={mask} pk_len={}", key.len());
 
         if f < 0 && rr_c > 2 {
-            eprintln!("  BRANCH5: Mf path, pk first bytes: {:?}", &key.as_bytes()[..key.len().min(10)]);
-            // RR 1.24 path: Mf lookup uses Cd(key_bytes, 37) as the mixing data
-            // JS: K*(n[c%u]+m) + x*(n[(2*I+c)%u]+m) + I*(n[(t*t+c)%u]+m) - C*(n[(2*t*t-1-c)%u]+m)
-            // where n = Mf[key_id] = Cd(raw_key, 37) = charCodeAt(k)+37
-            // Mapping: K=v, x=big_n, I=t, t(JS)=q, C=a, m=-g
-            let m_val = -g;
-            let pk_bytes: Vec<i64> = key.bytes().map(|b| i64::from(b) + 37).collect();
-            let pk_len = pk_bytes.len();
+            // RR 1.24 path: look up mixing data from Mf table
+            let lookup_end = usize::try_from(3 + rr_c).map_err(|_| EncryptedKrpanoError::Unsupported)?;
+            let mf_key = if lookup_end <= d.len() {
+                std::str::from_utf8(&d[3..lookup_end]).unwrap_or("")
+            } else {
+                ""
+            };
+            let mf_data: &Vec<i64> = mf_table
+                .and_then(|m| m.get(mf_key))
+                .ok_or(EncryptedKrpanoError::MissingKey)?;
+            let mix_offset = -g;
+            let mix = mf_data;
+            let mix_len = mix.len();
             for (i, key_val) in keys.iter_mut().enumerate() {
                 let idx = i as i64;
                 let mixed = *key_val
-                    + v * (pk_bytes[idx as usize % pk_len] + m_val)
-                    + big_n * (pk_bytes[((2 * t + idx) as usize) % pk_len] + m_val)
-                    + t * (pk_bytes[((q * q + idx) as usize) % pk_len] + m_val)
-                    - a * (pk_bytes[((2 * q * q - 1 - idx) as usize) % pk_len] + m_val);
+                    + v * (mix[idx as usize % mix_len] + mix_offset)
+                    + coeff_x * (mix[((2 * t + idx) as usize) % mix_len] + mix_offset)
+                    + t * (mix[((q * q + idx) as usize) % mix_len] + mix_offset)
+                    - a * (mix[((2 * q * q - 1 - idx) as usize) % mix_len] + mix_offset);
                 *key_val = js_bitand(mixed, mask) as u32 as i64;
             }
         } else {
             // f=1 (2023/2024) or f=-1 with c<=2: row-based side data mixing
+            let key = protection_key.ok_or(EncryptedKrpanoError::MissingKey)?;
             let trie_x = 1_i64;
             let trie_y: Vec<i64> = key.bytes().map(|byte| i64::from(byte) + trie_x).collect();
             k = -trie_x;
@@ -614,31 +646,25 @@ pub(crate) fn subdiv_branch5_decode(
                     return Err(EncryptedKrpanoError::MissingKey);
                 }
                 let mixed =
-                    *key_val + big_n * (trie_y[idx1] + k) + t * (trie_y[idx2] + k) - a * (trie_y[idx3] + k);
+                    *key_val + coeff_x * (trie_y[idx1] + k) + t * (trie_y[idx2] + k) - a * (trie_y[idx3] + k);
                 *key_val = js_bitand(mixed, mask);
             }
         }
-        eprintln!("  BRANCH5: after mix keys[0]={} keys[1]={} keys[2]={}", keys[0], keys[1], keys.get(2).copied().unwrap_or(-1));
     }
 
     let ba = i64::try_from(d.len()).map_err(|_| EncryptedKrpanoError::Unsupported)?;
-    let r_len = ((ba - 2 * (1 + g)) * q / h) >> 1;
-    eprintln!("  BRANCH5: ba={ba} r_len={r_len}");
+    let r_len = ((ba - stream as i64) * q / h) >> 1;
     if r_len < 0 {
         return Err(EncryptedKrpanoError::Unsupported);
     }
     let mut rbuf =
         vec![0_u8; usize::try_from(r_len).map_err(|_| EncryptedKrpanoError::Unsupported)?];
-    let mut src = usize::try_from(2 * (1 + g)).map_err(|_| EncryptedKrpanoError::Unsupported)?;
-    eprintln!("  BRANCH5: decomp start src={src} d.len={}", d.len());
+    let mut src = stream;
     let mut out_a = 0_usize;
     let mut e = 0_usize;
     let mut out_b = 2_usize;
 
-    let mut loop_count = 0u32;
     while src < d.len() {
-        loop_count += 1;
-        eprintln!("  BRANCH5: decomp iter={loop_count} src={src} d.len={}", d.len());
         let safe_byte = |off: usize| -> i64 {
             if off < d.len() { i64::from(d[off]) } else { 0 }
         };
@@ -647,12 +673,12 @@ pub(crate) fn subdiv_branch5_decode(
             + h * (safe_byte(src + 2) * w
                 + safe_byte(src + 3) * p
                 + safe_byte(src + 4) * t
-                - big_n);
+                - coeff_x);
         let key = keys[e];
         b = b + key - 2 * js_bitand(b, key);
         v = js_shr(b, q);
         e += 1;
-        if e >= g_len {
+        if e >= key_count {
             e = 0;
         }
         let n = js_shr(v, q);
@@ -672,7 +698,6 @@ pub(crate) fn subdiv_branch5_decode(
     }
 
     let n_base = a + 1;
-    eprintln!("  BRANCH5: decomp done, out_a={out_a} out_b={out_b} rbuf.len={}", rbuf.len());
     let half_q = q / 2;
     let half = usize::try_from(half_q).map_err(|_| EncryptedKrpanoError::Unsupported)?;
     if rbuf.len() <= half + 3 || rbuf.len() < 4 {
@@ -682,7 +707,6 @@ pub(crate) fn subdiv_branch5_decode(
         + i64::from(rbuf[1]) * n_base
         + i64::from(rbuf[2]) * n_base * n_base
         + i64::from(rbuf[3]) * n_base * n_base * n_base;
-    eprintln!("  BRANCH5: out_len={out_len} half={half} rbuf[half]={}", rbuf.get(half).copied().unwrap_or(0));
     if out_len < 0 {
         return Err(EncryptedKrpanoError::Unsupported);
     }
@@ -817,9 +841,6 @@ fn krpano_utf8_decode(input: &[u8]) -> String {
 /// The JSON format produced by `tools/extract_modern_rows.mjs`.
 #[cfg(test)]
 use serde::Deserialize;
-
-#[cfg(test)]
-use std::collections::HashMap;
 
 #[cfg(test)]
 #[derive(Deserialize)]
