@@ -10,11 +10,13 @@ use super::crypto;
 /// main pipeline.  This is distinct from the branch-5 2023/2024 path which
 /// reads the body directly.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
 pub struct SubdivBodyPrefix<'a> {
     pub key_id: Option<&'a str>,
     pub payload: &'a str,
 }
 
+#[allow(dead_code)]
 pub fn parse_subdiv_body_prefix(replaced_body: &str) -> SubdivBodyPrefix<'_> {
     SubdivBodyPrefix::parse(replaced_body)
 }
@@ -113,6 +115,7 @@ pub fn b_branch_to_plaintext_with_alphabet(
 
 /// Attempt the Z-like pipeline on subdiv bodies.
 /// Only used as regression coverage; the real subdiv path is branch 5.
+#[allow(dead_code)]
 pub(crate) fn decrypt_subdiv_via_classic_pipeline(
     body: &str,
     key: &[u8],
@@ -193,6 +196,7 @@ fn read_u24_le(input: &[u8]) -> usize {
 // ---------------------------------------------------------------------------
 
 /// Diagnostic: try the Base85→RC4→LZ4 pipeline on a 2026 1.24 subdiv body.
+#[allow(dead_code)]
 pub fn diagnose_subdiv_1_24_body(body: &str, key: &[u8]) -> Result<String, EncryptedKrpanoError> {
     let replaced = body.replace('z', "\\");
     eprintln!("  replaced body len={}", replaced.len());

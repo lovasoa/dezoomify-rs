@@ -135,7 +135,7 @@ impl KeyDerivation for ModernEngine {
     }
 }
 
-/// The `Ma` browser-name array shared by every modern krpano engine.
+// The `Ma` browser-name array shared by every modern krpano engine.
 // =========================================================================
 // Startup-IIFE location
 // =========================================================================
