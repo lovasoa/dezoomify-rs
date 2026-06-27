@@ -27,14 +27,13 @@ impl<'a> SubdivBodyPrefix<'a> {
                 payload,
             };
         }
-        if let Some(rest) = replaced_body.strip_prefix("$*") {
-            if let Some((key_id, payload)) = rest.split_once('@') {
+        if let Some(rest) = replaced_body.strip_prefix("$*")
+            && let Some((key_id, payload)) = rest.split_once('@') {
                 return Self {
                     key_id: Some(key_id),
                     payload,
                 };
             }
-        }
         Self {
             key_id: None,
             payload: replaced_body,
@@ -194,15 +193,16 @@ fn read_u24_le(input: &[u8]) -> usize {
 // ---------------------------------------------------------------------------
 
 /// Diagnostic: try the Base85→RC4→LZ4 pipeline on a 2026 1.24 subdiv body.
-pub fn diagnose_subdiv_1_24_body(
-    body: &str,
-    key: &[u8],
-) -> Result<String, EncryptedKrpanoError> {
+pub fn diagnose_subdiv_1_24_body(body: &str, key: &[u8]) -> Result<String, EncryptedKrpanoError> {
     let replaced = body.replace('z', "\\");
     eprintln!("  replaced body len={}", replaced.len());
 
     let prefix = parse_subdiv_body_prefix(&replaced);
-    eprintln!("  prefix key_id={:?}, payload len={}", prefix.key_id, prefix.payload.len());
+    eprintln!(
+        "  prefix key_id={:?}, payload len={}",
+        prefix.key_id,
+        prefix.payload.len()
+    );
 
     // Try BE first (matches JS inline Base85: >>> 24)
     match codecs::decode_modified_base85(prefix.payload) {
@@ -215,10 +215,23 @@ pub fn diagnose_subdiv_1_24_body(
                     if decrypted.len() >= 8 {
                         let decomp_len = read_u24_le(&decrypted[0..3]);
                         let comp_end = 8 + read_u24_le(&decrypted[4..7]);
-                        eprintln!("  LZ4 header: decomp_len={decomp_len}, comp_end={comp_end}, data_len={}", decrypted.len());
-                        if decomp_len > 0 && decomp_len < 10_000_000 && comp_end > 8 && comp_end <= decrypted.len() + 128 {
-                            return codecs::lz4_decompress_block(&decrypted, decomp_len, comp_end.min(decrypted.len()))
-                                .and_then(|d| String::from_utf8(d).map_err(|_| EncryptedKrpanoError::Unsupported));
+                        eprintln!(
+                            "  LZ4 header: decomp_len={decomp_len}, comp_end={comp_end}, data_len={}",
+                            decrypted.len()
+                        );
+                        if decomp_len > 0
+                            && decomp_len < 10_000_000
+                            && comp_end > 8
+                            && comp_end <= decrypted.len() + 128
+                        {
+                            return codecs::lz4_decompress_block(
+                                &decrypted,
+                                decomp_len,
+                                comp_end.min(decrypted.len()),
+                            )
+                            .and_then(|d| {
+                                String::from_utf8(d).map_err(|_| EncryptedKrpanoError::Unsupported)
+                            });
                         }
                     }
                 }
@@ -232,9 +245,19 @@ pub fn diagnose_subdiv_1_24_body(
                         let decomp_len = read_u24_le(&decrypted[0..3]);
                         let comp_end = 8 + read_u24_le(&decrypted[4..7]);
                         eprintln!("  LZ4 header: decomp_len={decomp_len}, comp_end={comp_end}");
-                        if decomp_len > 0 && decomp_len < 10_000_000 && comp_end > 8 && comp_end <= decrypted.len() + 128 {
-                            return codecs::lz4_decompress_block(&decrypted, decomp_len, comp_end.min(decrypted.len()))
-                                .and_then(|d| String::from_utf8(d).map_err(|_| EncryptedKrpanoError::Unsupported));
+                        if decomp_len > 0
+                            && decomp_len < 10_000_000
+                            && comp_end > 8
+                            && comp_end <= decrypted.len() + 128
+                        {
+                            return codecs::lz4_decompress_block(
+                                &decrypted,
+                                decomp_len,
+                                comp_end.min(decrypted.len()),
+                            )
+                            .and_then(|d| {
+                                String::from_utf8(d).map_err(|_| EncryptedKrpanoError::Unsupported)
+                            });
                         }
                     }
                 }
@@ -255,9 +278,19 @@ pub fn diagnose_subdiv_1_24_body(
                         let decomp_len = read_u24_le(&decrypted[0..3]);
                         let comp_end = 8 + read_u24_le(&decrypted[4..7]);
                         eprintln!("  LZ4 header: decomp_len={decomp_len}, comp_end={comp_end}");
-                        if decomp_len > 0 && decomp_len < 10_000_000 && comp_end > 8 && comp_end <= decrypted.len() + 128 {
-                            return codecs::lz4_decompress_block(&decrypted, decomp_len, comp_end.min(decrypted.len()))
-                                .and_then(|d| String::from_utf8(d).map_err(|_| EncryptedKrpanoError::Unsupported));
+                        if decomp_len > 0
+                            && decomp_len < 10_000_000
+                            && comp_end > 8
+                            && comp_end <= decrypted.len() + 128
+                        {
+                            return codecs::lz4_decompress_block(
+                                &decrypted,
+                                decomp_len,
+                                comp_end.min(decrypted.len()),
+                            )
+                            .and_then(|d| {
+                                String::from_utf8(d).map_err(|_| EncryptedKrpanoError::Unsupported)
+                            });
                         }
                     }
                 }
@@ -294,8 +327,8 @@ mod tests {
 
     #[test]
     fn decrypts_2018_04_04_z_branch() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("testdata/krpano/encrypted/2018-04-04");
+        let root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/krpano/encrypted/2018-04-04");
         let xml = fs::read_to_string(root.join("tour.xml")).unwrap();
         let payload = viewer::encrypted_payload(xml.as_bytes()).unwrap();
         let header = super::super::header::KencHeader::parse(&payload).unwrap();
@@ -365,13 +398,9 @@ mod tests {
                 super::super::old_engine::derive_old_license_key(&decoded, &wrapper_key).unwrap();
 
             let key = &ctx.default_key;
-            let plaintext = b_branch_to_plaintext_with_alphabet(
-                body,
-                &ctx.base64_alphabet,
-                key,
-                false,
-            )
-            .unwrap();
+            let plaintext =
+                b_branch_to_plaintext_with_alphabet(body, &ctx.base64_alphabet, key, false)
+                    .unwrap();
             assert!(
                 plaintext.trim_start().starts_with("<krpano"),
                 "{fixture}: bad plaintext prefix"
@@ -393,31 +422,49 @@ mod tests {
                 .join(name);
             let xml = fs::read_to_string(root.join("tour.xml")).unwrap();
             let payload = super::super::viewer::encrypted_payload(xml.as_bytes()).unwrap();
-            let body = super::super::header::KencHeader::parse(&payload).unwrap().payload(&payload);
+            let body = super::super::header::KencHeader::parse(&payload)
+                .unwrap()
+                .payload(&payload);
             let d = body.as_bytes();
-            eprintln!("  body len={} d[0]={} d[1]={} d[2]={}", body.len(), d[0], d[1], d.get(2).copied().unwrap_or(0));
+            eprintln!(
+                "  body len={} d[0]={} d[1]={} d[2]={}",
+                body.len(),
+                d[0],
+                d[1],
+                d.get(2).copied().unwrap_or(0)
+            );
 
             let js = fs::read(root.join("tour.js")).unwrap();
             let decoded_engine = super::super::viewer::extract_decoded_viewer_js(&js).unwrap();
             let wrapper_key = super::super::viewer::extract_key_from_viewer_js(&js).unwrap();
             let ctx = modern_engine::extract_modern_context(&decoded_engine, &wrapper_key).unwrap();
 
-            let row = ctx.rows.iter().find(|r| {
-                r.iter().copied().eq("krpano".bytes().map(u16::from))
-            }).unwrap();
+            let row = ctx
+                .rows
+                .iter()
+                .find(|r| r.iter().copied().eq("krpano".bytes().map(u16::from)))
+                .unwrap();
             let g = i64::from(row[5]) / 3;
             eprintln!("  krpano row[5]={} g={g}", row[5]);
 
             let replaced = body.replace(&ctx.replacement_token, "\\");
             if name.contains("pp") {
                 match modern_engine::subdiv_branch5_decode(&replaced, row, None, None) {
-                    Ok(text) => eprintln!("  OK plaintext ({} bytes): {:?}", text.len(), &text[..(<str as AsRef<str>>::as_ref(&text)).len().min(200)]),
+                    Ok(text) => eprintln!(
+                        "  OK plaintext ({} bytes): {:?}",
+                        text.len(),
+                        &text[..(<str as AsRef<str>>::as_ref(&text)).len().min(200)]
+                    ),
                     Err(e) => eprintln!("  FAIL: {e:?}"),
                 }
             } else {
                 let mf = modern_engine::build_mf_table(&ctx).unwrap_or_default();
                 match modern_engine::subdiv_branch5_decode(&replaced, row, None, Some(&mf)) {
-                    Ok(text) => eprintln!("  OK plaintext ({} bytes): {:?}", text.len(), &text[..(<str as AsRef<str>>::as_ref(&text)).len().min(200)]),
+                    Ok(text) => eprintln!(
+                        "  OK plaintext ({} bytes): {:?}",
+                        text.len(),
+                        &text[..(<str as AsRef<str>>::as_ref(&text)).len().min(200)]
+                    ),
                     Err(e) => eprintln!("  FAIL: {e:?}"),
                 }
             }

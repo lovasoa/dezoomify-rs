@@ -59,9 +59,7 @@ impl KencHeader {
     pub fn parse(payload: &str) -> Result<Self, EncryptedKrpanoError> {
         let header = payload
             .get(..Self::LEN)
-            .ok_or(EncryptedKrpanoError::HeaderTooShort {
-                len: payload.len(),
-            })?;
+            .ok_or(EncryptedKrpanoError::HeaderTooShort { len: payload.len() })?;
         if !header.starts_with("KENC") {
             return Err(EncryptedKrpanoError::InvalidHeader {
                 header: header.to_string(),
@@ -70,8 +68,7 @@ impl KencHeader {
 
         let raw = header.to_string();
         let chars: Vec<char> = raw.chars().skip(4).collect();
-        let (mode_char, enc_char, src_char, flags_char) =
-            (chars[0], chars[1], chars[2], chars[3]);
+        let (mode_char, enc_char, src_char, flags_char) = (chars[0], chars[1], chars[2], chars[3]);
 
         let byte6_value = (src_char as u32).wrapping_sub(Self::K) as i32;
         let mode_value = ((mode_char as u32).wrapping_sub(Self::K) >> 1) as i32;
@@ -80,21 +77,13 @@ impl KencHeader {
             10 => BodyCipher::ClassicZ,
             -14 => BodyCipher::ClassicB,
             0 | 2 => BodyCipher::Subdiv,
-            _ => {
-                return Err(EncryptedKrpanoError::InvalidHeader {
-                    header: raw,
-                })
-            }
+            _ => return Err(EncryptedKrpanoError::InvalidHeader { header: raw }),
         };
 
         let mode = match mode_value {
             0 => CipherMode::Public,
             1 => CipherMode::Protected,
-            _ => {
-                return Err(EncryptedKrpanoError::InvalidHeader {
-                    header: raw,
-                })
-            }
+            _ => return Err(EncryptedKrpanoError::InvalidHeader { header: raw }),
         };
 
         Ok(Self {

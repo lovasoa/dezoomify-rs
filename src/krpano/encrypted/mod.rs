@@ -102,10 +102,12 @@ pub fn decrypt_xml(
 
     match (header.cipher, header.mode, engine) {
         // ── ClassicZ (Modified Base85 → RC4 → LZ4 → UTF-8) ──
-
         (BodyCipher::ClassicZ, CipherMode::Public, EngineFamily::Modern) => {
             let ctx = modern_engine::extract_modern_context(&decoded_engine, &wrapper_key)?;
-            log::debug!("decrypt_xml: modern ClassicZ, default_key={:?}", ctx.default_key);
+            log::debug!(
+                "decrypt_xml: modern ClassicZ, default_key={:?}",
+                ctx.default_key
+            );
             branches::z_branch_to_plaintext(body, ctx.default_key.as_bytes(), false)
                 .map(String::into_bytes)
         }
@@ -121,7 +123,6 @@ pub fn decrypt_xml(
         }
 
         // ── ClassicB (Base64 → RC4 → UTF-8) ──
-
         (BodyCipher::ClassicB, CipherMode::Public, EngineFamily::Old) => {
             let ctx = old_engine::derive_old_license_key(&decoded_engine, &wrapper_key)?;
             let key = &ctx.default_key;
@@ -129,17 +130,11 @@ pub fn decrypt_xml(
                 return Err(EncryptedKrpanoError::MissingKey);
             }
             log::debug!("decrypt_xml: old ClassicB, default key");
-            branches::b_branch_to_plaintext_with_alphabet(
-                body,
-                &ctx.base64_alphabet,
-                key,
-                false,
-            )
-            .map(String::into_bytes)
+            branches::b_branch_to_plaintext_with_alphabet(body, &ctx.base64_alphabet, key, false)
+                .map(String::into_bytes)
         }
 
         // ── Subdiv (token replacement → we.subdiv branch 5) ──
-
         (BodyCipher::Subdiv, _, EngineFamily::Modern) => {
             let ctx = modern_engine::extract_modern_context(&decoded_engine, &wrapper_key)?;
             log::debug!(
@@ -151,7 +146,6 @@ pub fn decrypt_xml(
         }
 
         // ── Unsupported combinations ──
-
         (BodyCipher::Subdiv, _, EngineFamily::Old) => {
             log::debug!("decrypt_xml: Subdiv cipher with old engine — unsupported");
             Err(EncryptedKrpanoError::Unsupported)
@@ -288,21 +282,13 @@ mod tests {
             "2026-06-25-pp-02_special_chars" => {
                 Some(("KENCPUPR", BodyCipher::Subdiv, CipherMode::Public))
             }
-            "2026-06-25-pp-03_nested" => {
-                Some(("KENCPUPR", BodyCipher::Subdiv, CipherMode::Public))
-            }
-            "2026-06-25-pp-04_large" => {
-                Some(("KENCPUPR", BodyCipher::Subdiv, CipherMode::Public))
-            }
-            "2026-06-25-pp-05_deep" => {
-                Some(("KENCPUPR", BodyCipher::Subdiv, CipherMode::Public))
-            }
+            "2026-06-25-pp-03_nested" => Some(("KENCPUPR", BodyCipher::Subdiv, CipherMode::Public)),
+            "2026-06-25-pp-04_large" => Some(("KENCPUPR", BodyCipher::Subdiv, CipherMode::Public)),
+            "2026-06-25-pp-05_deep" => Some(("KENCPUPR", BodyCipher::Subdiv, CipherMode::Public)),
             "2026-06-25-rr_minimal" => {
                 Some(("KENCRURR", BodyCipher::Subdiv, CipherMode::Protected))
             }
-            "2026-06-25-rr_tour" => {
-                Some(("KENCRURR", BodyCipher::Subdiv, CipherMode::Protected))
-            }
+            "2026-06-25-rr_tour" => Some(("KENCRURR", BodyCipher::Subdiv, CipherMode::Protected)),
             "2026-06-25-rr_special" => {
                 Some(("KENCRURR", BodyCipher::Subdiv, CipherMode::Protected))
             }
@@ -384,7 +370,8 @@ mod tests {
             let header = KencHeader::parse(&payload)
                 .unwrap_or_else(|err| panic!("{}: {err}", xml_path.display()));
             assert_eq!(
-                header.raw, expected_header,
+                header.raw,
+                expected_header,
                 "{}: header mismatch",
                 xml_path.display()
             );
@@ -420,13 +407,15 @@ mod tests {
             let header = KencHeader::parse(&payload)
                 .unwrap_or_else(|err| panic!("{}: {err}", xml_path.display()));
             assert_eq!(
-                header.cipher, expected_cipher,
+                header.cipher,
+                expected_cipher,
                 "{}: cipher mismatch for header {}",
                 xml_path.display(),
                 header.raw
             );
             assert_eq!(
-                header.mode, expected_mode,
+                header.mode,
+                expected_mode,
                 "{}: mode mismatch for header {}",
                 xml_path.display(),
                 header.raw

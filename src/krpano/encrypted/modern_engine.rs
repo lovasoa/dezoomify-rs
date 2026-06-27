@@ -534,7 +534,10 @@ pub(crate) fn build_mf_table(
             let key = value[..bar_pos].to_string();
             let raw_val = &value[bar_pos + 1..];
             let cd: Vec<i64> = raw_val.bytes().map(|b| i64::from(b) + 37).collect();
-            log::debug!("build_mf_table: Mf[{key:?}] = Cd({raw_val:?}, 37) -> {} bytes", cd.len());
+            log::debug!(
+                "build_mf_table: Mf[{key:?}] = Cd({raw_val:?}, 37) -> {} bytes",
+                cd.len()
+            );
             mf.insert(key, cd);
         }
     }
@@ -606,7 +609,8 @@ pub(crate) fn subdiv_branch5_decode(
 
         if f < 0 && rr_c > 2 {
             // RR 1.24 path: look up mixing data from Mf table
-            let lookup_end = usize::try_from(3 + rr_c).map_err(|_| EncryptedKrpanoError::Unsupported)?;
+            let lookup_end =
+                usize::try_from(3 + rr_c).map_err(|_| EncryptedKrpanoError::Unsupported)?;
             let mf_key = if lookup_end <= d.len() {
                 std::str::from_utf8(&d[3..lookup_end]).unwrap_or("")
             } else {
@@ -645,8 +649,8 @@ pub(crate) fn subdiv_branch5_decode(
                 if idx1 >= trie_y.len() || idx2 >= trie_y.len() || idx3 >= trie_y.len() {
                     return Err(EncryptedKrpanoError::MissingKey);
                 }
-                let mixed =
-                    *key_val + coeff_x * (trie_y[idx1] + k) + t * (trie_y[idx2] + k) - a * (trie_y[idx3] + k);
+                let mixed = *key_val + coeff_x * (trie_y[idx1] + k) + t * (trie_y[idx2] + k)
+                    - a * (trie_y[idx3] + k);
                 *key_val = js_bitand(mixed, mask);
             }
         }
@@ -665,14 +669,10 @@ pub(crate) fn subdiv_branch5_decode(
     let mut out_b = 2_usize;
 
     while src < d.len() {
-        let safe_byte = |off: usize| -> i64 {
-            if off < d.len() { i64::from(d[off]) } else { 0 }
-        };
+        let safe_byte = |off: usize| -> i64 { if off < d.len() { i64::from(d[off]) } else { 0 } };
         let mut b = t * (safe_byte(src) * big_b - big_f)
             + safe_byte(src + 1)
-            + h * (safe_byte(src + 2) * w
-                + safe_byte(src + 3) * p
-                + safe_byte(src + 4) * t
+            + h * (safe_byte(src + 2) * w + safe_byte(src + 3) * p + safe_byte(src + 4) * t
                 - coeff_x);
         let key = keys[e];
         b = b + key - 2 * js_bitand(b, key);
@@ -825,9 +825,10 @@ fn krpano_utf8_decode(input: &[u8]) -> String {
             let g = input[idx + 2];
             let code = (u32::from(d & 15) << 12) | (u32::from(e & 63) << 6) | u32::from(g & 63);
             if code != 0xfeff
-                && let Some(ch) = char::from_u32(code) {
-                    out.push(ch);
-                }
+                && let Some(ch) = char::from_u32(code)
+            {
+                out.push(ch);
+            }
             idx += 3;
         }
     }
@@ -1251,7 +1252,9 @@ mod tests {
                     continue; // skip known non-key values
                 }
             }
-            match crate::krpano::encrypted::branches::decrypt_subdiv_via_classic_pipeline(body, &bytes) {
+            match crate::krpano::encrypted::branches::decrypt_subdiv_via_classic_pipeline(
+                body, &bytes,
+            ) {
                 Ok(plaintext) => {
                     eprintln!(
                         "KEY FOUND: row {row_id} key={:?} plaintext={:.80}",

@@ -246,10 +246,7 @@ fn unpack_old_wrapper(wrapper_key: &str) -> Result<OldWrapperPayload, EncryptedK
         return Err(EncryptedKrpanoError::MissingKey);
     }
 
-    Ok(OldWrapperPayload {
-        rows,
-        license_blob,
-    })
+    Ok(OldWrapperPayload { rows, license_blob })
 }
 
 /// Extract the protected key from the license blob's `case 7` record.
