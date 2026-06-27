@@ -219,7 +219,7 @@ fn hex_digit(byte: u8) -> Option<u8> {
 
 pub fn looks_like_modified_base85(input: &str) -> bool {
     input.len() >= codecs::MIN_PACKED_VIEWER_PAYLOAD_LEN
-        && input.len() % 5 == 0
+        && input.len().is_multiple_of(5)
         && input.bytes().all(|byte| {
             byte.checked_sub(35)
                 .map(|mut digit| {

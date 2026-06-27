@@ -716,11 +716,10 @@ fn krpano_utf8_decode(input: &[u8]) -> String {
             let e = input[idx + 1];
             let g = input[idx + 2];
             let code = (u32::from(d & 15) << 12) | (u32::from(e & 63) << 6) | u32::from(g & 63);
-            if code != 0xfeff {
-                if let Some(ch) = char::from_u32(code) {
+            if code != 0xfeff
+                && let Some(ch) = char::from_u32(code) {
                     out.push(ch);
                 }
-            }
             idx += 3;
         }
     }

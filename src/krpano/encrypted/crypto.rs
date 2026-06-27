@@ -25,9 +25,9 @@ pub fn decrypt_bytes(
 
     let mut mixed_key = vec![Some(0u8); prefix_len * 2];
     let mut out = 0;
-    for idx in 0..prefix_len {
+    for (idx, &input_i) in input.iter().enumerate().take(prefix_len) {
         let key_idx = idx & key_mask;
-        mixed_key[out] = Some(input[idx]);
+        mixed_key[out] = Some(input_i);
         mixed_key[out + 1] = key.get(key_idx).copied();
         out += 2;
     }
