@@ -15,6 +15,8 @@
 //! The static probe is the production path — it works with any modern engine
 //! without pre-existing data.
 
+use base64::{Engine as _, engine::general_purpose};
+
 use super::EncryptedKrpanoError;
 
 /// Context extracted from a modern krpano engine.
@@ -29,6 +31,10 @@ pub struct ModernEngineContext {
     pub kenc_constant: String,
     /// Checksum constant that varies by fixture family (22248, 22557, or 23293).
     pub checksum_constant: u32,
+    /// Side data from the we.subdiv unpacking, used for widened-key derivation.
+    pub side: Vec<u16>,
+    /// All unpacked rows, used for row-indexed key lookups.
+    pub rows: Vec<Vec<u16>>,
 }
 
 /// The `Ma` browser-name array shared by every modern krpano engine.
@@ -68,9 +74,13 @@ pub fn extract_modern_context(
         "extract_modern_context: found startup IIFE, checksum_constant={}",
         startup.constant
     );
-    let rows = unpack_krp_payload(wrapper_key, &startup.body, startup.constant)
+    let (rows, side) = unpack_krp_payload(wrapper_key, &startup.body, startup.constant)
         .map_err(|_| EncryptedKrpanoError::Unsupported)?;
-    log::debug!("extract_modern_context: unpacked {} rows", rows.len());
+    log::debug!(
+        "extract_modern_context: unpacked {} rows, {} side values",
+        rows.len(),
+        side.len()
+    );
 
     let default_key =
         find_row_by_value(&rows, "actions overflow").ok_or(EncryptedKrpanoError::MissingKey)?;
@@ -84,6 +94,8 @@ pub fn extract_modern_context(
         replacement_token,
         kenc_constant: "KENC".to_string(),
         checksum_constant: startup.constant,
+        side,
+        rows,
     })
 }
 
@@ -267,7 +279,7 @@ fn unpack_krp_payload(
     key: &str,
     startup_body: &str,
     startup_constant: u32,
-) -> Result<Vec<Vec<u16>>, String> {
+) -> Result<(Vec<Vec<u16>>, Vec<u16>), String> {
     let lf = build_lf_shuffle();
     let body = function_body(startup_body);
     let k = compute_checksum(body);
@@ -300,6 +312,7 @@ fn unpack_krp_payload(
     let mut t: i32 = i32::from(key_bytes[z_orig as usize - 1]); // JS: key.charCodeAt(z-1)
     let mut d = z_orig as usize;
     let mut rows: Vec<Vec<u16>> = Vec::new();
+    let mut side: Vec<u16> = Vec::new();
     let mut current: Vec<u16> = Vec::new();
     let mut e_flag: i32 = 1;
     let mut h: i32 = 0;
@@ -336,6 +349,8 @@ fn unpack_krp_payload(
             let gv = (g + n as i32) as u16;
             if h == 0 {
                 current.push(gv);
+            } else {
+                side.push(gv);
             }
             e_flag += 1;
         }
@@ -361,7 +376,7 @@ fn unpack_krp_payload(
     if gv != t {
         return Err(format!("checksum mismatch: got {gv}, expected {t}"));
     }
-    Ok(rows)
+    Ok((rows, side))
 }
 
 // =========================================================================
@@ -386,12 +401,340 @@ fn find_row_by_value(rows: &[Vec<u16>], target: &str) -> Option<String> {
 }
 
 // =========================================================================
+// P/P and R/R subdiv branch
+// =========================================================================
+
+/// Decode the modern `P/P` and 2023-style `R/R` XML body.
+///
+/// krpano first replaces the configured token (`z` in current fixtures) with
+/// `\`, then sends the result to `we.subdiv` branch 5 via the XML parser
+/// (`_(9493, body, 1)`).  `R/R` bodies additionally read the `pk=` protection
+/// record from the wrapper-key side data through the branch-12 trie.
+pub fn pp_rr_branch_to_plaintext(
+    body: &str,
+    ctx: &ModernEngineContext,
+) -> Result<String, EncryptedKrpanoError> {
+    if ctx.replacement_token.is_empty() {
+        return Err(EncryptedKrpanoError::Unsupported);
+    }
+    let replaced = body.replace(&ctx.replacement_token, "\\");
+    let row = find_krpano_row(&ctx.rows).ok_or(EncryptedKrpanoError::Unsupported)?;
+    let protection_key = extract_protection_key(ctx)?;
+    let plaintext = subdiv_branch5_decode(&replaced, row, protection_key.as_deref())?;
+    let normalized = plaintext.trim_start_matches('\u{feff}').trim_start();
+    if normalized.starts_with("<krpano") {
+        Ok(plaintext)
+    } else {
+        Err(EncryptedKrpanoError::Unsupported)
+    }
+}
+
+fn find_krpano_row(rows: &[Vec<u16>]) -> Option<&[u16]> {
+    rows.iter().find_map(|row| {
+        if row.iter().copied().eq("krpano".bytes().map(u16::from)) {
+            Some(row.as_slice())
+        } else {
+            None
+        }
+    })
+}
+
+fn extract_protection_key(
+    ctx: &ModernEngineContext,
+) -> Result<Option<String>, EncryptedKrpanoError> {
+    let records = side_records(ctx)?;
+    let key = records
+        .into_iter()
+        .find_map(|record| record.strip_prefix("pk=").map(ToOwned::to_owned));
+    if let Some(key) = &key {
+        log::debug!(
+            "extract_protection_key: found pk= record ({} chars)",
+            key.len()
+        );
+    } else {
+        log::debug!("extract_protection_key: no pk= record in side data");
+    }
+    Ok(key)
+}
+
+fn side_records(ctx: &ModernEngineContext) -> Result<Vec<String>, EncryptedKrpanoError> {
+    if ctx.side.is_empty() {
+        return Ok(Vec::new());
+    }
+    let encoded: String = ctx
+        .side
+        .iter()
+        .filter_map(|&c| char::from_u32(u32::from(c)))
+        .collect();
+    let decoded = general_purpose::STANDARD
+        .decode(encoded.as_bytes())
+        .map_err(|_| EncryptedKrpanoError::Unsupported)?;
+    let text = krpano_utf8_decode(&decoded);
+    Ok(text.split(';').map(str::to_owned).collect())
+}
+
+fn subdiv_branch5_decode(
+    input: &str,
+    row: &[u16],
+    protection_key: Option<&str>,
+) -> Result<String, EncryptedKrpanoError> {
+    let d = input.as_bytes();
+    if d.len() < 2 || row.len() <= 5 {
+        return Err(EncryptedKrpanoError::Unsupported);
+    }
+
+    let g = i64::from(row[5]) / 3;
+    if g <= 0 {
+        return Err(EncryptedKrpanoError::Unsupported);
+    }
+    let f = i64::from(d[0]) - g;
+    let mut h = i64::from(d[1]) - g;
+    if f != 0 && f != 1 {
+        return Err(EncryptedKrpanoError::Unsupported);
+    }
+    if f == 1 && protection_key.is_none() {
+        return Err(EncryptedKrpanoError::MissingKey);
+    }
+    if h <= 0 {
+        return Err(EncryptedKrpanoError::Unsupported);
+    }
+
+    let mut k = 2_i64;
+    let mut m = 3_i64;
+    let mut v = h + k;
+    let q = (v * h + h) / h;
+    let t = v + h * k;
+    let w = t * t * h;
+    let p = w * t * h;
+    let big_b = p * h * h;
+    let big_f = big_b * v * h;
+    let big_n = (p + w) * (g - k) + k * v * (g + v - 1);
+    let a = p * m / w;
+    let g_len = usize::try_from(g).map_err(|_| EncryptedKrpanoError::Unsupported)?;
+    let mut stream = usize::try_from(k).map_err(|_| EncryptedKrpanoError::Unsupported)?;
+    let mut keys = vec![0_i64; g_len];
+
+    for key in &mut keys {
+        if stream + 1 >= d.len() {
+            return Err(EncryptedKrpanoError::Unsupported);
+        }
+        *key = big_b * i64::from(d[stream]) * v + (i64::from(d[stream + 1]) - g + h) * w;
+        stream += 2;
+    }
+
+    if f == 1 {
+        let key = protection_key.ok_or(EncryptedKrpanoError::MissingKey)?;
+        let trie_x = 1_i64;
+        let trie_y: Vec<i64> = key.bytes().map(|byte| i64::from(byte) + trie_x).collect();
+        k = -trie_x;
+        let mask = a * (1 + (a + 1) * (1 + (a + 1) * (1 + (a + 1))));
+        let idx1_base = usize::try_from(v).map_err(|_| EncryptedKrpanoError::MissingKey)?;
+        let idx2_base = usize::try_from(t * m).map_err(|_| EncryptedKrpanoError::MissingKey)?;
+        let idx3_base = usize::try_from(t * v).map_err(|_| EncryptedKrpanoError::MissingKey)?;
+        for (r, key) in keys.iter_mut().enumerate() {
+            let idx1 = idx1_base + r;
+            let idx2 = idx2_base + r;
+            let idx3 = idx3_base
+                .checked_sub(r)
+                .ok_or(EncryptedKrpanoError::MissingKey)?;
+            if idx1 >= trie_y.len() || idx2 >= trie_y.len() || idx3 >= trie_y.len() {
+                return Err(EncryptedKrpanoError::MissingKey);
+            }
+            let mixed =
+                *key + big_n * (trie_y[idx1] + k) + t * (trie_y[idx2] + k) - a * (trie_y[idx3] + k);
+            *key = js_bitand(mixed, mask);
+        }
+    }
+
+    let ba = i64::try_from(d.len()).map_err(|_| EncryptedKrpanoError::Unsupported)?;
+    let r_len = ((ba - 2 * (1 + g)) * q / h) >> 1;
+    if r_len < 0 {
+        return Err(EncryptedKrpanoError::Unsupported);
+    }
+    let mut rbuf =
+        vec![0_u8; usize::try_from(r_len).map_err(|_| EncryptedKrpanoError::Unsupported)?];
+    let mut src = usize::try_from(2 * (1 + g)).map_err(|_| EncryptedKrpanoError::Unsupported)?;
+    let mut out_a = 0_usize;
+    let mut e = 0_usize;
+    let mut out_b = 2_usize;
+
+    while src < d.len() {
+        if src + 4 >= d.len() {
+            return Err(EncryptedKrpanoError::Unsupported);
+        }
+        let mut b = t * (i64::from(d[src]) * big_b - big_f)
+            + i64::from(d[src + 1])
+            + h * (i64::from(d[src + 2]) * w
+                + i64::from(d[src + 3]) * p
+                + i64::from(d[src + 4]) * t
+                - big_n);
+        let key = keys[e];
+        b = b + key - 2 * js_bitand(b, key);
+        v = js_shr(b, q);
+        e += 1;
+        if e >= g_len {
+            e = 0;
+        }
+        let n = js_shr(v, q);
+        src += 5;
+        let f3 = js_shr(n, q);
+        if out_a + 1 >= rbuf.len() || out_b + 1 >= rbuf.len() {
+            return Err(EncryptedKrpanoError::Unsupported);
+        }
+        rbuf[out_a] = f3 as u8;
+        rbuf[out_a + 1] = js_bitand(n, a) as u8;
+        rbuf[out_b] = js_bitand(v, a) as u8;
+        rbuf[out_b + 1] = js_bitand(b, a) as u8;
+        out_a += 4;
+        out_b += 4;
+    }
+
+    let n_base = a + 1;
+    let half_q = q / 2;
+    let half = usize::try_from(half_q).map_err(|_| EncryptedKrpanoError::Unsupported)?;
+    if rbuf.len() <= half + 3 || rbuf.len() < 4 {
+        return Err(EncryptedKrpanoError::Unsupported);
+    }
+    let out_len = i64::from(rbuf[0])
+        + i64::from(rbuf[1]) * n_base
+        + i64::from(rbuf[2]) * n_base * n_base
+        + i64::from(rbuf[3]) * n_base * n_base * n_base;
+    if out_len < 0 {
+        return Err(EncryptedKrpanoError::Unsupported);
+    }
+    let mut out =
+        vec![0_u8; usize::try_from(out_len).map_err(|_| EncryptedKrpanoError::Unsupported)?];
+    let ba = i64::from(rbuf[half])
+        + q
+        + (i64::from(rbuf[half + 1])
+            + n_base * (i64::from(rbuf[half + 2]) + n_base * i64::from(rbuf[half + 3])))
+            * n_base;
+    if ba < 0 {
+        return Err(EncryptedKrpanoError::Unsupported);
+    }
+    let ba = usize::try_from(ba).map_err(|_| EncryptedKrpanoError::Unsupported)?;
+    let n = a - t + 2;
+    let mut read = usize::try_from(q).map_err(|_| EncryptedKrpanoError::Unsupported)?;
+    let mut write = 0_usize;
+    while read < ba {
+        if read >= rbuf.len() {
+            return Err(EncryptedKrpanoError::Unsupported);
+        }
+        v = i64::from(rbuf[read]);
+        read += 1;
+        k = js_shr(v, half_q);
+        m = k + n;
+        while m == a {
+            if read >= rbuf.len() {
+                return Err(EncryptedKrpanoError::Unsupported);
+            }
+            m = i64::from(rbuf[read]);
+            read += 1;
+            k += m;
+        }
+        let literal_len = usize::try_from(k).map_err(|_| EncryptedKrpanoError::Unsupported)?;
+        if read + literal_len > rbuf.len() || write + literal_len > out.len() {
+            return Err(EncryptedKrpanoError::Unsupported);
+        }
+        out[write..write + literal_len].copy_from_slice(&rbuf[read..read + literal_len]);
+        read += literal_len;
+        write += literal_len;
+
+        if read < ba {
+            if read + 1 >= rbuf.len() {
+                return Err(EncryptedKrpanoError::Unsupported);
+            }
+            let offset = i64::from(rbuf[read]) | (i64::from(rbuf[read + 1]) << q);
+            read += 2;
+            h = i64::try_from(write).map_err(|_| EncryptedKrpanoError::Unsupported)? - offset;
+            if h < 0 {
+                return Err(EncryptedKrpanoError::Unsupported);
+            }
+            k = js_bitand(v, t - 2);
+            m = k + n;
+            while m == a {
+                if read >= rbuf.len() {
+                    return Err(EncryptedKrpanoError::Unsupported);
+                }
+                m = i64::from(rbuf[read]);
+                read += 1;
+                k += m;
+            }
+            let copy_len =
+                usize::try_from(k + half_q).map_err(|_| EncryptedKrpanoError::Unsupported)?;
+            let mut copy_from =
+                usize::try_from(h).map_err(|_| EncryptedKrpanoError::Unsupported)?;
+            if write + copy_len > out.len() {
+                return Err(EncryptedKrpanoError::Unsupported);
+            }
+            for _ in 0..copy_len {
+                if copy_from >= write {
+                    return Err(EncryptedKrpanoError::Unsupported);
+                }
+                out[write] = out[copy_from];
+                write += 1;
+                copy_from += 1;
+            }
+        }
+    }
+
+    Ok(krpano_utf8_decode(&out))
+}
+
+fn js_shr(value: i64, shift: i64) -> i64 {
+    i64::from((value as i32) >> ((shift as u32) & 31))
+}
+
+fn js_bitand(lhs: i64, rhs: i64) -> i64 {
+    i64::from((lhs as i32) & (rhs as i32))
+}
+
+fn krpano_utf8_decode(input: &[u8]) -> String {
+    let mut out = String::new();
+    let mut idx = 0;
+    while idx < input.len() {
+        let d = input[idx];
+        if d < 128 {
+            if d > 0 {
+                out.push(char::from(d));
+            }
+            idx += 1;
+        } else if d > 191 && d < 224 {
+            if idx + 1 >= input.len() {
+                break;
+            }
+            let e = input[idx + 1];
+            let code = (u32::from(d & 31) << 6) | u32::from(e & 63);
+            if let Some(ch) = char::from_u32(code) {
+                out.push(ch);
+            }
+            idx += 2;
+        } else {
+            if idx + 2 >= input.len() {
+                break;
+            }
+            let e = input[idx + 1];
+            let g = input[idx + 2];
+            let code = (u32::from(d & 15) << 12) | (u32::from(e & 63) << 6) | u32::from(g & 63);
+            if code != 0xfeff {
+                if let Some(ch) = char::from_u32(code) {
+                    out.push(ch);
+                }
+            }
+            idx += 3;
+        }
+    }
+    out
+}
+
+// =========================================================================
 // JSON fallback
 // =========================================================================
 
 /// The JSON format produced by `tools/extract_modern_rows.mjs`.
 #[cfg(test)]
 use serde::Deserialize;
+
 #[cfg(test)]
 use std::collections::HashMap;
 
@@ -436,6 +779,8 @@ pub fn parse_rows_json(json: &str) -> Option<ModernEngineContext> {
         replacement_token,
         kenc_constant: "KENC".to_string(),
         checksum_constant: data.checksum_constant,
+        side: Vec::new(),
+        rows: Vec::new(),
     })
 }
 
@@ -622,6 +967,47 @@ mod tests {
     }
 
     #[test]
+    fn side_data_exposes_2023_protection_key() {
+        let (decoded, key) = load_fixture("2023-04-30").expect("2023-04-30");
+        let ctx = extract_modern_context(&decoded, &key).unwrap();
+        let key = extract_protection_key(&ctx).unwrap().expect("pk= record");
+        assert_eq!(key.len(), 128);
+        assert!(key.starts_with("UZbbbXZHUbbb"));
+    }
+
+    #[test]
+    fn subdiv_branch5_decrypts_2023_rr_fixture() {
+        let root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/krpano/encrypted/2023-04-30");
+        let xml = fs::read(root.join("tour.xml")).unwrap();
+        let payload = viewer::encrypted_payload(&xml).unwrap();
+        let header = super::super::header::KencHeader::parse(&payload).unwrap();
+        let body = header.payload(&payload);
+        let (decoded, key) = load_fixture("2023-04-30").expect("2023-04-30");
+        let ctx = extract_modern_context(&decoded, &key).unwrap();
+
+        let plaintext = pp_rr_branch_to_plaintext(body, &ctx).unwrap();
+        assert_eq!(plaintext.len(), 14_937);
+        assert!(plaintext.trim_start().starts_with("<krpano"));
+    }
+
+    #[test]
+    fn subdiv_branch5_decrypts_2023_pp_fixture() {
+        let root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/krpano/encrypted/2023-04-30-PP");
+        let xml = fs::read(root.join("tour.xml")).unwrap();
+        let payload = viewer::encrypted_payload(&xml).unwrap();
+        let header = super::super::header::KencHeader::parse(&payload).unwrap();
+        let body = header.payload(&payload);
+        let (decoded, key) = load_fixture("2023-04-30-PP").expect("2023-04-30-PP");
+        let ctx = extract_modern_context(&decoded, &key).unwrap();
+
+        let plaintext = pp_rr_branch_to_plaintext(body, &ctx).unwrap();
+        assert_eq!(plaintext.len(), 1_859);
+        assert!(plaintext.trim_start().starts_with("<krpano"));
+    }
+
+    #[test]
     #[ignore]
     fn analysis_prints_krpano_124_context_clues() {
         for name in ["2026-06-25-pp-01_minimal", "2026-06-25-rr_minimal"] {
@@ -654,7 +1040,8 @@ mod tests {
                 Err(err) => eprintln!("{name}: context error={err}"),
             }
             if let Some(startup) = find_startup_iife(text, &key) {
-                let rows = unpack_krp_payload(&key, &startup.body, startup.constant).unwrap();
+                let (rows, _side) =
+                    unpack_krp_payload(&key, &startup.body, startup.constant).unwrap();
                 eprintln!("{name}: rows={}", rows.len());
                 for (idx, row) in rows.iter().enumerate() {
                     let value: String = row
@@ -735,6 +1122,44 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
+    fn try_all_rows_as_rr_keys_for_2023_04_30() {
+        // Try every row value from the 2023-04-30 rows.json as a potential RR key
+        let json = load_rows_json("2023-04-30");
+        let root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/krpano/encrypted/2023-04-30");
+        let xml = fs::read(root.join("tour.xml")).unwrap();
+        let payload = viewer::encrypted_payload(&xml).unwrap();
+        let header = super::super::header::KencHeader::parse(&payload).unwrap();
+        let body = header.payload(&payload);
+
+        let rows_json: RowsJson = serde_json::from_str(&json).unwrap();
+        for (row_id, hex) in &rows_json.rows {
+            let bytes: Vec<u8> = (0..hex.len())
+                .step_by(2)
+                .filter_map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
+                .collect();
+            if bytes.is_empty() || bytes.len() > 64 {
+                continue;
+            }
+            if let Ok(s) = String::from_utf8(bytes.clone()) {
+                if s == "actions overflow" || s == "z" || s == "KENC" {
+                    continue; // skip known non-key values
+                }
+            }
+            match crate::krpano::encrypted::branches::decrypt_rr_branch(body, &bytes) {
+                Ok(plaintext) => {
+                    eprintln!(
+                        "KEY FOUND: row {row_id} key={:?} plaintext={:.80}",
+                        bytes, plaintext
+                    );
+                }
+                Err(_) => {}
+            }
+        }
+        eprintln!("done");
+    }
+    #[test]
     fn json_and_static_probe_agree_on_rows() {
         for name in [
             "2018-04-04",
@@ -751,8 +1176,16 @@ mod tests {
             let ctx_json =
                 parse_rows_json(&json).unwrap_or_else(|| panic!("{name} json parse failed"));
             assert_eq!(
-                ctx_static, ctx_json,
-                "{name}: static probe and JSON disagree"
+                ctx_static.default_key, ctx_json.default_key,
+                "{name}: default_key"
+            );
+            assert_eq!(
+                ctx_static.replacement_token, ctx_json.replacement_token,
+                "{name}: replacement_token"
+            );
+            assert_eq!(
+                ctx_static.checksum_constant, ctx_json.checksum_constant,
+                "{name}: checksum"
             );
         }
     }

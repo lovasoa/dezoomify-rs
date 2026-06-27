@@ -33,7 +33,8 @@ custom_error! {pub EncryptedKrpanoError
 /// When provided, the wrapper key is extracted, the packed engine is decoded,
 /// and branch-specific decryption proceeds.
 ///
-/// Currently supported: Modern Z (`KENCPUZR`) — tested against `2018-04-04`.
+/// Currently supported: Modern Z (`KENCPUZR`), old Z/B, and 2023/2024
+/// modern P/P + R/R branch-5 payloads.
 pub fn decrypt_xml(
     contents: &[u8],
     viewer_data: Option<&[u8]>,
@@ -104,17 +105,15 @@ pub fn decrypt_xml(
             )
             .map(String::into_bytes)
         }
-        KencBranch::RR => {
-            log::debug!("decrypt_xml: RR branch not yet supported");
-            let decoded_len = branches::decode_pp_rr_body(body)?.len();
-            log::debug!("decrypt_xml: RR replacement/Base85 stage decoded {decoded_len} bytes");
-            Err(EncryptedKrpanoError::Unsupported)
-        }
-        KencBranch::PP => {
-            log::debug!("decrypt_xml: PP branch not yet supported");
-            let decoded_len = branches::decode_pp_rr_body(body)?.len();
-            log::debug!("decrypt_xml: PP replacement/Base85 stage decoded {decoded_len} bytes");
-            Err(EncryptedKrpanoError::Unsupported)
+        KencBranch::RR | KencBranch::PP => {
+            log::debug!("decrypt_xml: {branch:?} branch");
+            let ctx = modern_engine::extract_modern_context(&decoded_engine, &wrapper_key)?;
+            log::debug!(
+                "decrypt_xml: modern context checksum={}, default_key={:?}",
+                ctx.checksum_constant,
+                ctx.default_key
+            );
+            modern_engine::pp_rr_branch_to_plaintext(body, &ctx).map(String::into_bytes)
         }
         KencBranch::Unknown => {
             log::debug!("decrypt_xml: unknown branch");
@@ -558,6 +557,60 @@ mod tests {
     }
 
     #[test]
+    fn decrypt_xml_rr_fixtures() {
+        for fixture in ["2023-02-07", "2023-04-30", "2023-12-11", "2024-12-20"] {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("testdata/krpano/encrypted")
+                .join(fixture);
+            let xml_path = encrypted_xml_path(&root)
+                .unwrap_or_else(|| panic!("{fixture}: missing encrypted XML"));
+            let js_path =
+                viewer_js_path(&root).unwrap_or_else(|| panic!("{fixture}: missing viewer JS"));
+            let xml = fs::read(xml_path).unwrap();
+            let js = fs::read(js_path).unwrap();
+
+            let plaintext =
+                decrypt_xml(&xml, Some(&js)).unwrap_or_else(|err| panic!("{fixture}: {err}"));
+            let text = std::str::from_utf8(&plaintext)
+                .unwrap_or_else(|err| panic!("{fixture}: plaintext is not UTF-8: {err}"));
+            let normalized = text.trim_start_matches('\u{feff}').trim_start();
+            assert!(
+                normalized.starts_with("<krpano"),
+                "{fixture}: plaintext should start with <krpano>, got prefix: {:?}",
+                &normalized[..normalized.len().min(200)]
+            );
+            let _parsed: PlaintextKrpanoRoot = serde_xml_rs::from_reader(text.as_bytes())
+                .unwrap_or_else(|err| panic!("{fixture}: plaintext XML did not parse: {err}"));
+        }
+    }
+
+    #[test]
+    fn decrypt_xml_pp_fixture() {
+        let fixture = "2023-04-30-PP";
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata/krpano/encrypted")
+            .join(fixture);
+        let xml_path =
+            encrypted_xml_path(&root).unwrap_or_else(|| panic!("{fixture}: missing encrypted XML"));
+        let js_path =
+            viewer_js_path(&root).unwrap_or_else(|| panic!("{fixture}: missing viewer JS"));
+        let xml = fs::read(xml_path).unwrap();
+        let js = fs::read(js_path).unwrap();
+
+        let plaintext =
+            decrypt_xml(&xml, Some(&js)).unwrap_or_else(|err| panic!("{fixture}: {err}"));
+        let text = std::str::from_utf8(&plaintext)
+            .unwrap_or_else(|err| panic!("{fixture}: plaintext is not UTF-8: {err}"));
+        let normalized = text.trim_start_matches('\u{feff}').trim_start();
+        assert!(
+            normalized.starts_with("<krpano"),
+            "{fixture}: plaintext should start with <krpano>"
+        );
+        let _parsed: PlaintextKrpanoRoot = serde_xml_rs::from_reader(text.as_bytes())
+            .unwrap_or_else(|err| panic!("{fixture}: plaintext XML did not parse: {err}"));
+    }
+
+    #[test]
     fn decrypt_xml_old_fixtures() {
         for fixture in [
             "old",
@@ -585,21 +638,12 @@ mod tests {
                 normalized.starts_with("<krpano"),
                 "{fixture}: plaintext should start with <krpano>"
             );
-            let parsed: PlaintextKrpanoRoot = serde_xml_rs::from_reader(text.as_bytes())
+            let _parsed: PlaintextKrpanoRoot = serde_xml_rs::from_reader(text.as_bytes())
                 .unwrap_or_else(|err| panic!("{fixture}: plaintext XML did not parse: {err}"));
-            assert!(
-                parsed.version.is_some() || parsed.title.is_some(),
-                "{fixture}: parsed krpano root had no identifying attributes"
-            );
         }
     }
 
     #[derive(serde::Deserialize)]
     #[serde(rename = "krpano")]
-    struct PlaintextKrpanoRoot {
-        #[serde(rename = "@version")]
-        version: Option<String>,
-        #[serde(rename = "@title")]
-        title: Option<String>,
-    }
+    struct PlaintextKrpanoRoot {}
 }

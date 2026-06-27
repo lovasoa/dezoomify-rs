@@ -7,29 +7,34 @@ use super::crypto;
 /// The modern krpano engine resource-loader branch for KENCPUPR / KENCRURR
 /// headers rewrites `z` → `\` before further processing.  The backslash is
 /// a valid modified-Base85 character so the resulting string is decodable.
-pub fn replace_z_with_backslash(body: &str) -> String {
+#[cfg(test)]
+fn replace_z_with_backslash(body: &str) -> String {
     body.replace('z', "\\")
 }
 
 /// Decode a P/P or R/R encrypted body into raw (still byte-encrypted) bytes.
 ///
 /// Pipeline: `z`→`\` → strip `%*` or `$*<key-id>@` envelope → modified-Base85 decode.
-pub fn decode_pp_rr_body(body: &str) -> Result<Vec<u8>, EncryptedKrpanoError> {
+#[cfg(test)]
+fn decode_pp_rr_body(body: &str) -> Result<Vec<u8>, EncryptedKrpanoError> {
     let replaced = replace_z_with_backslash(body);
     let envelope = parse_pp_rr_envelope(&replaced);
     codecs::decode_modified_base85(envelope.payload)
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PpRrEnvelope<'a> {
-    pub key_id: Option<&'a str>,
-    pub payload: &'a str,
+struct PpRrEnvelope<'a> {
+    key_id: Option<&'a str>,
+    payload: &'a str,
 }
 
-pub fn parse_pp_rr_envelope(replaced_body: &str) -> PpRrEnvelope<'_> {
+#[cfg(test)]
+fn parse_pp_rr_envelope(replaced_body: &str) -> PpRrEnvelope<'_> {
     PpRrEnvelope::parse(replaced_body)
 }
 
+#[cfg(test)]
 impl<'a> PpRrEnvelope<'a> {
     fn parse(replaced_body: &'a str) -> Self {
         if let Some(payload) = replaced_body.strip_prefix("%*") {
@@ -112,6 +117,46 @@ pub fn b_branch_to_plaintext_with_alphabet(
     let decoded = decode_custom_base64(body, alphabet)?;
     let decrypted = crypto::decrypt_bytes(&decoded, key, widened)?;
     String::from_utf8(decrypted).map_err(|_| EncryptedKrpanoError::Unsupported)
+}
+
+// ---------------------------------------------------------------------------
+// R/R branch transform
+// ---------------------------------------------------------------------------
+
+/// Decrypt an R/R-branch (KENCRURR) encrypted body into a UTF-8 plaintext string.
+///
+/// Pipeline: replace `z`→`\` → strip `$*key@` envelope → modified
+/// Base85 decode → RC4 byte-decrypt (widened key) → parse LZ4 block
+/// header → LZ4 decompress → UTF-8.
+///
+/// The `key` parameter is the widened per-branch key (e.g. derived from
+/// `_(9525, 1)` in the stateful `we.subdiv` path).  When the key is not
+/// yet available this function returns `Err(Unsupported)`; the caller
+/// should continue attempting other branches or fall back.
+#[cfg(test)]
+pub(crate) fn decrypt_rr_branch(body: &str, key: &[u8]) -> Result<String, EncryptedKrpanoError> {
+    let decoded = decode_pp_rr_body(body)?;
+    let decrypted = crypto::decrypt_bytes(&decoded, key, true)?;
+
+    if decrypted.len() < codecs::PACKED_VIEWER_HEADER_LEN {
+        return Err(EncryptedKrpanoError::InvalidLz4Block);
+    }
+
+    let decompressed_len = read_u24_le(&decrypted[0..3]);
+    if decompressed_len == 0 || decompressed_len > codecs::MAX_DECODED_VIEWER_JS_LEN {
+        return Err(EncryptedKrpanoError::InvalidLz4Block);
+    }
+    let compressed_end = codecs::PACKED_VIEWER_HEADER_LEN + read_u24_le(&decrypted[4..7]);
+    if compressed_end > decrypted.len() {
+        return Err(EncryptedKrpanoError::InvalidLz4Block);
+    }
+
+    let decompressed = codecs::lz4_decompress_block(
+        &decrypted[codecs::PACKED_VIEWER_HEADER_LEN..],
+        decompressed_len,
+        compressed_end - codecs::PACKED_VIEWER_HEADER_LEN,
+    )?;
+    String::from_utf8(decompressed).map_err(|_| EncryptedKrpanoError::Unsupported)
 }
 
 fn decode_custom_base64(input: &str, alphabet: &str) -> Result<Vec<u8>, EncryptedKrpanoError> {
@@ -260,6 +305,8 @@ mod tests {
         }
     }
 
+    /// Decrypt an R/R branch encrypted body into a UTF-8 plaintext string.
+    ///
     #[test]
     #[ignore]
     fn analysis_prints_pp_rr_known_plaintext_stage_facts() {
@@ -418,6 +465,44 @@ mod tests {
                 normalized.starts_with("<krpano"),
                 "{fixture}: plaintext should start with <krpano>: {}",
                 &plaintext[..200.min(plaintext.len())]
+            );
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // R/R branch pipeline stage tests
+    // ---------------------------------------------------------------------
+
+    /// Verify the old RR RC4/LZ4 hypothesis still fails for 2023 RR fixtures.
+    ///
+    /// The working PP/RR implementation lives in `modern_engine::pp_rr_branch_to_plaintext`;
+    /// these checks are retained as regression coverage for the discarded pipeline.
+    #[test]
+    fn rr_branch_stage_vectors() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/krpano/encrypted");
+        for fixture in ["2023-02-07", "2023-04-30", "2023-12-11", "2024-12-20"] {
+            let dir = root.join(fixture);
+            let xml = fs::read_to_string(dir.join("tour.xml")).unwrap();
+            let payload = viewer::encrypted_payload(xml.as_bytes()).unwrap();
+            let header = super::super::header::KencHeader::parse(&payload).unwrap();
+            assert_eq!(
+                header.branch(),
+                super::super::header::KencBranch::RR,
+                "{fixture}: expected RR branch"
+            );
+
+            let body = header.payload(&payload);
+            let decoded = decode_pp_rr_body(body).unwrap();
+            assert!(!decoded.is_empty(), "{fixture}: decoded after Base85");
+
+            let decrypted = crypto::decrypt_bytes(&decoded, b"actions overflow", true).unwrap();
+            assert!(!decrypted.is_empty(), "{fixture}: decrypted after RC4");
+
+            // This discarded RC4/LZ4 pipeline is expected to fail; current
+            // 2023 PP/RR fixtures use modern_engine's branch-5 decoder.
+            assert!(
+                decrypt_rr_branch(body, b"actions overflow").is_err(),
+                "{fixture}: RR decrypt with default RC4/LZ4 path should fail"
             );
         }
     }
