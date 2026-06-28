@@ -133,8 +133,16 @@ pub fn derive_old_license_key(
         .map(|key| key.as_bytes().to_vec())
         .unwrap_or_default();
     let base64_alphabet = find_old_base64_alphabet_row_index(decoded_engine)
-        .and_then(|index| unpacked.rows.get(index))
-        .cloned()
+        .and_then(|index| unpacked.rows.get(index).cloned())
+        .filter(|alpha| alpha.len() >= 65)
+        .or_else(|| {
+            // Fallback: scan all rows for a row that looks like a Base64 alphabet
+            unpacked
+                .rows
+                .iter()
+                .find(|row| row.len() >= 65 && row.starts_with("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
+                .cloned()
+        })
         .unwrap_or_default();
     let protected_key = extract_license_record(&unpacked.license_blob, key_tag)
         .ok()

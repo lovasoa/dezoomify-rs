@@ -383,21 +383,24 @@ The root check now skips a leading BOM, XML processing instructions, and comment
 
 The decompressor's key derivation is identical across fixtures (same `g`, `h`, `v`, `q`, `t`, `big_b`, `big_f`, `coeff_x`, `a`). The keys read from `d[2..2+2*g]` differ per fixture (as expected — they are ciphertext-derived), and the compressed data region (`d[stream+2*g..]`) differs in both length and content. All observed 1.24 bodies now decrypt end-to-end.
 
-### 6.2. KENCRUBR (ClassicB + Protected) — blocking issues
+### 6.2. Blocking issues (three distinct failure modes)
 
-Two real-world `KENCRUBR` fixtures were added from krpano 1.19 tours. Both fail to decrypt for different reasons:
+Three real-world fixtures currently fail to decrypt, each for a different reason:
 
-**2015-08-04-KENCRUBR** (krpano 1.19-pr3, Old engine, wrapper_key=8223, engine_len=191689):
-- Header parses correctly as ClassicB + Protected.
-- Engine detected as Old (contains "KENC").
-- `derive_old_license_key` succeeds: extracts 525 `_[]` rows, 532-byte license blob, 128-byte protected key.
-- **Blocker**: `find_old_base64_alphabet_row_index` returns only a 26-char alphabet string. `decode_custom_base64` requires >=65 chars, so it returns `Unsupported`.
-- The `find_old_base64_alphabet_row_index` function searches for `"b64u8=function"` in the decoded engine to locate the alphabet row. This 1.19-pr3 engine may use a different helper name or pattern.
+**2015-08-04-KENCRUBR** (krpano 1.19-pr3, Old engine):
+- `find_old_base64_alphabet_row_index` returns only a 26-char alphabet.
+- `decode_custom_base64` rejects it with `ClassicBAlphabetTooShort`.
+- Key derivation otherwise succeeds (128-byte protected key, 525 rows).
 
-**2018-04-23-KENCRUBR** (krpano 1.19-pr16.1, Modern engine, wrapper_key=1768, engine_len=254755):
-- Header parses correctly.
-- Engine detected as Modern (no "KENC" in decoded source).
-- **Blocker**: The `decrypt_xml` dispatch table has no `(ClassicB, Protected, Modern)` arm. All existing ClassicB arms require Old engine.
+**2018-04-23-KENCRUBR** (krpano 1.19-pr16.1, Modern engine):
+- No `(ClassicB, Protected, Modern)` dispatch arm.
+- Returns `UnsupportedCombination{{ cipher="ClassicB", mode="Protected", engine="Modern" }}`.
+
+**2019-10-15-KENCPUPR-1.20** (krpano 1.20.2, Modern engine):
+- Viewer JS does not contain a `krp:` string literal.
+- `extract_key_from_viewer_js` returns `MissingKrpKey{{ candidates=N, js_len=201956 }}`.
+- Without the `krp:` wrapper string, `modern_engine::extract_modern_context` cannot unpack `we.subdiv`.
+- Krpano 1.20+ embeds keys differently; the extraction mechanism needs updating.
 
 ---
 
@@ -429,8 +432,9 @@ All fixtures under `testdata/krpano/encrypted/`. Each directory contains `tour.x
 | `2026-06-25-rr_minimal` | `KENCRURR` | Subdiv | Protected | modern (1.24) | Yes |
 | `2026-06-25-rr_special` | `KENCRURR` | Subdiv | Protected | modern (1.24) | Yes |
 | `2026-06-25-rr_tour` | `KENCRURR` | Subdiv | Protected | modern (1.24) | Yes |
-| `2015-08-04-KENCRUBR` | `KENCRUBR` | ClassicB | Protected | old (1.19-pr3, 2015-08-04) | **No** — alphabet extraction finds only 26 chars |
-| `2018-04-23-KENCRUBR` | `KENCRUBR` | ClassicB | Protected | modern (1.19-pr16.1, 2018-04-23) | **No** — no `(ClassicB, Protected, Modern)` arm |
+| `2015-08-04-KENCRUBR` | `KENCRUBR` | ClassicB | Protected | old (1.19-pr3) | **No** — `ClassicBAlphabetTooShort` (26 chars) |
+| `2018-04-23-KENCRUBR` | `KENCRUBR` | ClassicB | Protected | modern (1.19-pr16.1) | **No** — `UnsupportedCombination` (ClassicB+Protected+Modern) |
+| `2019-10-15-KENCPUPR-1.20` | `KENCPUPR` | Subdiv | Public | modern (1.20.2) | **No** — `MissingKrpKey` (no `krp:` in JS) |
 
 All 2026 fixtures: prefix `%*` for PP, `$*<key-id>@` for RR. RR key IDs: `FIXTURE_rr_minimal`, `PFIXTURE_rr_special...` (85 chars), `MFIXTURE_rr_tour...` (85 chars). Engine context (136 rows, checksum=23293), pk= side data (128 chars), and Mf table data extract successfully for all 8 fixtures. All observed 2026 fixtures decrypt end-to-end and match their expected `plaintext.xml` files.
 

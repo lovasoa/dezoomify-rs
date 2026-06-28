@@ -1024,7 +1024,7 @@ mod tests {
             .find(|p| p.exists())?;
         let js_data = fs::read(&js).ok()?;
         let decoded = viewer::extract_decoded_viewer_js(&js_data).ok()?;
-        let key = viewer::extract_key_from_viewer_js(&js_data)?;
+        let key = viewer::extract_key_from_viewer_js(&js_data).ok()?;
         Some((decoded, key))
     }
 

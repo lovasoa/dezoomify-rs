@@ -37,10 +37,13 @@ pub fn encrypted_payload(contents: &[u8]) -> Result<String, EncryptedKrpanoError
     Ok(payload)
 }
 
+/// Known wrapper key prefixes used across krpano versions.
+const WRAPPER_KEY_PREFIXES: &[&str] = &["krp:", "ptp:"];
+
 pub fn extract_key_from_viewer_js(contents: &[u8]) -> Result<String, EncryptedKrpanoError> {
     let text = String::from_utf8_lossy(contents);
     log::debug!(
-        "extract_key_from_viewer_js: scanning {} bytes for krp: wrapper key",
+        "extract_key_from_viewer_js: scanning {} bytes for wrapper key",
         contents.len()
     );
     let mut candidates = 0usize;
@@ -48,16 +51,19 @@ pub fn extract_key_from_viewer_js(contents: &[u8]) -> Result<String, EncryptedKr
     while let Some((literal, next_idx)) = next_js_string_literal(&text, idx) {
         idx = next_idx;
         candidates += 1;
-        if literal.starts_with("krp:") {
-            log::debug!(
-                "extract_key_from_viewer_js: found krp: key at offset {}, length {}",
-                next_idx - literal.len() - 2,
-                literal.len()
-            );
-            return Ok(literal);
+        for prefix in WRAPPER_KEY_PREFIXES {
+            if literal.starts_with(prefix) {
+                log::debug!(
+                    "extract_key_from_viewer_js: found {} key at offset {}, length {}",
+                    prefix,
+                    next_idx - literal.len() - 2,
+                    literal.len()
+                );
+                return Ok(literal);
+            }
         }
     }
-    log::debug!("extract_key_from_viewer_js: no krp: key found");
+    log::debug!("extract_key_from_viewer_js: no wrapper key found");
     Err(EncryptedKrpanoError::MissingKrpKey {
         candidates,
         js_len: contents.len(),
