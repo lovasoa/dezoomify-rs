@@ -181,6 +181,12 @@ pub fn decrypt_xml(
                         None
                     }
                 })
+                .or_else(|| {
+                    // Fallback: search decoded engine source for alphabet literal
+                    std::str::from_utf8(&decoded_engine)
+                        .ok()
+                        .and_then(old_engine::find_base64_alphabet_in_source)
+                })
                 .ok_or(EncryptedKrpanoError::MissingKey)?;
             log::debug!("decrypt_xml: modern ClassicB, alphabet={} chars", alphabet.len());
             let key = match mode {

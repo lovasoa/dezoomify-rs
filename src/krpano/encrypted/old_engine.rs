@@ -143,6 +143,12 @@ pub fn derive_old_license_key(
                 .find(|row| row.len() >= 65 && row.starts_with("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
                 .cloned()
         })
+        .or_else(|| {
+            // Final fallback: some engines hardcode the alphabet in the source
+            // (not in _[] rows). Search the decoded engine text for a
+            // quoted string literal that looks like a 65+ char Base64 alphabet.
+            find_base64_alphabet_in_source(decoded_engine)
+        })
         .unwrap_or_default();
     let protected_key = extract_license_record(&unpacked.license_blob, key_tag)
         .ok()
@@ -169,13 +175,255 @@ fn find_old_default_key_row_index(decoded_engine: &str) -> Option<usize> {
 }
 
 fn find_old_base64_alphabet_row_index(decoded_engine: &str) -> Option<usize> {
-    let marker_pos = decoded_engine.find("b64u8=function")?;
-    let before_marker = &decoded_engine[..marker_pos];
-    let row_ref_pos = before_marker.rfind("=_[")? + 3;
-    let digits_end = before_marker[row_ref_pos..]
+    let b64_pos = decoded_engine.find("b64u8=function")?;
+
+    // Try to find `_[N]` inside the helper functions called by b64u8.
+    if let Some(body) = extract_function_body(decoded_engine, b64_pos + "b64u8=".len()) {
+        let helper_names = extract_called_function_names(&body);
+        for name in &helper_names {
+            if let Some(idx) = find_row_ref_in_helper(decoded_engine, name) {
+                return Some(idx);
+            }
+        }
+    }
+
+    // Fallback 1: search backward from b64u8 for any `_[N]` reference
+    // (the old approach; works for some engines).
+    let before_marker = &decoded_engine[..b64_pos];
+    if let Some(idx) = extract_row_ref_before(before_marker) {
+        return Some(idx);
+    }
+
+    // Fallback 2: search forward from b64u8 for `_[` in the function body
+    let after_marker = &decoded_engine[b64_pos..];
+    if let Some(end) = after_marker.find('}') {
+        let body_range = &after_marker[..end + 1];
+        if let Some(idx) = find_row_ref_in_text(body_range) {
+            return Some(idx);
+        }
+    }
+
+    None
+}
+
+/// Extract the function body text (between `{` and matching `}`) starting
+/// at `open_brace_pos`.
+fn extract_function_body(text: &str, after_function_keyword: usize) -> Option<String> {
+    let rest = &text[after_function_keyword..];
+    let open = rest.find('{')?;
+    let mut depth = 1u32;
+    let mut pos = open + 1;
+    let bytes = rest.as_bytes();
+    while pos < bytes.len() && depth > 0 {
+        match bytes[pos] {
+            b'{' => depth += 1,
+            b'}' => depth -= 1,
+            _ => {}
+        }
+        pos += 1;
+    }
+    if depth == 0 {
+        Some(rest[open..pos].to_string())
+    } else {
+        None
+    }
+}
+
+/// Extract function-call names from a JavaScript function body.
+/// Looks for patterns like `g(a(d))` or `Td(Qd(d))` — captures the
+/// function names that appear before `(`.
+fn extract_called_function_names(body: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'(' && i > 0 {
+            // Walk backward to find the start of the function name
+            let mut j = i - 1;
+            while j > 0 && bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' {
+                if j == 0 {
+                    break;
+                }
+                j -= 1;
+            }
+            if j < i - 1 {
+                let start = if bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' {
+                    j
+                } else {
+                    j + 1
+                };
+                if start < i {
+                    let name = std::str::from_utf8(&bytes[start..i]).unwrap_or("");
+                    // Filter out common non-function tokens
+                    if !matches!(name, "" | "if" | "for" | "while" | "switch" | "return" | "function" | "typeof" | "var" | "let" | "const" | "new" | "d")
+                        && name.len() >= 1
+                    {
+                        if !names.contains(&name.to_string()) {
+                            names.push(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    names
+}
+
+/// Search for a `_[N]` row reference inside a helper function's definition.
+fn find_row_ref_in_helper(text: &str, helper_name: &str) -> Option<usize> {
+    // Look for the helper function definition: `function <name>(` or
+    // `<name>=function(`
+    let pattern1 = format!("function {helper_name}(");
+    let pattern2 = format!("{helper_name}=function(");
+
+    for pattern in [&pattern1, &pattern2] {
+        if let Some(pos) = text.find(pattern.as_str()) {
+            // Extract a generous window around the function
+            let start = pos.saturating_sub(20);
+            let end = (pos + 2000).min(text.len());
+            let window = &text[start..end];
+            if let Some(idx) = find_row_ref_in_text(window) {
+                return Some(idx);
+            }
+        }
+    }
+    None
+}
+
+/// Find a `_[N]` index reference in arbitrary text.  Searches for
+/// the pattern `_[digits]` and parses the digits.
+fn find_row_ref_in_text(text: &str) -> Option<usize> {
+    let mut search_from = 0;
+    while let Some(pos) = text[search_from..].find("_[") {
+        let abs_pos = search_from + pos + 2;
+        let rest = &text[abs_pos..];
+        if let Some(end) = rest.find(']') {
+            let digits = &rest[..end];
+            if digits.chars().all(|c| c.is_ascii_digit()) {
+                if let Ok(idx) = digits.parse::<usize>() {
+                    return Some(idx);
+                }
+            }
+        }
+        search_from = abs_pos;
+    }
+    None
+}
+
+/// Find a `_[N]` reference by searching backward for `=_[
+fn extract_row_ref_before(text: &str) -> Option<usize> {
+    let row_ref_pos = text.rfind("=_[")? + 3;
+    let digits_end = text[row_ref_pos..]
         .find(']')
         .map(|end| row_ref_pos + end)?;
-    before_marker[row_ref_pos..digits_end].parse().ok()
+    text[row_ref_pos..digits_end].parse().ok()
+}
+
+/// Search the decoded engine source text for a hardcoded Base64 alphabet
+/// string literal (not stored in `_[]` rows or we.subdiv rows).
+///
+/// Some engines embed the alphabet directly in the JS source as a quoted
+/// string, or construct it from character codes via `String.fromCharCode`.
+/// This scans for both forms.
+pub fn find_base64_alphabet_in_source(decoded_engine: &str) -> Option<String> {
+    // First, search for plain quoted string literals.
+    if let Some(result) = find_quoted_alphabet_strings(decoded_engine) {
+        return Some(result);
+    }
+    // Second, search for alphabet constructed via String.fromCharCode(...).
+    // Pattern: 65 comma-separated numbers.
+    find_alphabet_from_charcodes(decoded_engine)
+}
+
+fn find_quoted_alphabet_strings(decoded_engine: &str) -> Option<String> {
+    let bytes = decoded_engine.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let quote = match bytes[i] {
+            b'"' | b'\'' => bytes[i],
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        i += 1;
+        let start = i;
+        while i < bytes.len() && bytes[i] != quote {
+            if bytes[i] == b'\\' {
+                i += 2;
+            } else {
+                i += 1;
+            }
+        }
+        let end = i;
+        let len = end - start;
+        // Base64 alphabets are ~65 chars (64 + padding). Accept 64..70.
+        if (64..=70).contains(&len) {
+            let candidate = &decoded_engine[start..end];
+            if is_likely_base64_alphabet(candidate) {
+                return Some(candidate.to_string());
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Search for an alphabet constructed from character codes, like
+/// `String.fromCharCode(65,66,67,...)` or `[65,66,67,...]`.
+fn find_alphabet_from_charcodes(decoded_engine: &str) -> Option<String> {
+    // Pattern: `fromCharCode(` followed by 64+ comma-separated numbers
+    let mut search_from = 0;
+    while let Some(pos) = decoded_engine[search_from..].find("fromCharCode(") {
+        let start = search_from + pos + "fromCharCode(".len();
+        let rest = &decoded_engine[start..];
+        // Find the closing )
+        if let Some(close) = rest.find(')') {
+            let args = &rest[..close];
+            // Split by comma, parse numbers
+            let nums: Vec<u32> = args
+                .split(',')
+                .filter_map(|s| s.trim().parse::<u32>().ok())
+                .collect();
+            if (64..=70).contains(&nums.len()) {
+                // All nums should be printable ASCII (32-126)
+                if nums.iter().all(|&n| (32..=126).contains(&n)) {
+                    let alphabet: String = nums.iter().map(|&n| n as u8 as char).collect();
+                    if is_likely_base64_alphabet(&alphabet) {
+                        return Some(alphabet);
+                    }
+                }
+            }
+        }
+        search_from = start;
+    }
+    None
+}
+
+/// Heuristic: does this string look like a Base64 alphabet?
+/// A Base64 alphabet is a permutation of A-Za-z0-9+/ with '=' padding.
+fn is_likely_base64_alphabet(s: &str) -> bool {
+    if s.len() < 64 || s.len() > 70 {
+        return false;
+    }
+    let mut seen = [false; 128];
+    let mut unique_count = 0u32;
+    for b in s.bytes() {
+        if b >= 128 {
+            return false;
+        }
+        if b != b'=' && !b.is_ascii_alphanumeric() && b != b'+' && b != b'/' {
+            return false;
+        }
+        if !seen[b as usize] {
+            seen[b as usize] = true;
+            unique_count += 1;
+        }
+    }
+    // The alphabet should have mostly unique characters (at least 60 unique).
+    // The padding '=' character may appear at the end.
+    unique_count >= 60
 }
 
 fn find_old_key_variable(decoded_engine: &str) -> String {

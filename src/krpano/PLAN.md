@@ -76,7 +76,7 @@ Observed combinations:
 | `KENCPUZR` | ClassicZ | Public | modern |
 | `KENCRUZR` | ClassicZ | Protected | old |
 | `KENCPUBR` | ClassicB | Public | old |
-| `KENCRUBR` | ClassicB | Protected | old (1.19-pr3) and modern (1.19-pr16.1) |
+| `KENCRUBR` | ClassicB | Protected | old (1.19-pr3) and transitional (1.19-pr16.1) |
 | `KENCPUPR` | Subdiv | Public | modern (<=1.21) |
 | `KENCRURR` | Subdiv | Protected | modern (<=1.21) |
 
@@ -101,9 +101,11 @@ The same file also contains a second string literal: the **wrapper string**, sta
 
 The decoded engine belongs to one of two families, distinguished by how it stores decryption constants:
 
-**Old engines** (observed 2013–2017) — the source contains the literal substring `KENC`. Constants live in a numeric `_[]` string table.
+**Old engines** (observed 2013–2017) — the source contains the literal substring `KENC`. Constants live in a numeric `_[]` string table unpacked from the wrapper string. The Base64 decoder function `b64u8=function` is present.
 
-**Modern engines** (observed 2018+) — the source does NOT contain literal `KENC`. Constants are reconstructed from the `we.subdiv` closure, populated at startup by a key-unpack IIFE.
+**Modern engines** (observed 2018+) — the source does NOT contain literal `KENC`. Constants are reconstructed from a closure (`we.subdiv` in engines ≥2019) or an IIFE (in transitional 1.19-pr16 engines), populated at startup by key-unpacking logic.
+
+**Transitional engines** (krpano 1.19-pr16 era) — these use the modern Base85+LZ4 packing format but lack the `we.subdiv` closure. They are classified as Modern by detection (`detect_engine` looks for old-engine markers and defaults to Modern), but key extraction must use an alternative IIFE path (not `we.subdiv`). In the observed transitional fixture (2018-04-23), the extracted rows do not contain a Base64 alphabet — this is an unresolved variant (§6).
 
 ### 3.3. Old engine key extraction
 
@@ -112,9 +114,14 @@ The wrapper `krp:` string is an obfuscated payload. Unpacking it (reverse-substi
 - **`_[]` rows** — a table of pipe-delimited string records.
 - **License blob** — a Base64-encoded string interleaved between the rows.
 
-**Protected key.** In observed fixtures, one `_[]` row contains license field tags (e.g. `xx=lz=rg=ma=...=ek=...`). A tag ending with `=` (typically `ek=`) names a field within the license blob. The engine's `pc.init` function processes this field in the `case 7` arm of a switch statement: it Base64-decodes the value, validates a `ck=` checksum, maps each resulting byte through `charCodeAt(i) & 255`, and zero-pads the result to 128 bytes. This 128-byte string is the protected key.
+**Protected key.** In observed fixtures, one `_[]` row contains license field tags (e.g. `xx=lz=rg=ma=...=ek=...`). A tag ending with `=` (typically `ek=`) names a field within the license blob. The engine's `pc.init` function processes this field in the `case 7` arm of a switch statement: it Base64-decodes the value, validates a `ck=` checksum, maps each resulting byte through `charCodeAt(i) & 255`, and pads the result to 128 bytes by cycling. This 128-byte string is the protected key.
 
-**Default key and Base64 alphabet.** The ClassicB cipher requires a default key and a custom Base64 alphabet. Both are `_[]` rows referenced near the `String(e).charCodeAt` and `b64u8` helpers in the decoded engine source. The exact extraction mechanism is engine-source proximity: the row whose value is referenced by the helpers.
+**Default key and Base64 alphabet.** The ClassicB cipher requires a default key and a custom Base64 alphabet. Both are rows in the `_[]` table. The extraction mechanism searches the decoded engine near helper functions for `_[N]` references:
+
+- **Default key**: found by searching backward from `String(e).charCodeAt` (or `String(h).charCodeAt`) for `_[N]`.
+- **Base64 alphabet**: the `b64u8` function (e.g. `function(d){return g(a(d))}`) delegates to helper functions (`g`, `a`) where the `_[N]` reference lives. The extraction traces through these helpers to find the alphabet row index. As a fallback, `_[]` rows are scanned for a 65-character string starting with `ABCDEFGHIJKLMNOPQRSTUVWXYZ`.
+
+Some engines embed the alphabet directly in the JS source as a closure variable rather than in `_[]` rows — this is an unresolved variant (§6.2.1).
 
 ### 3.4. Modern engine key extraction
 
@@ -358,17 +365,17 @@ If a JS candidate fails to decrypt (e.g. an analytics script that coincidentally
 |---------|--------|-------|
 | 1.24 Subdiv, both modes, minimal and non-minimal bodies | Decoded | Prefixes parsed (`%*` / `$*<key-id>@`). PP (f=0) and RR (f=-1) paths work via branch 5 for all eight 2026 fixtures. RR uses Mf table from `uk=` side record for key mixing. Engine context (136 rows, checksum=23293) and side data extract correctly for all fixtures. |
 | `G` mode (old engine byte-4) | No fixture | Appears in `2015-08-04` engine source switch cases. No observed tour uses it. |
-| ClassicB Protected (`KENCRUBR`) with old engine | **Partially works** | Two real-world fixtures added: `2015-08-04-KENCRUBR` (krpano 1.19-pr3, Old engine) and `2018-04-23-KENCRUBR` (krpano 1.19-pr16.1, Modern engine). The old-engine variant successfully extracts the wrapper key, decodes the engine, and derives a 128-byte protected key. However, `find_old_base64_alphabet_row_index` extracts only a 26-char alphabet (not the 65+ chars expected by `decode_custom_base64`), causing decryption to fail with `Unsupported`. The Modern-engine variant has no `(ClassicB, Protected, Modern)` match arm yet. |
-| ClassicB Protected (`KENCRUBR`) with modern engine | **No handler** | The `decrypt_xml` dispatch table has no arm for `(ClassicB, Protected, Modern)`. Observed in `2018-04-23-KENCRUBR` (krpano 1.19-pr16.1, engine len 254755, wrapper key len 1768). |
+| ClassicB Protected (`KENCRUBR`) with old engine (1.19-pr3) | **Failing** | See §6.2.1 — Base64 alphabet is a closure variable in the engine source, not a `_[]` row. |
+| ClassicB Protected (`KENCRUBR`) with transitional engine (1.19-pr16.1) | **Failing** | See §6.2.2 — No `we.subdiv` in engine; alphabet not found in extracted rows or engine source. |
+| ClassicB Protected (`KENCRUBR`) where `we.subdiv` is present | No fixture | Modern ClassicB varieties are theoretical; no observed fixture has both `we.subdiv` and a ClassicB header. |
 | Cross-family combinations (e.g. ClassicZ Protected with modern engine) | No fixture | ClassicZ Protected has only been observed with old engines; Public only with modern engines. Other combinations are theoretically possible but unobserved. |
+| 1.20+ Subdiv Public (`ptp:` key prefix) | **Failing** | See §6.2.3 — `krp:` wrapper key not found in viewer JS (1.20+ embeds keys differently). |
 
 ### 6.1. Resolved 1.24 non-minimal fixture failure
 
 All 2026 fixtures share the same engine (550,911-byte decoded viewer JS, checksum=23293, 136 rows) and the same krp: wrapper key (`AGp{e$ghq` for PP, varying per-fixture for RR). The header, cipher, mode, and engine family classification are correct for all 8 fixtures.
 
-The earlier non-minimal failure was not in branch-5 decompression. The larger bodies decrypted correctly, but several plaintext fixtures begin with a normal XML declaration (`<?xml version="1.0" encoding="UTF-8"?>`) before the `<krpano>` root. `pp_rr_branch_to_plaintext` previously required the normalized plaintext to start directly with `<krpano`, so it rejected valid XML with `EncryptedKrpanoError::Unsupported`.
-
-The root check now skips a leading BOM, XML processing instructions, and comments before checking for `<krpano>`. The all-fixtures test also uses this XML-prolog-aware check and asserts exact output against every available `plaintext.xml`.
+The earlier non-minimal failure was not in branch-5 decompression. The larger bodies decrypted correctly, but several plaintext fixtures begin with a normal XML declaration (`<?xml version="1.0" encoding="UTF-8"?>`) before the `<krpano>` root. The XML validation was fixed to skip a leading BOM, XML processing instructions, and comments before checking for `<krpano>`. All observed 2026 fixtures now decrypt end-to-end and match their expected `plaintext.xml` files.
 
 | Fixture | Body len | Status |
 |---------|----------|--------|
@@ -381,26 +388,27 @@ The root check now skips a leading BOM, XML processing instructions, and comment
 | `rr_special` | 400 | ✅ works |
 | `rr_tour` | 532 | ✅ works |
 
-The decompressor's key derivation is identical across fixtures (same `g`, `h`, `v`, `q`, `t`, `big_b`, `big_f`, `coeff_x`, `a`). The keys read from `d[2..2+2*g]` differ per fixture (as expected — they are ciphertext-derived), and the compressed data region (`d[stream+2*g..]`) differs in both length and content. All observed 1.24 bodies now decrypt end-to-end.
+### 6.2. Unresolved variants
 
-### 6.2. Blocking issues (three distinct failure modes)
+Three real-world fixtures remain undecrypted, each for a distinct reason.
 
-Three real-world fixtures currently fail to decrypt, each for a different reason:
+#### 6.2.1. ClassicB Protected, old engine with obfuscated alphabet (2015-08-04-KENCRUBR, krpano 1.19-pr3)
 
-**2015-08-04-KENCRUBR** (krpano 1.19-pr3, Old engine):
-- `find_old_base64_alphabet_row_index` returns only a 26-char alphabet.
-- `decode_custom_base64` rejects it with `ClassicBAlphabetTooShort`.
-- Key derivation otherwise succeeds (128-byte protected key, 525 rows).
+The decoded engine (191,689 bytes, identical to the `2015-08-04` ClassicZ fixture) is correctly classified as Old (`KENC` ✓, `b64u8=function` ✓). The protected key (128 bytes) and default key (16 bytes) are extracted successfully. However, the Base64 alphabet is fully obfuscated:
 
-**2018-04-23-KENCRUBR** (krpano 1.19-pr16.1, Modern engine):
-- No `(ClassicB, Protected, Modern)` dispatch arm.
-- Returns `UnsupportedCombination{{ cipher="ClassicB", mode="Protected", engine="Modern" }}`.
+- Not present as a plain 64-66 character string anywhere in the decoded engine source (verified by exhaustive scan).
+- Not present in any `_[]` wrapper row (525 rows scanned).
+- Appears to be constructed algorithmically — the `function a(a)` helper uses `d.indexOf(a.charAt(k++))` where `d` is a closure variable whose value is computed rather than stored literally.
 
-**2019-10-15-KENCPUPR-1.20** (krpano 1.20.2, Modern engine):
-- Viewer JS does not contain a `krp:` string literal.
-- `extract_key_from_viewer_js` returns `MissingKrpKey{{ candidates=N, js_len=201956 }}`.
-- Without the `krp:` wrapper string, `modern_engine::extract_modern_context` cannot unpack `we.subdiv`.
-- Krpano 1.20+ embeds keys differently; the extraction mechanism needs updating.
+#### 6.2.2. ClassicB Protected, transitional engine (2018-04-23-KENCRUBR, krpano 1.19-pr16.1)
+
+The decoded engine (254,755 bytes) uses the modern Base85+LZ4 packing format but lacks both old-engine markers (`KENC`, `b64u8`) and the modern `we.subdiv` closure. This is a krpano 1.19-pr16 transitional engine.
+
+A startup IIFE produces 105 rows and 424 bytes of side data, but unlike modern `we.subdiv` engines, these rows do not contain a Base64 alphabet. The default key (`"actions overflow"` — 16 bytes) is found successfully. Like §6.2.1, the alphabet is fully obfuscated — an exhaustive scan of the 254,755-byte decoded engine source finds no plain 64-66 character Base64-permutation string. The alphabet may be constructed algorithmically or embedded in the side data in an unrecognized encoding.
+
+#### 6.2.3. Subdiv Public, 1.20+ key embedding (2019-10-15-KENCPUPR-1.20, krpano 1.20.2)
+
+The viewer JS (201,956 bytes) does not contain a `krp:` wrapper string literal. Krpano 1.20+ appears to embed the key differently — the wrapper key prefix is `ptp:` instead of `krp:`. Without the wrapper key, `modern_engine::extract_modern_context` cannot unpack `we.subdiv` and the side data.
 
 ---
 
@@ -432,8 +440,8 @@ All fixtures under `testdata/krpano/encrypted/`. Each directory contains `tour.x
 | `2026-06-25-rr_minimal` | `KENCRURR` | Subdiv | Protected | modern (1.24) | Yes |
 | `2026-06-25-rr_special` | `KENCRURR` | Subdiv | Protected | modern (1.24) | Yes |
 | `2026-06-25-rr_tour` | `KENCRURR` | Subdiv | Protected | modern (1.24) | Yes |
-| `2015-08-04-KENCRUBR` | `KENCRUBR` | ClassicB | Protected | old (1.19-pr3) | **No** — `ClassicBAlphabetTooShort` (26 chars) |
-| `2018-04-23-KENCRUBR` | `KENCRUBR` | ClassicB | Protected | modern (1.19-pr16.1) | **No** — `UnsupportedCombination` (ClassicB+Protected+Modern) |
+| `2015-08-04-KENCRUBR` | `KENCRUBR` | ClassicB | Protected | old (1.19-pr3) | **No** — alphabet not in `_[]` rows; fallback scan fails |
+| `2018-04-23-KENCRUBR` | `KENCRUBR` | ClassicB | Protected | transitional (1.19-pr16.1) | **No** — no `we.subdiv`; alphabet not in extracted rows |
 | `2019-10-15-KENCPUPR-1.20` | `KENCPUPR` | Subdiv | Public | modern (1.20.2) | **No** — `MissingKrpKey` (no `krp:` in JS) |
 
 All 2026 fixtures: prefix `%*` for PP, `$*<key-id>@` for RR. RR key IDs: `FIXTURE_rr_minimal`, `PFIXTURE_rr_special...` (85 chars), `MFIXTURE_rr_tour...` (85 chars). Engine context (136 rows, checksum=23293), pk= side data (128 chars), and Mf table data extract successfully for all 8 fixtures. All observed 2026 fixtures decrypt end-to-end and match their expected `plaintext.xml` files.
@@ -465,5 +473,3 @@ src/krpano/
 **No JS execution.** Key extraction relies entirely on static analysis of the decoded engine source text. The engine is never evaluated at runtime.
 
 **Value-based row identification.** Row extraction avoids relying on per-build minified identifiers or hardcoded row IDs. It searches by stable semantic values (e.g. `"actions overflow"`, `"z"`, `"krpano"`) observed across engine versions.
-
-**Key-mix prefix.** The RC4-like decryptor uses a 128-byte key-mix prefix derived from the ciphertext itself. Without the correct key, sparse known plaintext has not been sufficient to recover it in the tested fixtures.
