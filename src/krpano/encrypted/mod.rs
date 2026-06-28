@@ -22,7 +22,11 @@ custom_error! {pub EncryptedKrpanoError
     InvalidBase85Byte{byte: u8} = "encrypted krpano payload contains an invalid modified-base85 byte: {byte}",
     InvalidLz4Block = "encrypted krpano payload contains an invalid LZ4 block",
     InvalidByteCipherInput = "encrypted krpano payload cannot be byte-decrypted with the provided key",
-    Unsupported = "encrypted krpano XML decryption is not implemented for this payload variant yet",
+    Unsupported{cipher: String, mode: String, engine: String} = "KENC combination not supported: cipher={cipher} mode={mode} engine={engine}",
+    InvalidUtf8 = "decrypted krpano payload is not valid UTF-8",
+    ClassicBAlphabetTooShort{len: usize} = "ClassicB Base64 alphabet has only {len} characters, must be >= 65",
+    ClassicBCharNotFound{ch: char, alphabet_len: usize} = "character '{ch}' not found in ClassicB Base64 alphabet ({alphabet_len} chars)",
+    MissingKrpKey{candidates: usize, js_len: usize} = "no krp: wrapper key found in viewer JS (scanned {candidates} string literals in {js_len}-byte file; krpano 1.20+ may embed keys differently)",
 }
 
 // ---------------------------------------------------------------------------
@@ -90,7 +94,7 @@ pub fn decrypt_xml(
 
     // Extract the wrapper key and decoded engine from the viewer JS.
     let wrapper_key =
-        extract_key_from_viewer_js(viewer_data).ok_or(EncryptedKrpanoError::MissingKey)?;
+        extract_key_from_viewer_js(viewer_data)?;
     log::debug!("decrypt_xml: wrapper_key length = {}", wrapper_key.len());
     let decoded_engine = extract_decoded_viewer_js(viewer_data)?;
     log::debug!(
@@ -169,7 +173,11 @@ pub fn decrypt_xml(
             log::debug!(
                 "decrypt_xml: unsupported combination cipher={cipher:?} mode={mode:?} engine={engine:?}"
             );
-            Err(EncryptedKrpanoError::Unsupported)
+            Err(EncryptedKrpanoError::Unsupported {
+                cipher: format!("{cipher:?}"),
+                mode: format!("{mode:?}"),
+                engine: format!("{engine:?}"),
+            })
         }
     }
 }
@@ -800,6 +808,146 @@ mod tests {
         assert!(
             tested >= 18,
             "expected at least 18 fixture directories, found {tested}"
+        );
+    }
+
+    #[test]
+    fn probe_external_repos() {
+        use std::fs;
+        use std::collections::BTreeMap;
+        let candidates: &[(&str, &str, &str)] = &[
+            // KENCPUBR - ClassicB+Public+Old
+            ("/tmp/kenc-repos/SenYuanZ__Museum-News/News-2/bwg3d/plugins/map_core.xml",
+             "/tmp/kenc-repos/SenYuanZ__Museum-News/News-2/bwg3d/plugins/map_core.js",
+             "KENCPUBR: map_core"),
+            // KENCPUPR - Subdiv+Public+Modern
+            ("/tmp/kenc-repos/SanyoRadio__Saronida-Panorama/saro.xml",
+             "/tmp/kenc-repos/SanyoRadio__Saronida-Panorama/saro.js",
+             "KENCPUPR: saro 1.20.2"),
+            // KENCPUZR - ClassicZ+Public+Modern
+            ("/tmp/kenc-repos/iflycn__vr/inc/pano_webvr.xml",
+             "/tmp/kenc-repos/iflycn__vr/inc/pano_webvr.js",
+             "KENCPUZR: pano_webvr"),
+            // KENCRURR - Subdiv+Protected+Modern
+            ("/tmp/kenc-repos/poricf__Vr-secondround/Lycee(Newroad)_Type A3/tour.xml",
+             "/tmp/kenc-repos/poricf__Vr-secondround/Lycee(Newroad)_Type A3/tour.js",
+             "KENCRURR: Lycee 1.21"),
+            ("/tmp/kenc-repos/parakhc4__Vincent_inn_3D_Tour/tour.xml",
+             "/tmp/kenc-repos/parakhc4__Vincent_inn_3D_Tour/tour.js",
+             "KENCRURR: Vincent 1.21"),
+            // More KENCRURR pairs
+            ("/tmp/kenc-repos/Dilhakk__Temervr/Seken_Lycee(Type_08)/tour.xml",
+             "/tmp/kenc-repos/Dilhakk__Temervr/Seken_Lycee(Type_08)/tour.js",
+             "KENCRURR: Seken Lycee"),
+            // KENCRUZR - ClassicZ+Protected+Old
+            ("/tmp/kenc-repos/poricf__Vr-secondround/Lycee(Newroad)_Type A3/plugins/webvr.xml",
+             "/tmp/kenc-repos/poricf__Vr-secondround/Lycee(Newroad)_Type A3/plugins/webvr.js",
+             "KENCRUZR: webvr plugin"),
+            ("/tmp/kenc-repos/duheng__vrseat/src/setting/tour.xml",
+             "/tmp/kenc-repos/duheng__vrseat/src/setting/tour.js",
+             "KENCRUZR: duheng 1.19"),
+            // More KENCRUZR pairs
+            ("/tmp/kenc-repos/tinyhousecn__Toilet-Expandable-Container-House-Kaipu/pano.xml",
+             "/tmp/kenc-repos/tinyhousecn__Toilet-Expandable-Container-House-Kaipu/pano.js",
+             "KENCRUZR: tinyhousecn"),
+            // KENCRUBR - ClassicB+Protected
+            ("/tmp/kenc-repos/iamsayan__virtual-tours/2022/e55b32193661624c300000df/32data/32.xml",
+             "/tmp/kenc-repos/iamsayan__virtual-tours/2022/e55b32193661624c300000df/32data/32.js",
+             "KENCRUBR: iamsayan 32"),
+            ("/tmp/kenc-repos/iNATS__inatsVr/iNATS Demodata/iNATS Demo.xml",
+             "/tmp/kenc-repos/iNATS__inatsVr/iNATS Demodata/iNATS Demo.js",
+             "KENCRUBR: iNATS"),
+            ("/tmp/kenc-repos/Azat301__my/1.xml",
+             "/tmp/kenc-repos/Azat301__my/1.js",
+             "KENCRUBR: Azat301 1"),
+        ];
+
+        let mut summaries: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+        for (xml_path, js_path, label) in candidates {
+            let xml = match fs::read(xml_path) {
+                Ok(x) => x,
+                Err(_) => { summaries.entry("XML_NOT_FOUND".into()).or_default().push(label.to_string()); continue; }
+            };
+            let js = match fs::read(js_path) {
+                Ok(x) => x,
+                Err(_) => { summaries.entry("JS_NOT_FOUND".into()).or_default().push(label.to_string()); continue; }
+            };
+            let Ok(payload) = viewer::encrypted_payload(&xml) else {
+                summaries.entry("FAIL: payload_extraction".into()).or_default().push(label.to_string());
+                continue;
+            };
+            let header = match KencHeader::parse(&payload) {
+                Ok(h) => h,
+                Err(e) => { summaries.entry(format!("FAIL: header_parse({e})")).or_default().push(label.to_string()); continue; }
+            };
+            let wrapper_key = extract_key_from_viewer_js(&js);
+            let decoded_engine = match extract_decoded_viewer_js(&js) {
+                Ok(d) => d,
+                Err(e) => { summaries.entry(format!("FAIL: decode_viewer_js({e})")).or_default().push(label.to_string()); continue; }
+            };
+            let engine = detect_engine(&decoded_engine);
+            match decrypt_xml(&xml, Some(&js)) {
+                Ok(plaintext) => {
+                    summaries.entry("OK".into()).or_default().push(format!("{label} plain={} engine={engine:?}", plaintext.len()));
+                }
+                Err(e) => {
+                    let key = format!("FAIL: decrypt engine={engine:?} wk={} de={} err={e}",
+                        wrapper_key.as_ref().map_or(0, |k| k.len()),
+                        decoded_engine.len()
+                    );
+                    summaries.entry(key).or_default().push(label.to_string());
+                }
+            }
+        }
+
+        eprintln!("\n=== RESULTS BY CATEGORY ===");
+        for (category, labels) in &summaries {
+            eprintln!("  [{category}]");
+            for l in labels {
+                eprintln!("    {l}");
+            }
+        }
+        eprintln!("\n{} categories total", summaries.len());
+    }
+
+    #[test]
+    fn probe_external_pair_from_env() {
+        let xml_path = match std::env::var_os("KRPANO_PROBE_XML") {
+            Some(path) => PathBuf::from(path),
+            None => return,
+        };
+        let js_path = PathBuf::from(
+            std::env::var_os("KRPANO_PROBE_JS").expect("KRPANO_PROBE_JS must be set"),
+        );
+        let xml = fs::read(&xml_path).unwrap();
+        let js = fs::read(&js_path).unwrap();
+        let payload = viewer::encrypted_payload(&xml).unwrap();
+        let header = KencHeader::parse(&payload).unwrap();
+        let wrapper_key = extract_key_from_viewer_js(&js)
+            .unwrap_or_else(|| panic!("{}: no krp: key found", js_path.display()));
+        let decoded_engine = extract_decoded_viewer_js(&js)
+            .unwrap_or_else(|err| panic!("{}: {err}", js_path.display()));
+
+        let plaintext = decrypt_xml(&xml, Some(&js))
+            .unwrap_or_else(|err| panic!("{} + {}: {err}", xml_path.display(), js_path.display()));
+        let text = std::str::from_utf8(&plaintext)
+            .unwrap_or_else(|err| panic!("plaintext is not UTF-8: {err}"));
+        assert!(
+            looks_like_krpano_xml(text),
+            "plaintext should start with <krpano>, got prefix: {:?}",
+            &text[..text.len().min(200)]
+        );
+        let _parsed: PlaintextKrpanoRoot = serde_xml_rs::from_reader(text.as_bytes())
+            .unwrap_or_else(|err| panic!("plaintext XML did not parse: {err}"));
+        println!(
+            "probe ok header={} wrapper_len={} decoded_engine_len={} plaintext_len={} xml={} js={}",
+            header.raw,
+            wrapper_key.len(),
+            decoded_engine.len(),
+            plaintext.len(),
+            xml_path.display(),
+            js_path.display()
         );
     }
 

@@ -119,7 +119,7 @@ pub fn derive_old_license_key(
     wrapper_key: &str,
 ) -> Result<OldEngineContext, EncryptedKrpanoError> {
     let decoded_engine =
-        std::str::from_utf8(decoded_engine).map_err(|_| EncryptedKrpanoError::Unsupported)?;
+        std::str::from_utf8(decoded_engine).map_err(|_| EncryptedKrpanoError::InvalidUtf8)?;
 
     let unpacked = unpack_old_wrapper(wrapper_key)?;
     let key_tag = unpacked

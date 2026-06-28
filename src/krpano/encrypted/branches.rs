@@ -91,7 +91,7 @@ pub fn z_branch_to_plaintext(
     widened: bool,
 ) -> Result<String, EncryptedKrpanoError> {
     let decrypted = decrypt_z_branch(body, key, widened)?;
-    String::from_utf8(decrypted).map_err(|_| EncryptedKrpanoError::Unsupported)
+    String::from_utf8(decrypted).map_err(|_| EncryptedKrpanoError::InvalidUtf8)
 }
 
 // ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ pub fn b_branch_to_plaintext_with_alphabet(
 ) -> Result<String, EncryptedKrpanoError> {
     let decoded = decode_custom_base64(body, alphabet)?;
     let decrypted = crypto::decrypt_bytes(&decoded, key, widened)?;
-    String::from_utf8(decrypted).map_err(|_| EncryptedKrpanoError::Unsupported)
+    String::from_utf8(decrypted).map_err(|_| EncryptedKrpanoError::InvalidUtf8)
 }
 
 // ---------------------------------------------------------------------------
@@ -143,7 +143,7 @@ pub(crate) fn decrypt_subdiv_via_classic_pipeline(
         decompressed_len,
         compressed_end - codecs::PACKED_VIEWER_HEADER_LEN,
     )?;
-    String::from_utf8(decompressed).map_err(|_| EncryptedKrpanoError::Unsupported)
+    String::from_utf8(decompressed).map_err(|_| EncryptedKrpanoError::InvalidUtf8)
 }
 
 // ---------------------------------------------------------------------------
@@ -153,7 +153,9 @@ pub(crate) fn decrypt_subdiv_via_classic_pipeline(
 fn decode_custom_base64(input: &str, alphabet: &str) -> Result<Vec<u8>, EncryptedKrpanoError> {
     let alphabet: Vec<char> = alphabet.chars().collect();
     if alphabet.len() < 65 {
-        return Err(EncryptedKrpanoError::Unsupported);
+        return Err(EncryptedKrpanoError::ClassicBAlphabetTooShort {
+            len: alphabet.len(),
+        });
     }
     let mut out = Vec::with_capacity(input.len() / 4 * 3);
     let mut chars = input.chars();
@@ -163,19 +165,31 @@ fn decode_custom_base64(input: &str, alphabet: &str) -> Result<Vec<u8>, Encrypte
         let a = alphabet
             .iter()
             .position(|&ch| ch == a)
-            .ok_or(EncryptedKrpanoError::Unsupported)?;
+            .ok_or(EncryptedKrpanoError::ClassicBCharNotFound {
+                ch: a,
+                alphabet_len: alphabet.len(),
+            })?;
         let b = alphabet
             .iter()
             .position(|&ch| ch == b)
-            .ok_or(EncryptedKrpanoError::Unsupported)?;
+            .ok_or(EncryptedKrpanoError::ClassicBCharNotFound {
+                ch: b,
+                alphabet_len: alphabet.len(),
+            })?;
         let c = alphabet
             .iter()
             .position(|&ch| ch == c)
-            .ok_or(EncryptedKrpanoError::Unsupported)?;
+            .ok_or(EncryptedKrpanoError::ClassicBCharNotFound {
+                ch: c,
+                alphabet_len: alphabet.len(),
+            })?;
         let d = alphabet
             .iter()
             .position(|&ch| ch == d)
-            .ok_or(EncryptedKrpanoError::Unsupported)?;
+            .ok_or(EncryptedKrpanoError::ClassicBCharNotFound {
+                ch: d,
+                alphabet_len: alphabet.len(),
+            })?;
         out.push(((a << 2) | (b >> 4)) as u8);
         if c != 64 {
             out.push((((b & 15) << 4) | (c >> 2)) as u8);
@@ -234,7 +248,7 @@ pub fn diagnose_subdiv_1_24_body(body: &str, key: &[u8]) -> Result<String, Encry
                                 comp_end.min(decrypted.len()),
                             )
                             .and_then(|d| {
-                                String::from_utf8(d).map_err(|_| EncryptedKrpanoError::Unsupported)
+                                String::from_utf8(d).map_err(|_| EncryptedKrpanoError::InvalidUtf8)
                             });
                         }
                     }
@@ -260,7 +274,7 @@ pub fn diagnose_subdiv_1_24_body(body: &str, key: &[u8]) -> Result<String, Encry
                                 comp_end.min(decrypted.len()),
                             )
                             .and_then(|d| {
-                                String::from_utf8(d).map_err(|_| EncryptedKrpanoError::Unsupported)
+                                String::from_utf8(d).map_err(|_| EncryptedKrpanoError::InvalidUtf8)
                             });
                         }
                     }
@@ -293,7 +307,7 @@ pub fn diagnose_subdiv_1_24_body(body: &str, key: &[u8]) -> Result<String, Encry
                                 comp_end.min(decrypted.len()),
                             )
                             .and_then(|d| {
-                                String::from_utf8(d).map_err(|_| EncryptedKrpanoError::Unsupported)
+                                String::from_utf8(d).map_err(|_| EncryptedKrpanoError::InvalidUtf8)
                             });
                         }
                     }
@@ -304,7 +318,7 @@ pub fn diagnose_subdiv_1_24_body(body: &str, key: &[u8]) -> Result<String, Encry
         Err(e) => eprintln!("  LE Base85 failed: {e:?}"),
     }
 
-    Err(EncryptedKrpanoError::Unsupported)
+    Err(EncryptedKrpanoError::InvalidUtf8)
 }
 
 // ---------------------------------------------------------------------------

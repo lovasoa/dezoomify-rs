@@ -37,26 +37,31 @@ pub fn encrypted_payload(contents: &[u8]) -> Result<String, EncryptedKrpanoError
     Ok(payload)
 }
 
-pub fn extract_key_from_viewer_js(contents: &[u8]) -> Option<String> {
+pub fn extract_key_from_viewer_js(contents: &[u8]) -> Result<String, EncryptedKrpanoError> {
     let text = String::from_utf8_lossy(contents);
     log::debug!(
         "extract_key_from_viewer_js: scanning {} bytes for krp: wrapper key",
         contents.len()
     );
+    let mut candidates = 0usize;
     let mut idx = 0;
     while let Some((literal, next_idx)) = next_js_string_literal(&text, idx) {
         idx = next_idx;
+        candidates += 1;
         if literal.starts_with("krp:") {
             log::debug!(
                 "extract_key_from_viewer_js: found krp: key at offset {}, length {}",
                 next_idx - literal.len() - 2,
                 literal.len()
             );
-            return Some(literal);
+            return Ok(literal);
         }
     }
     log::debug!("extract_key_from_viewer_js: no krp: key found");
-    None
+    Err(EncryptedKrpanoError::MissingKrpKey {
+        candidates,
+        js_len: contents.len(),
+    })
 }
 
 pub fn extract_decoded_viewer_js(contents: &[u8]) -> Result<Vec<u8>, EncryptedKrpanoError> {
@@ -255,13 +260,13 @@ mod tests {
     fn extracts_krpano_decryption_key_from_viewer_js() {
         let js = br#"return function(t){r&&(h=r(),r=null);h(t,"krp:abc def")}"#;
         assert_eq!(
-            extract_key_from_viewer_js(js),
-            Some("krp:abc def".to_string())
+            extract_key_from_viewer_js(js).unwrap(),
+            "krp:abc def".to_string()
         );
         let js2 = br"embedhtml5(e.params,'krp:xyz123')";
         assert_eq!(
-            extract_key_from_viewer_js(js2),
-            Some("krp:xyz123".to_string())
+            extract_key_from_viewer_js(js2).unwrap(),
+            "krp:xyz123".to_string()
         );
     }
 }

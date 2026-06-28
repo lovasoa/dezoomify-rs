@@ -76,10 +76,11 @@ Observed combinations:
 | `KENCPUZR` | ClassicZ | Public | modern |
 | `KENCRUZR` | ClassicZ | Protected | old |
 | `KENCPUBR` | ClassicB | Public | old |
+| `KENCRUBR` | ClassicB | Protected | old (1.19-pr3) and modern (1.19-pr16.1) |
 | `KENCPUPR` | Subdiv | Public | modern (<=1.21) |
 | `KENCRURR` | Subdiv | Protected | modern (<=1.21) |
 
-Combinations not listed (e.g. `KENCRUBR`) either have not been observed or are unsupported — see §6.
+Note: KENCRUBR is now observed but not yet fully decrypted — see §6.
 
 ---
 
@@ -357,7 +358,8 @@ If a JS candidate fails to decrypt (e.g. an analytics script that coincidentally
 |---------|--------|-------|
 | 1.24 Subdiv, both modes, minimal and non-minimal bodies | Decoded | Prefixes parsed (`%*` / `$*<key-id>@`). PP (f=0) and RR (f=-1) paths work via branch 5 for all eight 2026 fixtures. RR uses Mf table from `uk=` side record for key mixing. Engine context (136 rows, checksum=23293) and side data extract correctly for all fixtures. |
 | `G` mode (old engine byte-4) | No fixture | Appears in `2015-08-04` engine source switch cases. No observed tour uses it. |
-| ClassicB Protected (`KENCRUBR`) | No fixture | Parsable header combination, but never observed. If it exists, it would likely use the old engine's protected key. |
+| ClassicB Protected (`KENCRUBR`) with old engine | **Partially works** | Two real-world fixtures added: `2015-08-04-KENCRUBR` (krpano 1.19-pr3, Old engine) and `2018-04-23-KENCRUBR` (krpano 1.19-pr16.1, Modern engine). The old-engine variant successfully extracts the wrapper key, decodes the engine, and derives a 128-byte protected key. However, `find_old_base64_alphabet_row_index` extracts only a 26-char alphabet (not the 65+ chars expected by `decode_custom_base64`), causing decryption to fail with `Unsupported`. The Modern-engine variant has no `(ClassicB, Protected, Modern)` match arm yet. |
+| ClassicB Protected (`KENCRUBR`) with modern engine | **No handler** | The `decrypt_xml` dispatch table has no arm for `(ClassicB, Protected, Modern)`. Observed in `2018-04-23-KENCRUBR` (krpano 1.19-pr16.1, engine len 254755, wrapper key len 1768). |
 | Cross-family combinations (e.g. ClassicZ Protected with modern engine) | No fixture | ClassicZ Protected has only been observed with old engines; Public only with modern engines. Other combinations are theoretically possible but unobserved. |
 
 ### 6.1. Resolved 1.24 non-minimal fixture failure
@@ -381,6 +383,22 @@ The root check now skips a leading BOM, XML processing instructions, and comment
 
 The decompressor's key derivation is identical across fixtures (same `g`, `h`, `v`, `q`, `t`, `big_b`, `big_f`, `coeff_x`, `a`). The keys read from `d[2..2+2*g]` differ per fixture (as expected — they are ciphertext-derived), and the compressed data region (`d[stream+2*g..]`) differs in both length and content. All observed 1.24 bodies now decrypt end-to-end.
 
+### 6.2. KENCRUBR (ClassicB + Protected) — blocking issues
+
+Two real-world `KENCRUBR` fixtures were added from krpano 1.19 tours. Both fail to decrypt for different reasons:
+
+**2015-08-04-KENCRUBR** (krpano 1.19-pr3, Old engine, wrapper_key=8223, engine_len=191689):
+- Header parses correctly as ClassicB + Protected.
+- Engine detected as Old (contains "KENC").
+- `derive_old_license_key` succeeds: extracts 525 `_[]` rows, 532-byte license blob, 128-byte protected key.
+- **Blocker**: `find_old_base64_alphabet_row_index` returns only a 26-char alphabet string. `decode_custom_base64` requires >=65 chars, so it returns `Unsupported`.
+- The `find_old_base64_alphabet_row_index` function searches for `"b64u8=function"` in the decoded engine to locate the alphabet row. This 1.19-pr3 engine may use a different helper name or pattern.
+
+**2018-04-23-KENCRUBR** (krpano 1.19-pr16.1, Modern engine, wrapper_key=1768, engine_len=254755):
+- Header parses correctly.
+- Engine detected as Modern (no "KENC" in decoded source).
+- **Blocker**: The `decrypt_xml` dispatch table has no `(ClassicB, Protected, Modern)` arm. All existing ClassicB arms require Old engine.
+
 ---
 
 ## 7. Fixture corpus
@@ -393,13 +411,16 @@ All fixtures under `testdata/krpano/encrypted/`. Each directory contains `tour.x
 | `2013-06-05-B` | `KENCPUBR` | ClassicB | Public | old (1.16.4) | Yes |
 | `2013-08-09-B` | `KENCPUBR` | ClassicB | Public | old (1.0.8.15) | Yes |
 | `2015-08-04` | `KENCRUZR` | ClassicZ | Protected | old | Yes |
+| `2017-05-10` | `KENCRUZR` | ClassicZ | Protected | old | Yes |
 | `2017-09-21` | `KENCRUZR` | ClassicZ | Protected | old | Yes |
 | `2018-04-04` | `KENCPUZR` | ClassicZ | Public | modern | Yes |
+| `2022-01-13` | `KENCPUPR` | Subdiv | Public | modern | Yes |
 | `2023-02-07` | `KENCRURR` | Subdiv | Protected | modern | Yes |
 | `2023-04-30` | `KENCRURR` | Subdiv | Protected | modern (1.21) | Yes |
 | `2023-04-30-PP` | `KENCPUPR` | Subdiv | Public | modern (1.21) | Yes |
 | `2023-12-11` | `KENCRURR` | Subdiv | Protected | modern | Yes |
 | `2024-12-20` | `KENCRURR` | Subdiv | Protected | modern | Yes |
+| `2024-12-20-KENCPUZR` | `KENCPUZR` | ClassicZ | Public | modern | Yes |
 | `2026-06-25-pp-01_minimal` | `KENCPUPR` | Subdiv | Public | modern (1.24) | Yes |
 | `2026-06-25-pp-02_special_chars` | `KENCPUPR` | Subdiv | Public | modern (1.24) | Yes |
 | `2026-06-25-pp-03_nested` | `KENCPUPR` | Subdiv | Public | modern (1.24) | Yes |
@@ -408,6 +429,8 @@ All fixtures under `testdata/krpano/encrypted/`. Each directory contains `tour.x
 | `2026-06-25-rr_minimal` | `KENCRURR` | Subdiv | Protected | modern (1.24) | Yes |
 | `2026-06-25-rr_special` | `KENCRURR` | Subdiv | Protected | modern (1.24) | Yes |
 | `2026-06-25-rr_tour` | `KENCRURR` | Subdiv | Protected | modern (1.24) | Yes |
+| `2015-08-04-KENCRUBR` | `KENCRUBR` | ClassicB | Protected | old (1.19-pr3, 2015-08-04) | **No** — alphabet extraction finds only 26 chars |
+| `2018-04-23-KENCRUBR` | `KENCRUBR` | ClassicB | Protected | modern (1.19-pr16.1, 2018-04-23) | **No** — no `(ClassicB, Protected, Modern)` arm |
 
 All 2026 fixtures: prefix `%*` for PP, `$*<key-id>@` for RR. RR key IDs: `FIXTURE_rr_minimal`, `PFIXTURE_rr_special...` (85 chars), `MFIXTURE_rr_tour...` (85 chars). Engine context (136 rows, checksum=23293), pk= side data (128 chars), and Mf table data extract successfully for all 8 fixtures. All observed 2026 fixtures decrypt end-to-end and match their expected `plaintext.xml` files.
 
