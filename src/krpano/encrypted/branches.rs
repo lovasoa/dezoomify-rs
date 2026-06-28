@@ -30,12 +30,13 @@ impl<'a> SubdivBodyPrefix<'a> {
             };
         }
         if let Some(rest) = replaced_body.strip_prefix("$*")
-            && let Some((key_id, payload)) = rest.split_once('@') {
-                return Self {
-                    key_id: Some(key_id),
-                    payload,
-                };
-            }
+            && let Some((key_id, payload)) = rest.split_once('@')
+        {
+            return Self {
+                key_id: Some(key_id),
+                payload,
+            };
+        }
         Self {
             key_id: None,
             payload: replaced_body,
@@ -162,34 +163,30 @@ fn decode_custom_base64(input: &str, alphabet: &str) -> Result<Vec<u8>, Encrypte
     while let (Some(a), Some(b), Some(c), Some(d)) =
         (chars.next(), chars.next(), chars.next(), chars.next())
     {
-        let a = alphabet
-            .iter()
-            .position(|&ch| ch == a)
-            .ok_or(EncryptedKrpanoError::ClassicBCharNotFound {
+        let a = alphabet.iter().position(|&ch| ch == a).ok_or(
+            EncryptedKrpanoError::ClassicBCharNotFound {
                 ch: a,
                 alphabet_len: alphabet.len(),
-            })?;
-        let b = alphabet
-            .iter()
-            .position(|&ch| ch == b)
-            .ok_or(EncryptedKrpanoError::ClassicBCharNotFound {
+            },
+        )?;
+        let b = alphabet.iter().position(|&ch| ch == b).ok_or(
+            EncryptedKrpanoError::ClassicBCharNotFound {
                 ch: b,
                 alphabet_len: alphabet.len(),
-            })?;
-        let c = alphabet
-            .iter()
-            .position(|&ch| ch == c)
-            .ok_or(EncryptedKrpanoError::ClassicBCharNotFound {
+            },
+        )?;
+        let c = alphabet.iter().position(|&ch| ch == c).ok_or(
+            EncryptedKrpanoError::ClassicBCharNotFound {
                 ch: c,
                 alphabet_len: alphabet.len(),
-            })?;
-        let d = alphabet
-            .iter()
-            .position(|&ch| ch == d)
-            .ok_or(EncryptedKrpanoError::ClassicBCharNotFound {
+            },
+        )?;
+        let d = alphabet.iter().position(|&ch| ch == d).ok_or(
+            EncryptedKrpanoError::ClassicBCharNotFound {
                 ch: d,
                 alphabet_len: alphabet.len(),
-            })?;
+            },
+        )?;
         out.push(((a << 2) | (b >> 4)) as u8);
         if c != 64 {
             out.push((((b & 15) << 4) | (c >> 2)) as u8);

@@ -104,8 +104,7 @@ pub fn decrypt_xml(
     log::debug!("decrypt_xml: viewer_data = {} bytes", viewer_data.len());
 
     // Extract the wrapper key and decoded engine from the viewer JS.
-    let wrapper_key =
-        extract_key_from_viewer_js(viewer_data)?;
+    let wrapper_key = extract_key_from_viewer_js(viewer_data)?;
     log::debug!("decrypt_xml: wrapper_key length = {}", wrapper_key.len());
     let decoded_engine = extract_decoded_viewer_js(viewer_data)?;
     log::debug!(
@@ -198,10 +197,12 @@ pub fn decrypt_xml(
                     // Used by transitional engines whose source embeds no
                     // custom alphabet. A wrong alphabet yields non-UTF-8
                     // output that the pipeline rejects, so this is safe.
-                    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
-                        .to_string()
+                    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=".to_string()
                 });
-            log::debug!("decrypt_xml: modern ClassicB, alphabet={} chars", alphabet.len());
+            log::debug!(
+                "decrypt_xml: modern ClassicB, alphabet={} chars",
+                alphabet.len()
+            );
             let key = match mode {
                 CipherMode::Public => ctx.default_key.as_bytes().to_vec(),
                 CipherMode::Protected => {
@@ -384,9 +385,15 @@ mod tests {
             "2023-12-11" => Some(("KENCRURR", BodyCipher::Subdiv, CipherMode::Protected)),
             "2024-12-20" => Some(("KENCRURR", BodyCipher::Subdiv, CipherMode::Protected)),
             "2024-12-20-KENCPUZR" => Some(("KENCPUZR", BodyCipher::ClassicZ, CipherMode::Public)),
-            "2015-08-04-KENCRUBR" => Some(("KENCRUBR", BodyCipher::ClassicB, CipherMode::Protected)),
-            "2018-04-23-KENCRUBR" => Some(("KENCRUBR", BodyCipher::ClassicB, CipherMode::Protected)),
-            "2019-10-15-KENCPUPR-1.20" => Some(("KENCPUPR", BodyCipher::Subdiv, CipherMode::Public)),
+            "2015-08-04-KENCRUBR" => {
+                Some(("KENCRUBR", BodyCipher::ClassicB, CipherMode::Protected))
+            }
+            "2018-04-23-KENCRUBR" => {
+                Some(("KENCRUBR", BodyCipher::ClassicB, CipherMode::Protected))
+            }
+            "2019-10-15-KENCPUPR-1.20" => {
+                Some(("KENCPUPR", BodyCipher::Subdiv, CipherMode::Public))
+            }
             "2026-06-25-pp-01_minimal" => {
                 Some(("KENCPUPR", BodyCipher::Subdiv, CipherMode::Public))
             }
@@ -907,7 +914,9 @@ mod tests {
                         &normalized[..normalized.len().min(200)]
                     );
                     let _parsed: PlaintextKrpanoRoot = serde_xml_rs::from_reader(text.as_bytes())
-                        .unwrap_or_else(|err| panic!("{dir_name}: plaintext XML did not parse: {err}"));
+                        .unwrap_or_else(|err| {
+                            panic!("{dir_name}: plaintext XML did not parse: {err}")
+                        });
 
                     let expected_path = dir.join("plaintext.xml");
                     if expected_path.exists() {
@@ -948,53 +957,77 @@ mod tests {
 
     #[test]
     fn probe_external_repos() {
-        use std::fs;
         use std::collections::BTreeMap;
+        use std::fs;
         let candidates: &[(&str, &str, &str)] = &[
             // KENCPUBR - ClassicB+Public+Old
-            ("/tmp/kenc-repos/SenYuanZ__Museum-News/News-2/bwg3d/plugins/map_core.xml",
-             "/tmp/kenc-repos/SenYuanZ__Museum-News/News-2/bwg3d/plugins/map_core.js",
-             "KENCPUBR: map_core"),
+            (
+                "/tmp/kenc-repos/SenYuanZ__Museum-News/News-2/bwg3d/plugins/map_core.xml",
+                "/tmp/kenc-repos/SenYuanZ__Museum-News/News-2/bwg3d/plugins/map_core.js",
+                "KENCPUBR: map_core",
+            ),
             // KENCPUPR - Subdiv+Public+Modern
-            ("/tmp/kenc-repos/SanyoRadio__Saronida-Panorama/saro.xml",
-             "/tmp/kenc-repos/SanyoRadio__Saronida-Panorama/saro.js",
-             "KENCPUPR: saro 1.20.2"),
+            (
+                "/tmp/kenc-repos/SanyoRadio__Saronida-Panorama/saro.xml",
+                "/tmp/kenc-repos/SanyoRadio__Saronida-Panorama/saro.js",
+                "KENCPUPR: saro 1.20.2",
+            ),
             // KENCPUZR - ClassicZ+Public+Modern
-            ("/tmp/kenc-repos/iflycn__vr/inc/pano_webvr.xml",
-             "/tmp/kenc-repos/iflycn__vr/inc/pano_webvr.js",
-             "KENCPUZR: pano_webvr"),
+            (
+                "/tmp/kenc-repos/iflycn__vr/inc/pano_webvr.xml",
+                "/tmp/kenc-repos/iflycn__vr/inc/pano_webvr.js",
+                "KENCPUZR: pano_webvr",
+            ),
             // KENCRURR - Subdiv+Protected+Modern
-            ("/tmp/kenc-repos/poricf__Vr-secondround/Lycee(Newroad)_Type A3/tour.xml",
-             "/tmp/kenc-repos/poricf__Vr-secondround/Lycee(Newroad)_Type A3/tour.js",
-             "KENCRURR: Lycee 1.21"),
-            ("/tmp/kenc-repos/parakhc4__Vincent_inn_3D_Tour/tour.xml",
-             "/tmp/kenc-repos/parakhc4__Vincent_inn_3D_Tour/tour.js",
-             "KENCRURR: Vincent 1.21"),
+            (
+                "/tmp/kenc-repos/poricf__Vr-secondround/Lycee(Newroad)_Type A3/tour.xml",
+                "/tmp/kenc-repos/poricf__Vr-secondround/Lycee(Newroad)_Type A3/tour.js",
+                "KENCRURR: Lycee 1.21",
+            ),
+            (
+                "/tmp/kenc-repos/parakhc4__Vincent_inn_3D_Tour/tour.xml",
+                "/tmp/kenc-repos/parakhc4__Vincent_inn_3D_Tour/tour.js",
+                "KENCRURR: Vincent 1.21",
+            ),
             // More KENCRURR pairs
-            ("/tmp/kenc-repos/Dilhakk__Temervr/Seken_Lycee(Type_08)/tour.xml",
-             "/tmp/kenc-repos/Dilhakk__Temervr/Seken_Lycee(Type_08)/tour.js",
-             "KENCRURR: Seken Lycee"),
+            (
+                "/tmp/kenc-repos/Dilhakk__Temervr/Seken_Lycee(Type_08)/tour.xml",
+                "/tmp/kenc-repos/Dilhakk__Temervr/Seken_Lycee(Type_08)/tour.js",
+                "KENCRURR: Seken Lycee",
+            ),
             // KENCRUZR - ClassicZ+Protected+Old
-            ("/tmp/kenc-repos/poricf__Vr-secondround/Lycee(Newroad)_Type A3/plugins/webvr.xml",
-             "/tmp/kenc-repos/poricf__Vr-secondround/Lycee(Newroad)_Type A3/plugins/webvr.js",
-             "KENCRUZR: webvr plugin"),
-            ("/tmp/kenc-repos/duheng__vrseat/src/setting/tour.xml",
-             "/tmp/kenc-repos/duheng__vrseat/src/setting/tour.js",
-             "KENCRUZR: duheng 1.19"),
+            (
+                "/tmp/kenc-repos/poricf__Vr-secondround/Lycee(Newroad)_Type A3/plugins/webvr.xml",
+                "/tmp/kenc-repos/poricf__Vr-secondround/Lycee(Newroad)_Type A3/plugins/webvr.js",
+                "KENCRUZR: webvr plugin",
+            ),
+            (
+                "/tmp/kenc-repos/duheng__vrseat/src/setting/tour.xml",
+                "/tmp/kenc-repos/duheng__vrseat/src/setting/tour.js",
+                "KENCRUZR: duheng 1.19",
+            ),
             // More KENCRUZR pairs
-            ("/tmp/kenc-repos/tinyhousecn__Toilet-Expandable-Container-House-Kaipu/pano.xml",
-             "/tmp/kenc-repos/tinyhousecn__Toilet-Expandable-Container-House-Kaipu/pano.js",
-             "KENCRUZR: tinyhousecn"),
+            (
+                "/tmp/kenc-repos/tinyhousecn__Toilet-Expandable-Container-House-Kaipu/pano.xml",
+                "/tmp/kenc-repos/tinyhousecn__Toilet-Expandable-Container-House-Kaipu/pano.js",
+                "KENCRUZR: tinyhousecn",
+            ),
             // KENCRUBR - ClassicB+Protected
-            ("/tmp/kenc-repos/iamsayan__virtual-tours/2022/e55b32193661624c300000df/32data/32.xml",
-             "/tmp/kenc-repos/iamsayan__virtual-tours/2022/e55b32193661624c300000df/32data/32.js",
-             "KENCRUBR: iamsayan 32"),
-            ("/tmp/kenc-repos/iNATS__inatsVr/iNATS Demodata/iNATS Demo.xml",
-             "/tmp/kenc-repos/iNATS__inatsVr/iNATS Demodata/iNATS Demo.js",
-             "KENCRUBR: iNATS"),
-            ("/tmp/kenc-repos/Azat301__my/1.xml",
-             "/tmp/kenc-repos/Azat301__my/1.js",
-             "KENCRUBR: Azat301 1"),
+            (
+                "/tmp/kenc-repos/iamsayan__virtual-tours/2022/e55b32193661624c300000df/32data/32.xml",
+                "/tmp/kenc-repos/iamsayan__virtual-tours/2022/e55b32193661624c300000df/32data/32.js",
+                "KENCRUBR: iamsayan 32",
+            ),
+            (
+                "/tmp/kenc-repos/iNATS__inatsVr/iNATS Demodata/iNATS Demo.xml",
+                "/tmp/kenc-repos/iNATS__inatsVr/iNATS Demodata/iNATS Demo.js",
+                "KENCRUBR: iNATS",
+            ),
+            (
+                "/tmp/kenc-repos/Azat301__my/1.xml",
+                "/tmp/kenc-repos/Azat301__my/1.js",
+                "KENCRUBR: Azat301 1",
+            ),
         ];
 
         let mut summaries: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -1002,32 +1035,63 @@ mod tests {
         for (xml_path, js_path, label) in candidates {
             let xml = match fs::read(xml_path) {
                 Ok(x) => x,
-                Err(_) => { summaries.entry("XML_NOT_FOUND".into()).or_default().push(label.to_string()); continue; }
+                Err(_) => {
+                    summaries
+                        .entry("XML_NOT_FOUND".into())
+                        .or_default()
+                        .push(label.to_string());
+                    continue;
+                }
             };
             let js = match fs::read(js_path) {
                 Ok(x) => x,
-                Err(_) => { summaries.entry("JS_NOT_FOUND".into()).or_default().push(label.to_string()); continue; }
+                Err(_) => {
+                    summaries
+                        .entry("JS_NOT_FOUND".into())
+                        .or_default()
+                        .push(label.to_string());
+                    continue;
+                }
             };
             let Ok(payload) = viewer::encrypted_payload(&xml) else {
-                summaries.entry("FAIL: payload_extraction".into()).or_default().push(label.to_string());
+                summaries
+                    .entry("FAIL: payload_extraction".into())
+                    .or_default()
+                    .push(label.to_string());
                 continue;
             };
             let _header = match KencHeader::parse(&payload) {
                 Ok(h) => h,
-                Err(e) => { summaries.entry(format!("FAIL: header_parse({e})")).or_default().push(label.to_string()); continue; }
+                Err(e) => {
+                    summaries
+                        .entry(format!("FAIL: header_parse({e})"))
+                        .or_default()
+                        .push(label.to_string());
+                    continue;
+                }
             };
             let wrapper_key = extract_key_from_viewer_js(&js);
             let decoded_engine = match extract_decoded_viewer_js(&js) {
                 Ok(d) => d,
-                Err(e) => { summaries.entry(format!("FAIL: decode_viewer_js({e})")).or_default().push(label.to_string()); continue; }
+                Err(e) => {
+                    summaries
+                        .entry(format!("FAIL: decode_viewer_js({e})"))
+                        .or_default()
+                        .push(label.to_string());
+                    continue;
+                }
             };
             let engine = detect_engine(&decoded_engine);
             match decrypt_xml(&xml, Some(&js)) {
                 Ok(plaintext) => {
-                    summaries.entry("OK".into()).or_default().push(format!("{label} plain={} engine={engine:?}", plaintext.len()));
+                    summaries.entry("OK".into()).or_default().push(format!(
+                        "{label} plain={} engine={engine:?}",
+                        plaintext.len()
+                    ));
                 }
                 Err(e) => {
-                    let key = format!("FAIL: decrypt engine={engine:?} wk={} de={} err={e}",
+                    let key = format!(
+                        "FAIL: decrypt engine={engine:?} wk={} de={} err={e}",
                         wrapper_key.as_ref().map_or(0, |k: &String| k.len()),
                         decoded_engine.len()
                     );

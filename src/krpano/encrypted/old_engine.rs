@@ -262,13 +262,24 @@ fn extract_called_function_names(body: &str) -> Vec<String> {
                 if start < i {
                     let name = std::str::from_utf8(&bytes[start..i]).unwrap_or("");
                     // Filter out common non-function tokens
-                    if !matches!(name, "" | "if" | "for" | "while" | "switch" | "return" | "function" | "typeof" | "var" | "let" | "const" | "new" | "d")
-                        && name.len() >= 1
-                    {
-                        if !names.contains(&name.to_string()) {
+                    if !matches!(
+                        name,
+                        "" | "if"
+                            | "for"
+                            | "while"
+                            | "switch"
+                            | "return"
+                            | "function"
+                            | "typeof"
+                            | "var"
+                            | "let"
+                            | "const"
+                            | "new"
+                            | "d"
+                    ) && !name.is_empty()
+                        && !names.contains(&name.to_string()) {
                             names.push(name.to_string());
                         }
-                    }
                 }
             }
         }
@@ -307,11 +318,10 @@ fn find_row_ref_in_text(text: &str) -> Option<usize> {
         let rest = &text[abs_pos..];
         if let Some(end) = rest.find(']') {
             let digits = &rest[..end];
-            if digits.chars().all(|c| c.is_ascii_digit()) {
-                if let Ok(idx) = digits.parse::<usize>() {
+            if digits.chars().all(|c| c.is_ascii_digit())
+                && let Ok(idx) = digits.parse::<usize>() {
                     return Some(idx);
                 }
-            }
         }
         search_from = abs_pos;
     }
@@ -321,9 +331,7 @@ fn find_row_ref_in_text(text: &str) -> Option<usize> {
 /// Find a `_[N]` reference by searching backward for `=_[
 fn extract_row_ref_before(text: &str) -> Option<usize> {
     let row_ref_pos = text.rfind("=_[")? + 3;
-    let digits_end = text[row_ref_pos..]
-        .find(']')
-        .map(|end| row_ref_pos + end)?;
+    let digits_end = text[row_ref_pos..].find(']').map(|end| row_ref_pos + end)?;
     text[row_ref_pos..digits_end].parse().ok()
 }
 
@@ -462,12 +470,8 @@ fn find_constructed_alphabet(decoded_engine: &str, rows: &[String]) -> Option<St
     let decode_region = find_base64_decode_region(decoded_engine)?;
     let alphabet_var = find_alphabet_variable(decoded_engine, decode_region.clone())?;
     let transforms = detect_transform_functions(decoded_engine);
-    let alphabet = evaluate_alphabet_construction(
-        decoded_engine,
-        &alphabet_var,
-        rows,
-        &transforms,
-    )?;
+    let alphabet =
+        evaluate_alphabet_construction(decoded_engine, &alphabet_var, rows, &transforms)?;
     if is_likely_base64_alphabet(&alphabet) {
         Some(alphabet)
     } else {
@@ -633,14 +637,18 @@ fn collect_assignments(src: &str, var: &str) -> Vec<String> {
     let bytes = src.as_bytes();
     let v = var.as_bytes();
     let mut i = 0;
-    while i + v.len() + 1 <= bytes.len() {
+    while i + v.len() < bytes.len() {
         // Match `var` at a word boundary.
         if &bytes[i..i + v.len()] == v {
             let before_ok = i == 0
-                || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_'
+                || !(bytes[i - 1].is_ascii_alphanumeric()
+                    || bytes[i - 1] == b'_'
                     || bytes[i - 1] == b'.');
             let after = i + v.len();
-            if before_ok && after < bytes.len() && bytes[after] == b'=' && bytes.get(after + 1) != Some(&b'=')
+            if before_ok
+                && after < bytes.len()
+                && bytes[after] == b'='
+                && bytes.get(after + 1) != Some(&b'=')
             {
                 // Skip an optional leading `var ` keyword if present just
                 // before; not required for RHS extraction.
@@ -856,7 +864,9 @@ impl<'a> Parser<'a> {
             }
             self.pos += 1;
         }
-        let s = std::str::from_utf8(&self.bytes[start..self.pos]).ok()?.to_string();
+        let s = std::str::from_utf8(&self.bytes[start..self.pos])
+            .ok()?
+            .to_string();
         if self.pos < self.bytes.len() {
             self.pos += 1; // closing quote
         }
@@ -889,15 +899,19 @@ fn find_local_assignment(text: &str, name: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let n = name.as_bytes();
     let mut search = 0;
-    while search + n.len() + 1 <= bytes.len() {
+    while search + n.len() < bytes.len() {
         if let Some(rel) = text[search..].find(name) {
             let abs = search + rel;
             search = abs + n.len();
             let before_ok = abs == 0
-                || !(bytes[abs - 1].is_ascii_alphanumeric() || bytes[abs - 1] == b'_'
+                || !(bytes[abs - 1].is_ascii_alphanumeric()
+                    || bytes[abs - 1] == b'_'
                     || bytes[abs - 1] == b'.');
             let after = abs + n.len();
-            if !before_ok || after >= bytes.len() || bytes[after] != b'=' || bytes.get(after + 1) == Some(&b'=')
+            if !before_ok
+                || after >= bytes.len()
+                || bytes[after] != b'='
+                || bytes.get(after + 1) == Some(&b'=')
             {
                 continue;
             }
