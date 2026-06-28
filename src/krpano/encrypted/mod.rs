@@ -797,6 +797,7 @@ mod tests {
             "2013-06-05-B",
             "2013-08-09-B",
             "2015-08-04",
+            "2015-08-04-KENCRUBR",
             "2017-09-21",
         ] {
             let root = Path::new(env!("CARGO_MANIFEST_DIR"))

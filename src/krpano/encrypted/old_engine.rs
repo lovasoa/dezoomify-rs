@@ -149,6 +149,13 @@ pub fn derive_old_license_key(
             // quoted string literal that looks like a 65+ char Base64 alphabet.
             find_base64_alphabet_in_source(decoded_engine)
         })
+        .or_else(|| {
+            // Some engines build the alphabet at runtime from several _[] rows
+            // and string transforms (e.g. `w=_[N],w=w+(F(w)+_[M])` where F is
+            // toLowerCase), rather than storing it as a single literal/row.
+            // Parse and evaluate such constructions.
+            find_constructed_alphabet(decoded_engine, &unpacked.rows)
+        })
         .unwrap_or_default();
     let protected_key = extract_license_record(&unpacked.license_blob, key_tag)
         .ok()
@@ -424,6 +431,482 @@ fn is_likely_base64_alphabet(s: &str) -> bool {
     // The alphabet should have mostly unique characters (at least 60 unique).
     // The padding '=' character may appear at the end.
     unique_count >= 60
+}
+
+// ---------------------------------------------------------------------------
+// Constructed-alphabet extraction
+//
+// Some old engines do not store the ClassicB Base64 alphabet as a single
+// literal or `_[N]` row. Instead they build it at runtime from several
+// `_[N]` rows and string transforms, e.g.:
+//
+//     var w=_[183], w=w+(F(w)+_[273]);      // F(a){return(""+a).toLowerCase()}
+//
+// which yields _[183] + lowercase(_[183]) + _[273].  The code below locates
+// the Base64 decode function by its behavioral signature (indexOf + charAt
+// + bit manipulation), follows the alphabet variable back to its
+// assignment(s), and evaluates the construction expression against the
+// unpacked `_[]` rows.  It is name-agnostic so it generalises to unseen
+// minified builds.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, PartialEq)]
+enum Transform {
+    Lowercase,
+    Uppercase,
+}
+
+/// Find a Base64 alphabet that is constructed at runtime from `_[]` rows and
+/// string transforms, rather than stored as a single literal/row.
+fn find_constructed_alphabet(decoded_engine: &str, rows: &[String]) -> Option<String> {
+    let decode_region = find_base64_decode_region(decoded_engine)?;
+    let alphabet_var = find_alphabet_variable(decoded_engine, decode_region.clone())?;
+    let transforms = detect_transform_functions(decoded_engine);
+    let alphabet = evaluate_alphabet_construction(
+        decoded_engine,
+        &alphabet_var,
+        rows,
+        &transforms,
+    )?;
+    if is_likely_base64_alphabet(&alphabet) {
+        Some(alphabet)
+    } else {
+        None
+    }
+}
+
+/// Locate the Base64 decode function in the engine source by its behavioral
+/// signature: a region containing `indexOf(`, `charAt`, and Base64 bit
+/// manipulation (`<<2`, `>>4`, `&15`, `&3`, `<<6`). Returns the byte range
+/// of a generous window around the first match.
+fn find_base64_decode_region(src: &str) -> Option<std::ops::Range<usize>> {
+    let bytes = src.as_bytes();
+    let mut search = 0;
+    while let Some(rel) = src[search..].find("indexOf(") {
+        let abs = search + rel;
+        search = abs + 7;
+        let win_end = (abs + 400).min(src.len());
+        let win = &src[abs..win_end];
+        let has_charat = win.contains("charAt");
+        let has_bitops = win.contains("<<2")
+            || win.contains(">>4")
+            || win.contains("<<6")
+            || win.contains("&15)")
+            || win.contains("&3)<<");
+        if !has_charat || !has_bitops {
+            continue;
+        }
+        // The decode function starts before this indexOf. Find the enclosing
+        // function start by scanning back to `function` or `=function`.
+        let back = &src[..abs];
+        let fn_start = back
+            .rfind("=function(")
+            .map(|p| p + 1)
+            .or_else(|| back.rfind("function "))
+            .map(|p| p.saturating_sub(40));
+        let start = fn_start.unwrap_or(abs.saturating_sub(400));
+        return Some(start..win_end);
+    }
+    let _ = bytes; // (bytes retained for clarity; search uses str::find)
+    None
+}
+
+/// Given the decode-function region, find the name of the closure variable
+/// that holds the alphabet. The decode function looks like
+/// `... <recv>=<alias>,... <recv>.indexOf(a.charAt(...))`; `<alias>` is either
+/// the alphabet variable directly or a local bound to it. We follow a single
+/// aliasing hop (local -> closure var).
+fn find_alphabet_variable(src: &str, region: std::ops::Range<usize>) -> Option<String> {
+    let region_text = &src[region.clone()];
+    let idx = region_text.find(".indexOf(")?;
+    // Walk back from `.indexOf` to capture the receiver identifier.
+    let recv_end = region.start + idx;
+    let recv = identifier_before(src, recv_end)?;
+    if recv.is_empty() {
+        return None;
+    }
+    // Find `<recv>=<value>` within the region (e.g. `var d=w`).
+    let assign = find_local_assignment(region_text, &recv)?;
+    let value = assign.trim();
+    // If the value is a simple identifier, it is the alphabet variable.
+    // If it is a row reference or expression, the alphabet is constructed
+    // inline; return the receiver itself as the "variable" so the caller
+    // evaluates the inline expression.
+    if value
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && !value.bytes().next().is_some_and(|b| b.is_ascii_digit())
+    {
+        Some(value.to_string())
+    } else {
+        Some(recv)
+    }
+}
+
+/// Build a map of single-argument function names that perform a case
+/// transform, by scanning for definitions like
+/// `function F(a){return(""+a).toLowerCase()}` and the `=function` variant.
+fn detect_transform_functions(src: &str) -> std::collections::HashMap<String, Transform> {
+    let mut map = std::collections::HashMap::new();
+    for (needle, tfm) in [
+        (".toLowerCase()", Transform::Lowercase),
+        (".toUpperCase()", Transform::Uppercase),
+    ] {
+        let mut search = 0;
+        while let Some(rel) = src[search..].find(needle) {
+            let abs = search + rel;
+            search = abs + needle.len();
+            // Look back for `function <name>(<arg>){return` or `<name>=function(<arg>){return`.
+            let back = &src[..abs];
+            let body_start = back
+                .rfind("{return")
+                .or_else(|| back.rfind("{return \"\"+"))
+                .or_else(|| back.rfind("return(\"\"+"));
+            let Some(bs) = body_start else {
+                continue;
+            };
+            let head = &src[..bs];
+            // Try `function NAME(ARG)` then `NAME=function(ARG)`.
+            if let Some(name) = last_function_decl_name(head, "function ") {
+                map.insert(name, tfm);
+            } else if let Some(name) = last_function_decl_name(head, "=function(") {
+                map.insert(name, tfm);
+            }
+        }
+    }
+    map
+}
+
+/// Extract the function name immediately preceding a `function ` or
+/// `=function(` marker, scanning backward from the end of `head`.
+fn last_function_decl_name(head: &str, marker: &str) -> Option<String> {
+    let pos = head.rfind(marker)?;
+    let after = if marker == "function " {
+        pos + marker.len()
+    } else {
+        // `NAME=function(` -> NAME is before `=`.
+        let eq = pos; // pos points at '=' in '=function('
+        let name_end = eq;
+        let name = identifier_before(head, name_end)?;
+        if name.is_empty() {
+            return None;
+        }
+        return Some(name);
+    };
+    // `function NAME(...` -> read identifier after marker.
+    let bytes = head.as_bytes();
+    let mut i = after;
+    while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+        i += 1;
+    }
+    if i > after {
+        Some(head[after..i].to_string())
+    } else {
+        None
+    }
+}
+
+/// Collect all assignments to `var` (in source order) and evaluate them,
+/// returning the final value. Assignments may be comma-separated within a
+/// single `var` declaration or separate statements.
+fn evaluate_alphabet_construction(
+    src: &str,
+    var: &str,
+    rows: &[String],
+    transforms: &std::collections::HashMap<String, Transform>,
+) -> Option<String> {
+    let mut scope: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut last_value: Option<String> = None;
+    for rhs in collect_assignments(src, var) {
+        if let Some(val) = eval_expr(&rhs, rows, transforms, &scope) {
+            scope.insert(var.to_string(), val.clone());
+            last_value = Some(val);
+        }
+    }
+    last_value
+}
+
+/// Find the RHS expressions of all `<var>=...` assignments in source order.
+/// Matches word boundaries so `w=` does not match `sw=`. Skips `==`.
+fn collect_assignments(src: &str, var: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let bytes = src.as_bytes();
+    let v = var.as_bytes();
+    let mut i = 0;
+    while i + v.len() + 1 <= bytes.len() {
+        // Match `var` at a word boundary.
+        if &bytes[i..i + v.len()] == v {
+            let before_ok = i == 0
+                || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_'
+                    || bytes[i - 1] == b'.');
+            let after = i + v.len();
+            if before_ok && after < bytes.len() && bytes[after] == b'=' && bytes.get(after + 1) != Some(&b'=')
+            {
+                // Skip an optional leading `var ` keyword if present just
+                // before; not required for RHS extraction.
+                let rhs_start = after + 1;
+                if let Some(rhs) = read_rhs(&src[rhs_start.min(src.len())..]) {
+                    out.push(rhs);
+                    i = rhs_start + 1;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Read an RHS expression up to the next `,` or `;` at brace/paren depth 0,
+/// respecting string literals.
+fn read_rhs(rest: &str) -> Option<String> {
+    let bytes = rest.as_bytes();
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' | b'\'' => {
+                let q = bytes[i];
+                i += 1;
+                while i < bytes.len() && bytes[i] != q {
+                    if bytes[i] == b'\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+            }
+            b'(' | b'{' | b'[' => depth += 1,
+            b')' | b'}' | b']' => depth -= 1,
+            b',' | b';' if depth <= 0 => return Some(rest[..i].trim().to_string()),
+            _ => {}
+        }
+        i += 1;
+    }
+    Some(rest.trim().to_string())
+}
+
+/// Evaluate a restricted JS string expression.
+///
+/// Grammar (subset):
+///   expr  := term ('+' term)*
+///   term  := factor ( '.' method '(' ')' )*
+///   factor:= '_[' NUM ']' | STRING | IDENT '(' expr ')' | IDENT | '(' expr ')'
+///   method:= 'toLowerCase' | 'toUpperCase'
+fn eval_expr(
+    expr: &str,
+    rows: &[String],
+    transforms: &std::collections::HashMap<String, Transform>,
+    scope: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    let mut p = Parser::new(expr.as_bytes());
+    let val = p.parse_expr(rows, transforms, scope)?;
+    p.skip_ws();
+    if p.pos == p.bytes.len() {
+        Some(val)
+    } else {
+        None
+    }
+}
+
+struct Parser<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Parser<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, pos: 0 }
+    }
+    fn skip_ws(&mut self) {
+        while self.pos < self.bytes.len() && self.bytes[self.pos].is_ascii_whitespace() {
+            self.pos += 1;
+        }
+    }
+    fn peek(&mut self) -> Option<u8> {
+        self.skip_ws();
+        self.bytes.get(self.pos).copied()
+    }
+    fn eat(&mut self, c: u8) -> bool {
+        self.skip_ws();
+        if self.bytes.get(self.pos) == Some(&c) {
+            self.pos += 1;
+            true
+        } else {
+            false
+        }
+    }
+    fn parse_expr(
+        &mut self,
+        rows: &[String],
+        transforms: &std::collections::HashMap<String, Transform>,
+        scope: &std::collections::HashMap<String, String>,
+    ) -> Option<String> {
+        let mut acc = self.parse_term(rows, transforms, scope)?;
+        loop {
+            if self.eat(b'+') {
+                let rhs = self.parse_term(rows, transforms, scope)?;
+                acc.push_str(&rhs);
+            } else {
+                break;
+            }
+        }
+        Some(acc)
+    }
+    fn parse_term(
+        &mut self,
+        rows: &[String],
+        transforms: &std::collections::HashMap<String, Transform>,
+        scope: &std::collections::HashMap<String, String>,
+    ) -> Option<String> {
+        let mut val = self.parse_factor(rows, transforms, scope)?;
+        loop {
+            self.skip_ws();
+            if self.eat(b'.') {
+                let name = self.read_ident();
+                self.skip_ws();
+                if self.eat(b'(') {
+                    self.skip_ws();
+                    self.eat(b')');
+                    val = match name.as_str() {
+                        "toLowerCase" => val.to_lowercase(),
+                        "toUpperCase" => val.to_uppercase(),
+                        _ => return None,
+                    };
+                } else {
+                    return None;
+                }
+            } else {
+                break;
+            }
+        }
+        Some(val)
+    }
+    fn parse_factor(
+        &mut self,
+        rows: &[String],
+        transforms: &std::collections::HashMap<String, Transform>,
+        scope: &std::collections::HashMap<String, String>,
+    ) -> Option<String> {
+        self.skip_ws();
+        match self.peek()? {
+            b'(' => {
+                self.pos += 1;
+                let v = self.parse_expr(rows, transforms, scope)?;
+                self.eat(b')');
+                Some(v)
+            }
+            b'"' | b'\'' => Some(self.read_string()?),
+            b'_' => {
+                // _[N]
+                self.pos += 1;
+                self.eat(b'[');
+                let n = self.read_number()?;
+                self.eat(b']');
+                rows.get(n).cloned()
+            }
+            c if c.is_ascii_alphabetic() || c == b'_' => {
+                let name = self.read_ident();
+                self.skip_ws();
+                if self.eat(b'(') {
+                    // Function call: FNAME(expr)
+                    let arg = self.parse_expr(rows, transforms, scope)?;
+                    self.eat(b')');
+                    match transforms.get(&name).copied() {
+                        Some(Transform::Lowercase) => Some(arg.to_lowercase()),
+                        Some(Transform::Uppercase) => Some(arg.to_uppercase()),
+                        None => None,
+                    }
+                } else {
+                    scope.get(&name).cloned()
+                }
+            }
+            _ => None,
+        }
+    }
+    fn read_ident(&mut self) -> String {
+        self.skip_ws();
+        let start = self.pos;
+        while self.pos < self.bytes.len()
+            && (self.bytes[self.pos].is_ascii_alphanumeric() || self.bytes[self.pos] == b'_')
+        {
+            self.pos += 1;
+        }
+        std::str::from_utf8(&self.bytes[start..self.pos])
+            .unwrap_or("")
+            .to_string()
+    }
+    fn read_number(&mut self) -> Option<usize> {
+        self.skip_ws();
+        let start = self.pos;
+        while self.pos < self.bytes.len() && self.bytes[self.pos].is_ascii_digit() {
+            self.pos += 1;
+        }
+        std::str::from_utf8(&self.bytes[start..self.pos])
+            .ok()?
+            .parse()
+            .ok()
+    }
+    fn read_string(&mut self) -> Option<String> {
+        let q = self.bytes[self.pos];
+        self.pos += 1;
+        let start = self.pos;
+        while self.pos < self.bytes.len() && self.bytes[self.pos] != q {
+            if self.bytes[self.pos] == b'\\' {
+                self.pos += 1;
+            }
+            self.pos += 1;
+        }
+        let s = std::str::from_utf8(&self.bytes[start..self.pos]).ok()?.to_string();
+        if self.pos < self.bytes.len() {
+            self.pos += 1; // closing quote
+        }
+        Some(s)
+    }
+}
+
+/// Return the identifier (letters/digits/underscore) ending immediately
+/// before `end` (exclusive), scanning backward and skipping whitespace.
+fn identifier_before(src: &str, end: usize) -> Option<String> {
+    let bytes = src.as_bytes();
+    let mut i = end;
+    while i > 0 && bytes[i - 1].is_ascii_whitespace() {
+        i -= 1;
+    }
+    let name_end = i;
+    while i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_') {
+        i -= 1;
+    }
+    if i < name_end {
+        Some(src[i..name_end].to_string())
+    } else {
+        None
+    }
+}
+
+/// Find `<name>=<value>` within `text`, returning the value portion. Matches
+/// a word boundary before `<name>` and a single `=` (not `==`).
+fn find_local_assignment(text: &str, name: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let n = name.as_bytes();
+    let mut search = 0;
+    while search + n.len() + 1 <= bytes.len() {
+        if let Some(rel) = text[search..].find(name) {
+            let abs = search + rel;
+            search = abs + n.len();
+            let before_ok = abs == 0
+                || !(bytes[abs - 1].is_ascii_alphanumeric() || bytes[abs - 1] == b'_'
+                    || bytes[abs - 1] == b'.');
+            let after = abs + n.len();
+            if !before_ok || after >= bytes.len() || bytes[after] != b'=' || bytes.get(after + 1) == Some(&b'=')
+            {
+                continue;
+            }
+            return read_rhs(&text[after + 1..]);
+        } else {
+            break;
+        }
+    }
+    None
 }
 
 fn find_old_key_variable(decoded_engine: &str) -> String {
