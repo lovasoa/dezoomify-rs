@@ -165,7 +165,13 @@ pub fn decrypt_xml(
         }
 
         (BodyCipher::ClassicB, mode, EngineFamily::Modern) => {
-            // ClassicB with modern engine — find Base64 alphabet from we.subdiv rows
+            // ClassicB with modern/transitional engine.
+            //
+            // The Base64 alphabet is normally a custom permutation found in
+            // the unpacked rows or the decoded engine source. Engines that
+            // embed no custom alphabet (e.g. transitional 1.19-pr16 builds,
+            // which have no b64u8 decoder in the source) use standard RFC 4648
+            // Base64, so that is the final fallback.
             let ctx = modern_engine::extract_modern_context(&decoded_engine, &wrapper_key)?;
             let alphabet = ctx
                 .rows
@@ -187,20 +193,29 @@ pub fn decrypt_xml(
                         .ok()
                         .and_then(old_engine::find_base64_alphabet_in_source)
                 })
-                .ok_or(EncryptedKrpanoError::MissingKey)?;
+                .unwrap_or_else(|| {
+                    // Final fallback: standard RFC 4648 Base64 (with padding).
+                    // Used by transitional engines whose source embeds no
+                    // custom alphabet. A wrong alphabet yields non-UTF-8
+                    // output that the pipeline rejects, so this is safe.
+                    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
+                        .to_string()
+                });
             log::debug!("decrypt_xml: modern ClassicB, alphabet={} chars", alphabet.len());
             let key = match mode {
                 CipherMode::Public => ctx.default_key.as_bytes().to_vec(),
                 CipherMode::Protected => {
-                    use base64::Engine;
+                    // ClassicB inherits the old-engine `case 7` key derivation:
+                    // the `pk=` side-record value's characters (charCodeAt &
+                    // 255), padded to 128 by cycling.  The value is NOT
+                    // base64-decoded again — `side_records` already decoded the
+                    // side-data blob.
                     let records = modern_engine::side_records(&ctx)?;
                     let pk = records
                         .into_iter()
                         .find_map(|record| record.strip_prefix("pk=").map(ToOwned::to_owned))
                         .ok_or(EncryptedKrpanoError::MissingKey)?;
-                    base64::engine::general_purpose::STANDARD
-                        .decode(pk.as_bytes())
-                        .map_err(|_| EncryptedKrpanoError::Unsupported)?
+                    old_engine::pad_key_string_to_128(&pk)
                 }
             };
             branches::b_branch_to_plaintext_with_alphabet(
@@ -768,6 +783,34 @@ mod tests {
     #[test]
     fn decrypt_xml_public_subdiv_fixture() {
         let fixture = "2023-04-30-PP";
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata/krpano/encrypted")
+            .join(fixture);
+        let xml_path =
+            encrypted_xml_path(&root).unwrap_or_else(|| panic!("{fixture}: missing encrypted XML"));
+        let js_path =
+            viewer_js_path(&root).unwrap_or_else(|| panic!("{fixture}: missing viewer JS"));
+        let xml = fs::read(xml_path).unwrap();
+        let js = fs::read(js_path).unwrap();
+
+        let plaintext =
+            decrypt_xml(&xml, Some(&js)).unwrap_or_else(|err| panic!("{fixture}: {err}"));
+        let text = std::str::from_utf8(&plaintext)
+            .unwrap_or_else(|err| panic!("{fixture}: plaintext is not UTF-8: {err}"));
+        assert!(
+            looks_like_krpano_xml(text),
+            "{fixture}: plaintext should start with <krpano>"
+        );
+        let _parsed: PlaintextKrpanoRoot = serde_xml_rs::from_reader(text.as_bytes())
+            .unwrap_or_else(|err| panic!("{fixture}: plaintext XML did not parse: {err}"));
+    }
+
+    #[test]
+    fn decrypt_xml_transitional_classicb_fixture() {
+        // 2018-04-23-KENCRUBR: krpano 1.19-pr16 transitional engine.
+        // ClassicB + Protected with a standard Base64 alphabet and a pk=-derived
+        // case-7 key. Exercises the modern-ClassicB dispatch arm.
+        let fixture = "2018-04-23-KENCRUBR";
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("testdata/krpano/encrypted")
             .join(fixture);

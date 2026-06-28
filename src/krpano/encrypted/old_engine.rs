@@ -988,6 +988,35 @@ fn unpack_old_wrapper(wrapper_key: &str) -> Result<OldWrapperPayload, EncryptedK
     Ok(OldWrapperPayload { rows, license_blob })
 }
 
+/// Pad a key string to 128 characters by cycling through its characters
+/// (the `case 7` behavior shared by old and transitional engines), returning
+/// the bytes of the padded string.  Each character's low byte (`charCodeAt &
+/// 255`) is what the RC4 KSA consumes; for ASCII keys this is just the byte
+/// value.
+pub(crate) fn pad_key_string_to_128(key: &str) -> Vec<u8> {
+    if key.is_empty() {
+        return Vec::new();
+    }
+    // Cycle through the key's characters until we have 128 of them, matching
+    // the JS engine's `case 7` padding (which works in UTF-16 code units; for
+    // the ASCII keys used by ClassicB this is equivalent to byte cycling).
+    let mut padded: Vec<u8> = key.as_bytes().to_vec();
+    let mut chars = key.chars().cycle();
+    while padded.len() < 128 {
+        match chars.next() {
+            Some(c) if c.is_ascii() => padded.push(c as u8),
+            // Non-ASCII: encode each cycled char as UTF-8 so the byte length
+            // grows consistently with the source string.
+            Some(c) => {
+                let mut buf = [0u8; 4];
+                padded.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            }
+            None => break,
+        }
+    }
+    padded
+}
+
 /// Extract the protected key from the license blob's `case 7` record.
 ///
 /// The engine's `pc.init` function processes license records in a switch

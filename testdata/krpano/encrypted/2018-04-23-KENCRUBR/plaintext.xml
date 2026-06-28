@@ -1,0 +1,218 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<krpano version="1.19-pr16"
+        onstart="startup"
+        logkey="false"
+        bgcolor="#ffffff"
+        projectfloorplanurl=""
+        projecttitleid="project_title"
+        projectdescriptionid="">
+
+
+  <security cors="">
+    <!--
+    <crossdomainxml url="http://RESSOURCES_URL/crossdomain.xml" />
+    -->
+    <allowdomain domain="*" />
+  </security>
+
+  <krpano tour_firststartactiondone="false" />
+  <events name="startbehavioursevents" onxmlcomplete="startbehavioursxmlcompleteaction();" keep="true"/>
+
+  <include url="%FIRSTXML%/12_skin.xml"/>
+  <include url="%FIRSTXML%/12_core.xml"/>
+
+  <action name="startup">
+
+    if (s !== null, if (startscene === null OR startscene === "undefined", set(startscene, get(s));); );
+    if (startscene === null OR startscene === "undefined",
+      set(startscene, pano10);
+    );
+    if(startlanguage !== null AND startlanguage !== "undefined",
+      set(tour_language, get(startlanguage));
+    );
+    if(starttime !== null AND starttime !== "undefined" AND starttime GT 0,
+      set(videoscenestarttime, get(starttime));
+    ,
+      set(videoscenestarttime, 0);
+    );
+    mainloadsceneStartup(get(startscene));
+    if (h !== null,
+      if (v !== null,
+        if (f !== null,
+          lookat(get(h), get(v), get(f));
+         ,
+          lookat(get(h), get(v));
+        );
+      ,
+        if (f !== null,
+          lookat(get(h), get(view.vlookat), get(f));
+         ,
+          lookat(get(h), get(view.vlookat));
+        );
+      );
+    ,
+      if (v !== null,
+        if (f !== null,
+          lookat(get(view.hlookat), get(v), get(f));
+         ,
+          lookat(get(view.hlookat), get(v));
+        );
+      ,
+        if (f !== null,
+          lookat(get(view.hlookat), get(view.vlookat), get(f));
+        );
+      );
+    );
+  </action>
+
+
+  
+  
+
+
+<scene name="pano10"
+       heading="0"
+       thumburl="%FIRSTXML%/pano_10/thumbnail.jpg"
+       backgroundsound=""
+       backgroundsoundloops="0"
+       haspolygons="false"
+       titleid="pano10_title"
+       descriptionid=""
+       multires="true"
+       planar="false"
+       full360="false"
+       video="false"
+       seen="false">
+    <autorotate horizon="0.000000" tofov="90.000000" waittime="1" speed="5"/>
+    <panoview h="0.000000" v="0.000000" fov="90.000000" hmin="-158.70949999999999" hmax="158.70949999999999" vmin="-90" vmax="90" fovmax="90" />
+    <view fisheye="0"
+          limitview="range"
+          hlookatmin="-158.70949999999999"
+          hlookatmax="158.70949999999999"
+          vlookatmin="-90"
+          vlookatmax="90"
+          maxpixelzoom="1.0"
+          fovtype="VFOV"
+          fovmax="90"
+          fov="90.000000"
+          hlookat="0.000000"
+          vlookat="0.000000"/>
+    <preview url="%FIRSTXML%/pano_10/preview.jpg" type="CUBESTRIP" striporder="FRBLUD" />
+        <image type="SPHERE" hfov="317.41899999999998" vfov="180" voffset="0" multires="true" baseindex="0" tilesize="512" devices="flash.and.desktop">
+          <level tiledimagewidth="1148" tiledimageheight="651">
+            <sphere url="pano_10/0/%v_%u.jpg"/>
+          </level>
+        </image>
+  <image type="CUBE" devices="desktop.and.html5">
+    <front url="pano_10/html5/0.jpg"/>
+    <right url="pano_10/html5/1.jpg"/>
+    <back  url="pano_10/html5/2.jpg"/>
+    <left  url="pano_10/html5/3.jpg"/>
+    <up    url="pano_10/html5/4.jpg"/>
+    <down  url="pano_10/html5/5.jpg"/>
+  </image>
+  <image type="CUBE" devices="tablet">
+    <front url="pano_10/tablet/0.jpg"/>
+    <right url="pano_10/tablet/1.jpg"/>
+    <back  url="pano_10/tablet/2.jpg"/>
+    <left  url="pano_10/tablet/3.jpg"/>
+    <up    url="pano_10/tablet/4.jpg"/>
+    <down  url="pano_10/tablet/5.jpg"/>
+  </image>
+  <image type="CUBE" devices="mobile">
+    <front url="pano_10/mobile/0.jpg"/>
+    <right url="pano_10/mobile/1.jpg"/>
+    <back  url="pano_10/mobile/2.jpg"/>
+    <left  url="pano_10/mobile/3.jpg"/>
+    <up    url="pano_10/mobile/4.jpg"/>
+    <down  url="pano_10/mobile/5.jpg"/>
+  </image>
+
+
+
+
+
+
+</scene>
+
+  
+  
+
+
+<scene name="pano11"
+       heading="0"
+       thumburl="%FIRSTXML%/pano_11/thumbnail.jpg"
+       backgroundsound=""
+       backgroundsoundloops="0"
+       haspolygons="false"
+       titleid="pano11_title"
+       descriptionid=""
+       multires="true"
+       planar="false"
+       full360="false"
+       video="false"
+       seen="false">
+    <autorotate horizon="0.000000" tofov="90.000000" waittime="1" speed="5"/>
+    <panoview h="0.000000" v="0.000000" fov="90.000000" hmin="-180" hmax="180" vmin="-72" vmax="72" fovmax="90" />
+    <view fisheye="0"
+          limitview="range"
+          hlookatmin="-180"
+          hlookatmax="180"
+          vlookatmin="-72"
+          vlookatmax="72"
+          maxpixelzoom="1.0"
+          fovtype="VFOV"
+          fovmax="90"
+          fov="90.000000"
+          hlookat="0.000000"
+          vlookat="0.000000"/>
+    <preview url="%FIRSTXML%/pano_11/preview.jpg" type="CUBESTRIP" striporder="FRBLUD" />
+        <image type="SPHERE" hfov="360" vfov="144" voffset="0" multires="true" baseindex="0" tilesize="512" devices="flash.and.desktop">
+          <level tiledimagewidth="1795" tiledimageheight="718">
+            <sphere url="pano_11/0/%v_%u.jpg"/>
+          </level>
+        </image>
+  <image type="CUBE" devices="desktop.and.html5">
+    <front url="pano_11/html5/0.jpg"/>
+    <right url="pano_11/html5/1.jpg"/>
+    <back  url="pano_11/html5/2.jpg"/>
+    <left  url="pano_11/html5/3.jpg"/>
+    <up    url="pano_11/html5/4.jpg"/>
+    <down  url="pano_11/html5/5.jpg"/>
+  </image>
+  <image type="CUBE" devices="tablet">
+    <front url="pano_11/tablet/0.jpg"/>
+    <right url="pano_11/tablet/1.jpg"/>
+    <back  url="pano_11/tablet/2.jpg"/>
+    <left  url="pano_11/tablet/3.jpg"/>
+    <up    url="pano_11/tablet/4.jpg"/>
+    <down  url="pano_11/tablet/5.jpg"/>
+  </image>
+  <image type="CUBE" devices="mobile">
+    <front url="pano_11/mobile/0.jpg"/>
+    <right url="pano_11/mobile/1.jpg"/>
+    <back  url="pano_11/mobile/2.jpg"/>
+    <left  url="pano_11/mobile/3.jpg"/>
+    <up    url="pano_11/mobile/4.jpg"/>
+    <down  url="pano_11/mobile/5.jpg"/>
+  </image>
+
+
+
+
+
+
+</scene>
+
+  <krpano nofullspherepanoavailable="true" />
+
+
+  <events name="eventKrpanoLoadedEvts" onxmlcomplete="eventKrpanoLoadedAction();" keep="true" />
+  <action name="eventKrpanoLoadedAction">
+    
+    set(events[eventKrpanoLoadedEvts].name, null);
+    js(eventKrpanoLoaded());
+  </action>
+
+</krpano>
+
