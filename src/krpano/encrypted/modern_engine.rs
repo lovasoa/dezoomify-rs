@@ -884,9 +884,10 @@ fn find_row_json_by_value(rows: &HashMap<String, String>, target: &str) -> Optio
             continue;
         }
         if let Ok(s) = String::from_utf8(bytes)
-            && s == target {
-                return Some(s);
-            }
+            && s == target
+        {
+            return Some(s);
+        }
     }
     None
 }
@@ -1280,12 +1281,15 @@ mod tests {
                 continue;
             }
             if let Ok(s) = String::from_utf8(bytes.clone())
-                && (s == "actions overflow" || s == "z" || s == "KENC") {
-                    continue; // skip known non-key values
-                }
-            if let Ok(plaintext) = crate::krpano::encrypted::branches::decrypt_subdiv_via_classic_pipeline(
-                body, &bytes,
-            ) {
+                && (s == "actions overflow" || s == "z" || s == "KENC")
+            {
+                continue; // skip known non-key values
+            }
+            if let Ok(plaintext) =
+                crate::krpano::encrypted::branches::decrypt_subdiv_via_classic_pipeline(
+                    body, &bytes,
+                )
+            {
                 eprintln!(
                     "KEY FOUND: row {row_id} key={:?} plaintext={:.80}",
                     bytes, plaintext

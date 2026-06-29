@@ -360,7 +360,11 @@ mod tests {
             expected.pop();
         }
         let actual = extract_decoded_viewer_js(&js).unwrap();
-        assert_bytes_eq(&actual, &expected, "decoded viewer JS does not match expected decoded.js");
+        assert_bytes_eq(
+            &actual,
+            &expected,
+            "decoded viewer JS does not match expected decoded.js",
+        );
     }
 
     #[test]
@@ -402,7 +406,10 @@ mod tests {
                 assert_bytes_eq(
                     &decoded,
                     &expected,
-                    &format!("{}: decoded JS does not match expected decoded.js", js_path.display()),
+                    &format!(
+                        "{}: decoded JS does not match expected decoded.js",
+                        js_path.display()
+                    ),
                 );
             }
             decoded_count += 1;

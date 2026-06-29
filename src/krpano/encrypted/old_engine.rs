@@ -277,9 +277,10 @@ fn extract_called_function_names(body: &str) -> Vec<String> {
                             | "new"
                             | "d"
                     ) && !name.is_empty()
-                        && !names.contains(&name.to_string()) {
-                            names.push(name.to_string());
-                        }
+                        && !names.contains(&name.to_string())
+                    {
+                        names.push(name.to_string());
+                    }
                 }
             }
         }
@@ -319,9 +320,10 @@ fn find_row_ref_in_text(text: &str) -> Option<usize> {
         if let Some(end) = rest.find(']') {
             let digits = &rest[..end];
             if digits.chars().all(|c| c.is_ascii_digit())
-                && let Ok(idx) = digits.parse::<usize>() {
-                    return Some(idx);
-                }
+                && let Ok(idx) = digits.parse::<usize>()
+            {
+                return Some(idx);
+            }
         }
         search_from = abs_pos;
     }
