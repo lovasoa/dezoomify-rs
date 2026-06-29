@@ -366,7 +366,7 @@ fn unpack_krp_payload(
 
         // JS: t = ((t << (q+1)) + t*B + g) % E
         t = t
-            .wrapping_shl((q + 1) as u32)
+            .wrapping_shl(q + 1)
             .wrapping_add(t.wrapping_mul(b_val as i32))
             .wrapping_add(g)
             .rem_euclid(w);
@@ -405,7 +405,7 @@ fn unpack_krp_payload(
     let d2_len = d_len + q as usize;
     while d < d2_len {
         // JS << masks shift to lower 5 bits
-        let shifted = gv.wrapping_shl((z_orig & 31) as u32);
+        let shifted = gv.wrapping_shl(z_orig & 31);
         let rhs = i32::from(key_bytes[d]) - (10 * z_orig + q) as i32;
         gv = shifted | rhs;
         d += 1;
@@ -791,18 +791,17 @@ pub(crate) fn subdiv_branch5_decode(
             }
             let copy_len =
                 usize::try_from(k + half_q).map_err(|_| EncryptedKrpanoError::Unsupported)?;
-            let mut copy_from =
+            let copy_from =
                 usize::try_from(h).map_err(|_| EncryptedKrpanoError::Unsupported)?;
             if write + copy_len > out.len() {
                 return Err(EncryptedKrpanoError::Unsupported);
             }
-            for _ in 0..copy_len {
+            for copy_from in (copy_from..).take(copy_len) {
                 if copy_from >= write {
                     return Err(EncryptedKrpanoError::Unsupported);
                 }
                 out[write] = out[copy_from];
                 write += 1;
-                copy_from += 1;
             }
         }
     }
