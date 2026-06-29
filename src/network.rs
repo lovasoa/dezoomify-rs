@@ -204,26 +204,25 @@ pub fn resolve_relative(base: &str, path: &str) -> String {
     // (a bare `C:\foo\bar\tour.js` has no `/`, so the old `/`-only split treated
     // the entire string as the directory and appended instead of replacing).
     let dir = base.rfind(['/', '\\']).map_or("", |idx| &base[..idx]);
-    let mut res = PathBuf::from(dir);
-    res.push(path);
-    res.to_string_lossy().to_string()
+    let dir = dir.trim_end_matches(['/', '\\']);
+    if dir.is_empty() {
+        path.to_string()
+    } else {
+        format!("{}/{}", dir, path)
+    }
 }
 
 #[test]
 fn test_resolve_relative() {
-    use std::path::MAIN_SEPARATOR;
-    assert_eq!(
-        resolve_relative("/a/b", "c/d"),
-        format!("/a{}c/d", MAIN_SEPARATOR)
-    );
+    assert_eq!(resolve_relative("/a/b", "c/d"), "/a/c/d");
     // Windows local path: the last component must be replaced, not appended.
     assert_eq!(
         resolve_relative("C:\\\\foo\\\\bar", "c/d"),
-        format!("C:\\\\foo{}c/d", MAIN_SEPARATOR)
+        "C:\\\\foo/c/d"
     );
     assert_eq!(
         resolve_relative("C:\\\\foo\\\\bar\\\\tour.js", "tour.xml"),
-        format!("C:\\\\foo\\\\bar{}tour.xml", MAIN_SEPARATOR)
+        "C:\\\\foo\\\\bar/tour.xml"
     );
     assert_eq!(
         resolve_relative("/a/b", "http://example.com/x"),
