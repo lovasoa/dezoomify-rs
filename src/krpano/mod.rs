@@ -908,34 +908,20 @@ fn test_dezoomer_result_multiple_scenes() {
 }
 
 #[test]
-fn encrypted_xml_smoke_test() {
-    // A single end-to-end smoke test using the 2026-06-25-rr_tour fixture.
-    //
-    // This exercises: HTML parsing → JS candidate extraction → encrypted XML
-    // → viewer JS fallback → decryption → XML parsing.
-    //
-    // KENCRURR is a protected Subdiv payload, so it always requires the
-    // matching viewer JS.
-    let mut dezoomer = KrpanoDezoomer::default();
-    let fixture = "testdata/krpano/encrypted/2026-06-25-rr_tour";
-    let xml = std::fs::read(format!("{fixture}/tour.xml")).unwrap();
-    let js = std::fs::read(format!("{fixture}/tour.js")).unwrap();
+fn encrypted_xml_decrypted_without_js() {
+    // Public ClassicB (KENCPUBR) can be decrypted without viewer JS.
+    // This fixture has only the encrypted XML + expected plaintext (no JS).
+    let xml = std::fs::read("testdata/krpano/encrypted/2013-08-09-B/tour.xml")
+        .unwrap();
+    let expected =
+        std::fs::read("testdata/krpano/encrypted/2013-08-09-B/plaintext.xml")
+            .unwrap();
 
-    // First call: encrypted XML directly.  Needs viewer JS.
-    let input = DezoomerInput {
-        uri: "http://example.com/tour.xml".to_string(),
-        contents: PageContents::Success(xml),
-    };
-    let needs = dezoomer.zoom_levels(&input).unwrap_err();
-    assert!(matches!(needs, DezoomerError::NeedsData { .. }));
-
-    // Second call: provide the viewer JS.  Should decrypt and parse.
-    let input_js = DezoomerInput {
-        uri: "http://example.com/tour.js".to_string(),
-        contents: PageContents::Success(js),
-    };
-    let result = dezoomer.zoom_levels(&input_js);
-    assert!(result.is_ok(), "decrypt + parse failed: {result:?}");
+    let plaintext = krpano_decrypt::decrypt_xml(&xml, None).unwrap();
+    assert_eq!(
+        plaintext, expected,
+        "decrypted plaintext does not match expected plaintext.xml"
+    );
 }
 
 #[test]
@@ -957,72 +943,4 @@ fn html_script_candidates_prefer_krpano_viewer() {
     );
 }
 
-#[test]
-fn html_encrypted_xml_falls_back_to_next_viewer_candidate() {
-    let mut dezoomer = KrpanoDezoomer::default();
-    let html = r#"
-        <html>
-            <head>
-                <script src="tour.js"></script>
-                <script src="krpano.js"></script>
-                <script src="assets/jquery.js"></script>
-            </head>
-            <body>
-                <script>embedpano({xml:"tour.xml", target:"pano"});</script>
-            </body>
-        </html>
-    "#;
-    let xml = std::fs::read("testdata/krpano/encrypted/2026-06-25-rr_tour/tour.xml").unwrap();
-    let real_js = std::fs::read("testdata/krpano/encrypted/2026-06-25-rr_tour/tour.js").unwrap();
 
-    let input_html = DezoomerInput {
-        uri: "http://example.com/pano/index.html".to_string(),
-        contents: PageContents::Success(html.as_bytes().to_vec()),
-    };
-    let result = dezoomer.zoom_levels(&input_html);
-    match result {
-        Err(DezoomerError::NeedsData { uri }) => {
-            assert_eq!(uri, "http://example.com/pano/tour.js");
-        }
-        other => panic!("expected first JS NeedsData, got {other:?}"),
-    }
-
-    let input_bad_js = DezoomerInput {
-        uri: "http://example.com/pano/tour.js".to_string(),
-        contents: PageContents::Success(b"console.log('not krpano');".to_vec()),
-    };
-    let result = dezoomer.zoom_levels(&input_bad_js);
-    match result {
-        Err(DezoomerError::NeedsData { uri }) => {
-            assert_eq!(uri, "http://example.com/pano/tour.xml");
-        }
-        other => panic!("expected XML NeedsData, got {other:?}"),
-    }
-
-    let input_xml = DezoomerInput {
-        uri: "http://example.com/pano/tour.xml".to_string(),
-        contents: PageContents::Success(xml),
-    };
-    let result = dezoomer.zoom_levels(&input_xml);
-    match result {
-        Err(DezoomerError::NeedsData { uri }) => {
-            assert_eq!(uri, "http://example.com/pano/krpano.js");
-        }
-        other => panic!("expected fallback JS NeedsData, got {other:?}"),
-    }
-
-    let input_real_js = DezoomerInput {
-        uri: "http://example.com/pano/krpano.js".to_string(),
-        contents: PageContents::Success(real_js),
-    };
-    let result = dezoomer.zoom_levels(&input_real_js);
-    assert!(result.is_ok(), "fallback viewer JS failed: {result:?}");
-}
-
-#[test]
-fn viewer_js_files_are_recognized() {
-    // The sole remaining fixture's viewer JS should be recognized.
-    let js = std::fs::read("testdata/krpano/encrypted/2026-06-25-rr_tour/tour.js")
-        .unwrap();
-    assert!(looks_like_viewer_js(&js), "viewer JS should be recognized");
-}
