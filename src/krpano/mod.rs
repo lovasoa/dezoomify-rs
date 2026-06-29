@@ -912,13 +912,12 @@ fn encrypted_xml_decrypted_without_js() {
     // Public ClassicB (KENCPUBR) can be decrypted without viewer JS.
     // This fixture has only the encrypted XML + expected plaintext (no JS).
     let xml = std::fs::read("testdata/krpano/encrypted/2013-08-09-B/tour.xml").unwrap();
-    let expected =
-        std::fs::read_to_string("testdata/krpano/encrypted/2013-08-09-B/plaintext.xml").unwrap();
+    let expected = std::fs::read_to_string("testdata/krpano/encrypted/2013-08-09-B/plaintext.xml")
+        .unwrap()
+        .replace("\r\n", "\n");    // the decrypted XML may have CRLF line endings on Windows
 
     let plaintext_bytes = krpano_decrypt::decrypt_xml(&xml, None).unwrap();
-    let plaintext = std::str::from_utf8(&plaintext_bytes)
-        .unwrap()
-        .replace("\r\n", "\n"); // the decrypted XML may have CRLF line endings on Windows
+    let plaintext = std::str::from_utf8(&plaintext_bytes).unwrap();
     assert_eq!(
         plaintext, expected,
         "decrypted plaintext does not match expected plaintext.xml"
