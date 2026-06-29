@@ -1302,9 +1302,9 @@ mod tests {
         for name in ["2026-06-25-pp-01_minimal", "2026-06-25-rr_minimal"] {
             let (decoded, _key) = load_fixture(name).expect(name);
             let text = std::str::from_utf8(&decoded).expect(name);
-            let out_path = format!("/tmp/{name}_engine.js");
+            let out_path = std::env::temp_dir().join(format!("{name}_engine.js"));
             std::fs::write(&out_path, text).unwrap();
-            eprintln!("Wrote {} bytes to {out_path}", text.len());
+            eprintln!("Wrote {} bytes to {}", text.len(), out_path.display());
             // Also find and print decryptData region
             if let Some(idx) = text.find("decryptData") {
                 let start = idx.saturating_sub(200);

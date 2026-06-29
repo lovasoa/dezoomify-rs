@@ -344,6 +344,17 @@ mod tests {
         }
     }
 
+    /// Normalize line endings by stripping carriage returns.
+    ///
+    /// On Windows, git's `core.autocrlf` converts text fixture files from LF
+    /// to CRLF on checkout, while the decrypted/decoded output preserves the
+    /// original LF line endings of the encrypted content. Stripping `\r`
+    /// from both sides makes the byte-for-byte comparison platform-independent
+    /// without masking real content differences.
+    fn normalize_crlf(bytes: &[u8]) -> Vec<u8> {
+        bytes.iter().filter(|&&b| b != b'\r').copied().collect()
+    }
+
     #[test]
     fn decodes_packed_viewer_js_payload() {
         let js = fs::read(
@@ -361,8 +372,8 @@ mod tests {
         }
         let actual = extract_decoded_viewer_js(&js).unwrap();
         assert_bytes_eq(
-            &actual,
-            &expected,
+            &normalize_crlf(&actual),
+            &normalize_crlf(&expected),
             "decoded viewer JS does not match expected decoded.js",
         );
     }
@@ -404,8 +415,8 @@ mod tests {
                     expected.pop();
                 }
                 assert_bytes_eq(
-                    &decoded,
-                    &expected,
+                    &normalize_crlf(&decoded),
+                    &normalize_crlf(&expected),
                     &format!(
                         "{}: decoded JS does not match expected decoded.js",
                         js_path.display()
@@ -981,8 +992,8 @@ mod tests {
                             actual.pop();
                         }
                         assert_bytes_eq(
-                            &actual,
-                            &expected,
+                            &normalize_crlf(&actual),
+                            &normalize_crlf(&expected),
                             &format!("{dir_name}: plaintext does not match expected plaintext.xml"),
                         );
                     }
