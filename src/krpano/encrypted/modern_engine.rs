@@ -883,11 +883,10 @@ fn find_row_json_by_value(rows: &HashMap<String, String>, target: &str) -> Optio
         if bytes.is_empty() {
             continue;
         }
-        if let Ok(s) = String::from_utf8(bytes) {
-            if s == target {
+        if let Ok(s) = String::from_utf8(bytes)
+            && s == target {
                 return Some(s);
             }
-        }
     }
     None
 }
@@ -1280,21 +1279,17 @@ mod tests {
             if bytes.is_empty() || bytes.len() > 64 {
                 continue;
             }
-            if let Ok(s) = String::from_utf8(bytes.clone()) {
-                if s == "actions overflow" || s == "z" || s == "KENC" {
+            if let Ok(s) = String::from_utf8(bytes.clone())
+                && (s == "actions overflow" || s == "z" || s == "KENC") {
                     continue; // skip known non-key values
                 }
-            }
-            match crate::krpano::encrypted::branches::decrypt_subdiv_via_classic_pipeline(
+            if let Ok(plaintext) = crate::krpano::encrypted::branches::decrypt_subdiv_via_classic_pipeline(
                 body, &bytes,
             ) {
-                Ok(plaintext) => {
-                    eprintln!(
-                        "KEY FOUND: row {row_id} key={:?} plaintext={:.80}",
-                        bytes, plaintext
-                    );
-                }
-                Err(_) => {}
+                eprintln!(
+                    "KEY FOUND: row {row_id} key={:?} plaintext={:.80}",
+                    bytes, plaintext
+                );
             }
         }
         eprintln!("done");
