@@ -203,6 +203,14 @@ pub fn resolve_relative(base: &str, path: &str) -> String {
     // Recognize both `/` and `\` so that Windows local paths resolve correctly
     // (a bare `C:\foo\bar\tour.js` has no `/`, so the old `/`-only split treated
     // the entire string as the directory and appended instead of replacing).
+    //
+    // Absolute paths (starting with `/` or a Windows drive prefix) replace the
+    // base entirely, matching `PathBuf::push` semantics.
+    if path.starts_with('/') || path.starts_with('\\')
+        || (path.len() >= 2 && path.as_bytes()[1] == b':' && path.as_bytes()[0].is_ascii_alphabetic())
+    {
+        return path.to_string();
+    }
     let dir = base.rfind(['/', '\\']).map_or("", |idx| &base[..idx]);
     let dir = dir.trim_end_matches(['/', '\\']);
     if dir.is_empty() {
@@ -232,4 +240,11 @@ fn test_resolve_relative() {
     assert_eq!(resolve_relative("http://a.b", "c/d"), "http://a.b/c/d");
     assert_eq!(resolve_relative("http://a.b/x", "c/d"), "http://a.b/c/d");
     assert_eq!(resolve_relative("http://a.b/x/", "c/d"), "http://a.b/x/c/d");
+    // Absolute local paths replace the base entirely.
+    assert_eq!(resolve_relative("/metadata/tour.xml", "/tiles/0_0.jpg"), "/tiles/0_0.jpg");
+    // Absolute Windows paths replace the base entirely.
+    assert_eq!(
+        resolve_relative("C:\\metadata\\tour.xml", "C:\\tiles\\0_0.jpg"),
+        "C:\\tiles\\0_0.jpg"
+    );
 }

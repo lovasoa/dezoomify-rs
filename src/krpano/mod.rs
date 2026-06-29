@@ -511,7 +511,10 @@ fn viewer_js_candidates_for_xml(xml_uri: &str) -> Vec<String> {
 /// For URLs with a scheme (`https://`), separators inside the `://` authority
 /// prefix are skipped so that bare-origin URLs like `https://example.com`
 /// resolve to `https://example.com/filename` rather than `https://filename`.
+/// Query strings and fragments in the URI are stripped.
 fn sibling_uri(uri: &str, filename: &str) -> String {
+    // Strip query/fragment so they don't interfere with path resolution.
+    let uri = uri.split_once(['?', '#']).map_or(uri, |(path, _)| path);
     // Find the start of the path (after the "://" scheme prefix if present).
     let scheme_end = uri.find("://").map(|i| i + 3);
     let search_start = scheme_end.unwrap_or(0);
@@ -1086,6 +1089,20 @@ fn sibling_uri_handles_url_and_local_paths() {
     assert_eq!(
         sibling_uri("http://example.com", "tour.js"),
         "http://example.com/tour.js"
+    );
+    // Bare-origin URL with query/fragment: strip query before appending.
+    assert_eq!(
+        sibling_uri("https://example.com?scene=1", "tour.xml"),
+        "https://example.com/tour.xml"
+    );
+    assert_eq!(
+        sibling_uri("https://example.com#section", "tour.xml"),
+        "https://example.com/tour.xml"
+    );
+    // URL with path and query: strip query, replace last segment.
+    assert_eq!(
+        sibling_uri("https://example.com/pano/tour.js?cache=1", "tour.xml"),
+        "https://example.com/pano/tour.xml"
     );
 }
 
