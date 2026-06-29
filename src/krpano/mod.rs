@@ -92,6 +92,40 @@ impl KrpanoDezoomer {
         data: &DezoomerInput,
         parse: impl FnOnce(&str, &[u8]) -> Result<T, DezoomerError>,
     ) -> Result<T, DezoomerError> {
+        // If the download failed and we have remaining JS candidates to try
+        // (NeedJsToDecrypt state), advance to the next candidate instead of
+        // surfacing the download error.  This lets the dezoomer fall through
+        // derived-name 404s to tour.js / krpano.js.
+        if matches!(self.state, ResolveState::NeedJsToDecrypt { .. })
+            && matches!(data.contents, PageContents::Error(_) | PageContents::Unknown)
+        {
+            let (xml_uri, xml_contents, mut remaining_js_uris) =
+                match std::mem::take(&mut self.state) {
+                    ResolveState::NeedJsToDecrypt {
+                        xml_uri,
+                        xml_contents,
+                        remaining_js_uris,
+                    } => (xml_uri, xml_contents, remaining_js_uris),
+                    _ => unreachable!(),
+                };
+            if let Some(next_js_uri) = next_js_candidate(&mut remaining_js_uris) {
+                debug!(
+                    "krpano: viewer JS download failed for {}; trying next JS candidate {next_js_uri}",
+                    data.uri
+                );
+                self.state = ResolveState::NeedJsToDecrypt {
+                    xml_uri,
+                    xml_contents,
+                    remaining_js_uris,
+                };
+                return Err(DezoomerError::NeedsData { uri: next_js_uri });
+            }
+            // No more candidates — surface the download error.
+            return Err(DezoomerError::DownloadError {
+                msg: format!("failed to download viewer JS from {}", data.uri),
+            });
+        }
+
         let DezoomerInputWithContents { uri, contents } = data.with_contents()?;
         debug!(
             "krpano handle_input: uri={uri}, content_len={}",
