@@ -97,7 +97,10 @@ impl KrpanoDezoomer {
         // surfacing the download error.  This lets the dezoomer fall through
         // derived-name 404s to tour.js / krpano.js.
         if matches!(self.state, ResolveState::NeedJsToDecrypt { .. })
-            && matches!(data.contents, PageContents::Error(_) | PageContents::Unknown)
+            && matches!(
+                data.contents,
+                PageContents::Error(_) | PageContents::Unknown
+            )
         {
             let (xml_uri, xml_contents, mut remaining_js_uris) =
                 match std::mem::take(&mut self.state) {
@@ -290,8 +293,8 @@ impl KrpanoDezoomer {
                     // Derive JS candidate URIs from the XML filename, with
                     // tour.js and krpano.js as fallbacks.
                     let mut js_uris = viewer_js_candidates_for_xml(uri);
-                    let js_uri =
-                        next_js_candidate(&mut js_uris).unwrap_or_else(|| sibling_uri(uri, "tour.js"));
+                    let js_uri = next_js_candidate(&mut js_uris)
+                        .unwrap_or_else(|| sibling_uri(uri, "tour.js"));
                     debug!("krpano: encrypted XML needs viewer JS, requesting: {js_uri}");
                     self.state = ResolveState::NeedJsToDecrypt {
                         xml_uri: uri.to_string(),
@@ -343,8 +346,7 @@ fn looks_like_krpano_html(contents: &[u8]) -> bool {
     }
     // Weaker signal: a <script> tag referencing a krpano viewer file.
     // This avoids claiming arbitrary HTML pages that merely contain <script>.
-    lower.contains("<script")
-        && (lower.contains("krpano") || lower.contains("tour.js"))
+    lower.contains("<script") && (lower.contains("krpano") || lower.contains("tour.js"))
 }
 
 /// True if the content looks like a krpano viewer JavaScript file.
@@ -547,8 +549,7 @@ static SCRIPT_SRC_RE: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Matches the end of an `embedpano({...})` call, tolerating whitespace
 /// between `}` and `)` (e.g. pretty-printed `}\n);`).
-static EMBEDPANO_END_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\}\s*\)").unwrap());
+static EMBEDPANO_END_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\}\s*\)").unwrap());
 
 /// Matches the `xml` key inside an embedpano options object, tolerating
 /// whitespace around the colon and optional quotes around the key.
@@ -1019,7 +1020,7 @@ fn encrypted_xml_decrypted_without_js() {
     let xml = std::fs::read("testdata/krpano/encrypted/2013-08-09-B/tour.xml").unwrap();
     let expected = std::fs::read_to_string("testdata/krpano/encrypted/2013-08-09-B/plaintext.xml")
         .unwrap()
-        .replace("\r\n", "\n");    // the decrypted XML may have CRLF line endings on Windows
+        .replace("\r\n", "\n"); // the decrypted XML may have CRLF line endings on Windows
 
     let plaintext_bytes = krpano_decrypt::decrypt_xml(&xml, None).unwrap();
     let plaintext = std::str::from_utf8(&plaintext_bytes).unwrap();
@@ -1051,15 +1052,30 @@ fn html_script_candidates_prefer_krpano_viewer() {
 #[test]
 fn sibling_uri_handles_url_and_local_paths() {
     // HTTP URL: last segment replaced, separator preserved.
-    assert_eq!(sibling_uri("http://example.com/pano/tour.js", "tour.xml"), "http://example.com/pano/tour.xml");
+    assert_eq!(
+        sibling_uri("http://example.com/pano/tour.js", "tour.xml"),
+        "http://example.com/pano/tour.xml"
+    );
     // Trailing-slash URL keeps the slash.
-    assert_eq!(sibling_uri("http://example.com/pano/", "tour.xml"), "http://example.com/pano/tour.xml");
+    assert_eq!(
+        sibling_uri("http://example.com/pano/", "tour.xml"),
+        "http://example.com/pano/tour.xml"
+    );
     // Unix local path.
-    assert_eq!(sibling_uri("/home/user/tour.js", "tour.xml"), "/home/user/tour.xml");
+    assert_eq!(
+        sibling_uri("/home/user/tour.js", "tour.xml"),
+        "/home/user/tour.xml"
+    );
     // Windows local path uses backslash separator.
-    assert_eq!(sibling_uri("C:\\foo\\bar\\tour.js", "tour.xml"), "C:\\foo\\bar\\tour.xml");
+    assert_eq!(
+        sibling_uri("C:\\foo\\bar\\tour.js", "tour.xml"),
+        "C:\\foo\\bar\\tour.xml"
+    );
     // UNC path.
-    assert_eq!(sibling_uri("\\\\server\\share\\tour.js", "tour.xml"), "\\\\server\\share\\tour.xml");
+    assert_eq!(
+        sibling_uri("\\\\server\\share\\tour.js", "tour.xml"),
+        "\\\\server\\share\\tour.xml"
+    );
     // No separator: just the filename.
     assert_eq!(sibling_uri("tour.js", "tour.xml"), "tour.xml");
     // Bare-origin URL (no path after authority): append "/filename".
@@ -1098,7 +1114,10 @@ fn viewer_js_candidates_derived_from_xml_filename() {
 fn extract_xml_from_embedpano_tolerates_whitespace() {
     // Whitespace before the colon: `xml : "..."`.
     let html = r#"<script>embedpano({ xml : "panos/tour.xml", target:"pano" });</script>"#;
-    assert_eq!(extract_xml_from_embedpano(html), Some("panos/tour.xml".to_string()));
+    assert_eq!(
+        extract_xml_from_embedpano(html),
+        Some("panos/tour.xml".to_string())
+    );
 
     // Pretty-printed ending: `}\n);` with whitespace between } and ).
     let html = r#"
@@ -1107,25 +1126,38 @@ fn extract_xml_from_embedpano_tolerates_whitespace() {
         }
         );
     "#;
-    assert_eq!(extract_xml_from_embedpano(html), Some("panos/tour.xml".to_string()));
+    assert_eq!(
+        extract_xml_from_embedpano(html),
+        Some("panos/tour.xml".to_string())
+    );
 
     // Quoted key: `"xml": "..."`.
     let html = r#"embedpano({ "xml": "panos/tour.xml" });"#;
-    assert_eq!(extract_xml_from_embedpano(html), Some("panos/tour.xml".to_string()));
+    assert_eq!(
+        extract_xml_from_embedpano(html),
+        Some("panos/tour.xml".to_string())
+    );
 
     // Older createPanoViewer API.
     let html = r#"<script>createPanoViewer({ xml: "panos/tour.xml" });</script>"#;
-    assert_eq!(extract_xml_from_embedpano(html), Some("panos/tour.xml".to_string()));
+    assert_eq!(
+        extract_xml_from_embedpano(html),
+        Some("panos/tour.xml".to_string())
+    );
 }
 
 #[test]
 fn looks_like_krpano_xml_detects_xml_roots() {
     // XML prolog.
-    assert!(looks_like_krpano_xml(b"<?xml version=\"1.0\"?><krpano></krpano>"));
+    assert!(looks_like_krpano_xml(
+        b"<?xml version=\"1.0\"?><krpano></krpano>"
+    ));
     // Direct <krpano> root.
     assert!(looks_like_krpano_xml(b"<krpano><image></image></krpano>"));
     // BOM + XML prolog.
-    assert!(looks_like_krpano_xml(b"\xef\xbb\xbf<?xml version=\"1.0\"?><krpano/>"));
+    assert!(looks_like_krpano_xml(
+        b"\xef\xbb\xbf<?xml version=\"1.0\"?><krpano/>"
+    ));
     // XML with <script> inside should still be detected as XML, not HTML.
     assert!(looks_like_krpano_xml(
         b"<?xml version=\"1.0\"?><krpano><action><![CDATA[embedpano();]]></action></krpano>"
@@ -1139,21 +1171,37 @@ fn looks_like_krpano_xml_detects_xml_roots() {
 #[test]
 fn looks_like_krpano_html_requires_krpano_evidence() {
     // embedpano call — strongest signal.
-    assert!(looks_like_krpano_html(b"<html><script>embedpano({xml:'tour.xml'})</script></html>"));
+    assert!(looks_like_krpano_html(
+        b"<html><script>embedpano({xml:'tour.xml'})</script></html>"
+    ));
     // Uppercase tags + embedpano (case-insensitive).
-    assert!(looks_like_krpano_html(b"<HTML><BODY><SCRIPT>EMBEDPANO({xml:'tour.xml'})</SCRIPT></BODY></HTML>"));
+    assert!(looks_like_krpano_html(
+        b"<HTML><BODY><SCRIPT>EMBEDPANO({xml:'tour.xml'})</SCRIPT></BODY></HTML>"
+    ));
     // createPanoViewer — older API.
-    assert!(looks_like_krpano_html(b"<script>createPanoViewer({xml:'tour.xml'});</script>"));
+    assert!(looks_like_krpano_html(
+        b"<script>createPanoViewer({xml:'tour.xml'});</script>"
+    ));
     // <script> with krpano viewer reference.
-    assert!(looks_like_krpano_html(b"<html><script src='krpano.js'></script></html>"));
+    assert!(looks_like_krpano_html(
+        b"<html><script src='krpano.js'></script></html>"
+    ));
     // <script> with tour.js reference.
-    assert!(looks_like_krpano_html(b"<html><script src='tour.js'></script></html>"));
+    assert!(looks_like_krpano_html(
+        b"<html><script src='tour.js'></script></html>"
+    ));
     // Uppercase <SCRIPT> with tour.js.
-    assert!(looks_like_krpano_html(b"<HTML><SCRIPT SRC='tour.js'></SCRIPT></HTML>"));
+    assert!(looks_like_krpano_html(
+        b"<HTML><SCRIPT SRC='tour.js'></SCRIPT></HTML>"
+    ));
     // Generic HTML with <script> but no krpano evidence — should NOT match.
-    assert!(!looks_like_krpano_html(b"<html><script src='jquery.min.js'></script></html>"));
+    assert!(!looks_like_krpano_html(
+        b"<html><script src='jquery.min.js'></script></html>"
+    ));
     // Generic HTML with uppercase <SCRIPT> — should NOT match.
-    assert!(!looks_like_krpano_html(b"<HTML><SCRIPT src='analytics.js'></SCRIPT></HTML>"));
+    assert!(!looks_like_krpano_html(
+        b"<HTML><SCRIPT src='analytics.js'></SCRIPT></HTML>"
+    ));
     // Plain HTML, no scripts at all.
     assert!(!looks_like_krpano_html(b"<html><body>Hello</body></html>"));
 }

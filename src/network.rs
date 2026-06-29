@@ -216,10 +216,7 @@ pub fn resolve_relative(base: &str, path: &str) -> String {
 fn test_resolve_relative() {
     assert_eq!(resolve_relative("/a/b", "c/d"), "/a/c/d");
     // Windows local path: the last component must be replaced, not appended.
-    assert_eq!(
-        resolve_relative("C:\\\\foo\\\\bar", "c/d"),
-        "C:\\\\foo/c/d"
-    );
+    assert_eq!(resolve_relative("C:\\\\foo\\\\bar", "c/d"), "C:\\\\foo/c/d");
     assert_eq!(
         resolve_relative("C:\\\\foo\\\\bar\\\\tour.js", "tour.xml"),
         "C:\\\\foo\\\\bar/tour.xml"
