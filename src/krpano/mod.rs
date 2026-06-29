@@ -12,9 +12,8 @@ use krpano_metadata::{KrpanoMetadata, TemplateString, TemplateStringPart, XY};
 use crate::dezoomer::*;
 use crate::krpano::krpano_metadata::{ImageInfo, LevelDesc};
 use crate::network::resolve_relative;
-use encrypted::decrypt_xml;
+use krpano_decrypt::{decrypt_xml, is_encrypted_xml};
 
-mod encrypted;
 mod krpano_metadata;
 
 #[derive(Debug)]
@@ -145,7 +144,7 @@ impl KrpanoDezoomer {
                 contents.len()
             );
 
-            if encrypted::is_encrypted_xml(contents) {
+            if is_encrypted_xml(contents) {
                 debug!(
                     "krpano: XML is encrypted, decrypting with saved viewer JS ({} bytes)",
                     viewer_js.len()
@@ -246,15 +245,30 @@ impl KrpanoDezoomer {
             return Err(DezoomerError::NeedsData { uri: xml_uri });
         }
 
-        if encrypted::is_encrypted_xml(contents) {
-            let js_uri = sibling_uri(uri, "tour.js");
-            debug!("krpano: content is encrypted XML, requesting viewer JS: {js_uri}");
-            self.state = ResolveState::NeedJsToDecrypt {
-                xml_uri: uri.to_string(),
-                xml_contents: contents.to_vec(),
-                remaining_js_uris: Vec::new(),
-            };
-            return Err(DezoomerError::NeedsData { uri: js_uri });
+        if is_encrypted_xml(contents) {
+            // Try decrypting without the viewer JS first — works for public
+            // ClassicZ / ClassicB payloads whose default keys are known.
+            // This avoids an unnecessary network round trip for the JS file.
+            match decrypt_xml(contents, None) {
+                Ok(decrypted) => {
+                    debug!(
+                        "krpano: encrypted XML decrypted without viewer JS ({} bytes)",
+                        decrypted.len()
+                    );
+                    return parse(uri, &decrypted);
+                }
+                Err(_) => {
+                    // Needs the viewer JS to extract the wrapper key and engine.
+                    let js_uri = sibling_uri(uri, "tour.js");
+                    debug!("krpano: encrypted XML needs viewer JS, requesting: {js_uri}");
+                    self.state = ResolveState::NeedJsToDecrypt {
+                        xml_uri: uri.to_string(),
+                        xml_contents: contents.to_vec(),
+                        remaining_js_uris: Vec::new(),
+                    };
+                    return Err(DezoomerError::NeedsData { uri: js_uri });
+                }
+            }
         }
 
         // Plain (non-encrypted) krpano XML — parse directly.
@@ -513,8 +527,8 @@ custom_error! {pub KrpanoError
     XmlError{source: serde_xml_rs::Error} = "Unable to parse the krpano xml file: {source}",
 }
 
-impl From<encrypted::EncryptedKrpanoError> for DezoomerError {
-    fn from(err: encrypted::EncryptedKrpanoError) -> Self {
+impl From<krpano_decrypt::KrpanoDecryptError> for DezoomerError {
+    fn from(err: krpano_decrypt::KrpanoDecryptError) -> Self {
         DezoomerError::Other { source: err.into() }
     }
 }
@@ -527,7 +541,7 @@ impl From<KrpanoError> for DezoomerError {
 
 fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, DezoomerError> {
     let decrypted;
-    let contents = if encrypted::is_encrypted_xml(contents) {
+    let contents = if is_encrypted_xml(contents) {
         decrypted = decrypt_xml(contents, None)?;
         decrypted.as_slice()
     } else {
@@ -591,7 +605,7 @@ fn load_images_from_properties(
     contents: &[u8],
 ) -> Result<Vec<Box<dyn ZoomableImageWithLevels>>, DezoomerError> {
     let decrypted;
-    let contents = if encrypted::is_encrypted_xml(contents) {
+    let contents = if is_encrypted_xml(contents) {
         decrypted = decrypt_xml(contents, None)?;
         decrypted.as_slice()
     } else {
@@ -894,48 +908,34 @@ fn test_dezoomer_result_multiple_scenes() {
 }
 
 #[test]
-fn encrypted_xml_triggers_needs_data() {
+fn encrypted_xml_smoke_test() {
+    // A single end-to-end smoke test using the 2026-06-25-rr_tour fixture.
+    //
+    // This exercises: HTML parsing → JS candidate extraction → encrypted XML
+    // → viewer JS fallback → decryption → XML parsing.
+    //
+    // KENCRURR is a protected Subdiv payload, so it always requires the
+    // matching viewer JS.
     let mut dezoomer = KrpanoDezoomer::default();
-    let xml = std::fs::read("testdata/krpano/encrypted/2018-04-04/tour.xml").unwrap();
+    let fixture = "testdata/krpano/encrypted/2026-06-25-rr_tour";
+    let xml = std::fs::read(format!("{fixture}/tour.xml")).unwrap();
+    let js = std::fs::read(format!("{fixture}/tour.js")).unwrap();
 
+    // First call: encrypted XML directly.  Needs viewer JS.
     let input = DezoomerInput {
         uri: "http://example.com/tour.xml".to_string(),
         contents: PageContents::Success(xml),
     };
-
-    let result = dezoomer.zoom_levels(&input);
-    match result {
-        Err(DezoomerError::NeedsData { uri }) => {
-            assert_eq!(uri, "http://example.com/tour.js");
-        }
-        other => panic!("expected NeedsData, got {other:?}"),
-    }
-}
-
-#[test]
-fn encrypted_xml_second_call_decrypts() {
-    let mut dezoomer = KrpanoDezoomer::default();
-    let xml = std::fs::read("testdata/krpano/encrypted/2018-04-04/tour.xml").unwrap();
-    let js = std::fs::read("testdata/krpano/encrypted/2018-04-04/tour.js").unwrap();
-
-    // First call: encrypted XML → NeedsData for tour.js.
-    let input_xml = DezoomerInput {
-        uri: "http://example.com/tour.xml".to_string(),
-        contents: PageContents::Success(xml),
-    };
-    let needs = dezoomer.zoom_levels(&input_xml).unwrap_err();
+    let needs = dezoomer.zoom_levels(&input).unwrap_err();
     assert!(matches!(needs, DezoomerError::NeedsData { .. }));
 
-    // Second call: viewer JS (fetched by caller) → decrypt and parse.
+    // Second call: provide the viewer JS.  Should decrypt and parse.
     let input_js = DezoomerInput {
         uri: "http://example.com/tour.js".to_string(),
         contents: PageContents::Success(js),
     };
     let result = dezoomer.zoom_levels(&input_js);
-    match result {
-        Ok(_levels) => { /* success */ }
-        Err(e) => panic!("second call failed: {e}"),
-    }
+    assert!(result.is_ok(), "decrypt + parse failed: {result:?}");
 }
 
 #[test]
@@ -972,8 +972,8 @@ fn html_encrypted_xml_falls_back_to_next_viewer_candidate() {
             </body>
         </html>
     "#;
-    let xml = std::fs::read("testdata/krpano/encrypted/2018-04-04/tour.xml").unwrap();
-    let real_js = std::fs::read("testdata/krpano/encrypted/2018-04-04/tour.js").unwrap();
+    let xml = std::fs::read("testdata/krpano/encrypted/2026-06-25-rr_tour/tour.xml").unwrap();
+    let real_js = std::fs::read("testdata/krpano/encrypted/2026-06-25-rr_tour/tour.js").unwrap();
 
     let input_html = DezoomerInput {
         uri: "http://example.com/pano/index.html".to_string(),
@@ -1020,36 +1020,9 @@ fn html_encrypted_xml_falls_back_to_next_viewer_candidate() {
 }
 
 #[test]
-fn all_viewer_js_files_are_recognized() {
-    // Collect all viewer JS files from the encrypted testdata.
-    let encrypted_dir = std::path::Path::new("testdata/krpano/encrypted");
-    let mut viewer_js_files: Vec<std::path::PathBuf> = Vec::new();
-
-    for entry in std::fs::read_dir(encrypted_dir).unwrap() {
-        let entry = entry.unwrap();
-        let dir = entry.path();
-        if !dir.is_dir() {
-            continue;
-        }
-        for file_entry in std::fs::read_dir(&dir).unwrap() {
-            let file = file_entry.unwrap().path();
-            let name = file.file_name().unwrap().to_str().unwrap();
-            // tour.js and krpano.js are the viewer JS files.
-            // decoded.js is a decrypted result, not a viewer JS source.
-            if name.ends_with(".js") && name != "decoded.js" {
-                viewer_js_files.push(file);
-            }
-        }
-    }
-
-    assert!(!viewer_js_files.is_empty(), "no viewer JS files found");
-
-    for path in &viewer_js_files {
-        let contents = std::fs::read(path).unwrap();
-        assert!(
-            looks_like_viewer_js(&contents),
-            "viewer JS file should be recognized: {}",
-            path.display()
-        );
-    }
+fn viewer_js_files_are_recognized() {
+    // The sole remaining fixture's viewer JS should be recognized.
+    let js = std::fs::read("testdata/krpano/encrypted/2026-06-25-rr_tour/tour.js")
+        .unwrap();
+    assert!(looks_like_viewer_js(&js), "viewer JS should be recognized");
 }

@@ -719,6 +719,7 @@ dependencies = [
  "indicatif",
  "itertools 0.14.0",
  "json5",
+ "krpano-decrypt",
  "lazy_static",
  "log",
  "png",
@@ -1628,6 +1629,18 @@ name = "konst_macro_rules"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4933f3f57a8e9d9da04db23fb153356ecaf00cbd14aee46279c33dc80925c37"
+
+[[package]]
+name = "krpano-decrypt"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fdc3b8d4b410086e441e3c572797d38bea5856611a770856bc46188d7107c96"
+dependencies = [
+ "base64",
+ "log",
+ "regex",
+ "thiserror",
+]
 
 [[package]]
 name = "lazy_static"
