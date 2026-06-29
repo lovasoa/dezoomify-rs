@@ -432,13 +432,16 @@ fn extract_js_candidates_from_html(html: &str, html_uri: &str) -> Vec<String> {
     Vec::new()
 }
 
-/// Extract the XML URL from an `embedpano({xml:"..."})` call in an HTML page.
+/// Extract the XML URL from an `embedpano({xml:"..."})` or
+/// `createPanoViewer({xml:"..."})` call in an HTML page.
 ///
 /// Tolerates whitespace around the `xml:` separator (e.g. `xml : "..."`) and
 /// whitespace between the closing `}` and `)` (e.g. pretty-printed `}\n);`).
 fn extract_xml_from_embedpano(html: &str) -> Option<String> {
-    let start = html.find("embedpano(")?;
-    debug!("extract_xml_from_embedpano: found embedpano( at offset {start}");
+    let start = html
+        .find("embedpano(")
+        .or_else(|| html.find("createPanoViewer("))?;
+    debug!("extract_xml_from_embedpano: found embed call at offset {start}");
     let body = &html[start..];
     let end = EMBEDPANO_END_RE.find(body)?;
     let params = &body[..end.end()];
@@ -1108,6 +1111,10 @@ fn extract_xml_from_embedpano_tolerates_whitespace() {
 
     // Quoted key: `"xml": "..."`.
     let html = r#"embedpano({ "xml": "panos/tour.xml" });"#;
+    assert_eq!(extract_xml_from_embedpano(html), Some("panos/tour.xml".to_string()));
+
+    // Older createPanoViewer API.
+    let html = r#"<script>createPanoViewer({ xml: "panos/tour.xml" });</script>"#;
     assert_eq!(extract_xml_from_embedpano(html), Some("panos/tour.xml".to_string()));
 }
 
