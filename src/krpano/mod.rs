@@ -203,7 +203,7 @@ impl KrpanoDezoomer {
         // straight to encrypted/plain XML handling.  XML files may contain
         // <script> or embedpano() in comments or data blocks, which would
         // otherwise trigger false HTML detection.
-        if !looks_like_krpano_xml(contents) && looks_like_html(contents) {
+        if !looks_like_krpano_xml(contents) && looks_like_krpano_html(contents) {
             debug!("krpano: content looks like HTML ({} bytes)", contents.len());
             let html = String::from_utf8_lossy(contents);
             let js_uris = extract_js_candidates_from_html(&html, uri);
@@ -294,10 +294,23 @@ fn looks_like_krpano_xml(contents: &[u8]) -> bool {
     trimmed.to_ascii_lowercase().starts_with("<krpano")
 }
 
-/// True if the content looks like an HTML page.
-fn looks_like_html(contents: &[u8]) -> bool {
+/// True if the content looks like a krpano HTML page.
+///
+/// Requires krpano-specific evidence (an `embedpano` call, a
+/// `createPanoViewer` call, or a `<script>` reference to a krpano viewer)
+/// so that generic HTML pages from other dezoomers are not claimed in
+/// auto mode.  All checks are case-insensitive.
+fn looks_like_krpano_html(contents: &[u8]) -> bool {
     let text = String::from_utf8_lossy(contents);
-    text.contains("<html") || text.contains("<script") || text.contains("embedpano(")
+    let lower = text.to_ascii_lowercase();
+    // Strongest signal: the krpano embedding API is called.
+    if lower.contains("embedpano(") || lower.contains("createpanoviewer(") {
+        return true;
+    }
+    // Weaker signal: a <script> tag referencing a krpano viewer file.
+    // This avoids claiming arbitrary HTML pages that merely contain <script>.
+    lower.contains("<script")
+        && (lower.contains("krpano") || lower.contains("tour.js"))
 }
 
 /// True if the content looks like a krpano viewer JavaScript file.
@@ -1080,4 +1093,26 @@ fn looks_like_krpano_xml_detects_xml_roots() {
     assert!(!looks_like_krpano_xml(b"<html><body></body></html>"));
     // Viewer JS is not XML.
     assert!(!looks_like_krpano_xml(b"/* krpano */ function() {}"));
+}
+
+#[test]
+fn looks_like_krpano_html_requires_krpano_evidence() {
+    // embedpano call — strongest signal.
+    assert!(looks_like_krpano_html(b"<html><script>embedpano({xml:'tour.xml'})</script></html>"));
+    // Uppercase tags + embedpano (case-insensitive).
+    assert!(looks_like_krpano_html(b"<HTML><BODY><SCRIPT>EMBEDPANO({xml:'tour.xml'})</SCRIPT></BODY></HTML>"));
+    // createPanoViewer — older API.
+    assert!(looks_like_krpano_html(b"<script>createPanoViewer({xml:'tour.xml'});</script>"));
+    // <script> with krpano viewer reference.
+    assert!(looks_like_krpano_html(b"<html><script src='krpano.js'></script></html>"));
+    // <script> with tour.js reference.
+    assert!(looks_like_krpano_html(b"<html><script src='tour.js'></script></html>"));
+    // Uppercase <SCRIPT> with tour.js.
+    assert!(looks_like_krpano_html(b"<HTML><SCRIPT SRC='tour.js'></SCRIPT></HTML>"));
+    // Generic HTML with <script> but no krpano evidence — should NOT match.
+    assert!(!looks_like_krpano_html(b"<html><script src='jquery.min.js'></script></html>"));
+    // Generic HTML with uppercase <SCRIPT> — should NOT match.
+    assert!(!looks_like_krpano_html(b"<HTML><SCRIPT src='analytics.js'></SCRIPT></HTML>"));
+    // Plain HTML, no scripts at all.
+    assert!(!looks_like_krpano_html(b"<html><body>Hello</body></html>"));
 }
