@@ -199,7 +199,12 @@ pub fn resolve_relative(base: &str, path: &str) -> String {
     {
         return r.to_string();
     }
-    let mut res = PathBuf::from(base.rsplitn(2, '/').last().unwrap_or_default());
+    // Local-path fallback: drop the last component of `base` and append `path`.
+    // Recognize both `/` and `\` so that Windows local paths resolve correctly
+    // (a bare `C:\foo\bar\tour.js` has no `/`, so the old `/`-only split treated
+    // the entire string as the directory and appended instead of replacing).
+    let dir = base.rfind(['/', '\\']).map_or("", |idx| &base[..idx]);
+    let mut res = PathBuf::from(dir);
     res.push(path);
     res.to_string_lossy().to_string()
 }
@@ -211,9 +216,14 @@ fn test_resolve_relative() {
         resolve_relative("/a/b", "c/d"),
         format!("/a{}c/d", MAIN_SEPARATOR)
     );
+    // Windows local path: the last component must be replaced, not appended.
     assert_eq!(
-        resolve_relative("C:\\\\X", "c/d"),
-        format!("C:\\\\X{}c/d", MAIN_SEPARATOR)
+        resolve_relative("C:\\\\foo\\\\bar", "c/d"),
+        format!("C:\\\\foo{}c/d", MAIN_SEPARATOR)
+    );
+    assert_eq!(
+        resolve_relative("C:\\\\foo\\\\bar\\\\tour.js", "tour.xml"),
+        format!("C:\\\\foo\\\\bar{}tour.xml", MAIN_SEPARATOR)
     );
     assert_eq!(
         resolve_relative("/a/b", "http://example.com/x"),

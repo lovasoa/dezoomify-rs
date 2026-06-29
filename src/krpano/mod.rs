@@ -428,11 +428,14 @@ fn extract_viewer_js(contents: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// Replace the last path component of `uri` with `filename`.
+///
+/// Handles both `/` (URLs, Unix paths) and `\` (Windows paths) as separators,
+/// reusing the separator found in the input so the result stays consistent
+/// with the original URI style.
 fn sibling_uri(uri: &str, filename: &str) -> String {
-    if let Some((dir, _)) = uri.rsplit_once('/') {
-        format!("{dir}/{filename}")
-    } else {
-        filename.to_string()
+    match uri.rfind(['/', '\\']) {
+        Some(idx) => format!("{}{}{filename}", &uri[..idx], &uri[idx..idx + 1]),
+        None => filename.to_string(),
     }
 }
 
@@ -463,7 +466,7 @@ fn viewer_script_score(src: &str) -> i32 {
     let path = lower
         .split_once(['?', '#'])
         .map_or(lower.as_str(), |(path, _)| path);
-    let filename = path.rsplit('/').next().unwrap_or(path);
+    let filename = path.rsplit(['/', '\\']).next().unwrap_or(path);
     let mut score = 0;
 
     if filename == "tour.js" {
@@ -941,4 +944,20 @@ fn html_script_candidates_prefer_krpano_viewer() {
         candidates.first().map(String::as_str),
         Some("http://example.com/pano/assets/tour.js?cache=1")
     );
+}
+
+#[test]
+fn sibling_uri_handles_url_and_local_paths() {
+    // HTTP URL: last segment replaced, separator preserved.
+    assert_eq!(sibling_uri("http://example.com/pano/tour.js", "tour.xml"), "http://example.com/pano/tour.xml");
+    // Trailing-slash URL keeps the slash.
+    assert_eq!(sibling_uri("http://example.com/pano/", "tour.xml"), "http://example.com/pano/tour.xml");
+    // Unix local path.
+    assert_eq!(sibling_uri("/home/user/tour.js", "tour.xml"), "/home/user/tour.xml");
+    // Windows local path uses backslash separator.
+    assert_eq!(sibling_uri("C:\\foo\\bar\\tour.js", "tour.xml"), "C:\\foo\\bar\\tour.xml");
+    // UNC path.
+    assert_eq!(sibling_uri("\\\\server\\share\\tour.js", "tour.xml"), "\\\\server\\share\\tour.xml");
+    // No separator: just the filename.
+    assert_eq!(sibling_uri("tour.js", "tour.xml"), "tour.xml");
 }
