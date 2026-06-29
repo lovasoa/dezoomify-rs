@@ -304,6 +304,46 @@ mod tests {
         }
     }
 
+    /// Compare two byte slices with a readable failure message.
+    ///
+    /// Unlike `assert_eq!` on `Vec<u8>` (which prints giant arrays of decimal
+    /// numbers), this reports lengths, the first differing byte offset, and a
+    /// short text context around the divergence.
+    fn assert_bytes_eq(actual: &[u8], expected: &[u8], msg: &str) {
+        if actual == expected {
+            return;
+        }
+        let common = actual
+            .iter()
+            .zip(expected.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+        const CONTEXT: usize = 100;
+        let start = common.saturating_sub(CONTEXT);
+        let actual_end = (common + CONTEXT).min(actual.len());
+        let expected_end = (common + CONTEXT).min(expected.len());
+        panic!(
+            "{msg}
+  actual length:   {}
+  expected length: {}
+  first difference at byte offset {}
+  actual near diff:   {}
+  expected near diff: {}",
+            actual.len(),
+            expected.len(),
+            common,
+            show_byte_context(&actual[start..actual_end]),
+            show_byte_context(&expected[start..expected_end]),
+        );
+    }
+
+    fn show_byte_context(bytes: &[u8]) -> String {
+        match std::str::from_utf8(bytes) {
+            Ok(s) => format!("{s:?}"),
+            Err(_) => format!("{}", crate::binary_display::display_bytes(bytes)),
+        }
+    }
+
     #[test]
     fn decodes_packed_viewer_js_payload() {
         let js = fs::read(
@@ -319,7 +359,8 @@ mod tests {
         if expected.last() == Some(&b'\n') {
             expected.pop();
         }
-        assert_eq!(extract_decoded_viewer_js(&js).unwrap(), expected);
+        let actual = extract_decoded_viewer_js(&js).unwrap();
+        assert_bytes_eq(&actual, &expected, "decoded viewer JS does not match expected decoded.js");
     }
 
     #[test]
@@ -358,7 +399,11 @@ mod tests {
                 if expected.last() == Some(&b'\n') {
                     expected.pop();
                 }
-                assert_eq!(decoded, expected);
+                assert_bytes_eq(
+                    &decoded,
+                    &expected,
+                    &format!("{}: decoded JS does not match expected decoded.js", js_path.display()),
+                );
             }
             decoded_count += 1;
         }
@@ -928,9 +973,10 @@ mod tests {
                         if actual.last() == Some(&b'\n') {
                             actual.pop();
                         }
-                        assert_eq!(
-                            actual, expected,
-                            "{dir_name}: plaintext does not match expected plaintext.xml"
+                        assert_bytes_eq(
+                            &actual,
+                            &expected,
+                            &format!("{dir_name}: plaintext does not match expected plaintext.xml"),
                         );
                     }
                     tested += 1;
