@@ -51,13 +51,9 @@ pub struct KrpanoDezoomer {
 enum ResolveState {
     #[default]
     None,
-    /// HTML loaded; XML URL known from embedpano.  Need the viewer JS.
-    NeedJs {
-        xml_uri: String,
-        remaining_js_uris: Vec<String>,
-    },
-    /// Viewer JS loaded; need the XML config to proceed.
-    /// Carries the JS so it can be reused if the XML is encrypted.
+    /// XML has been requested (from HTML or viewer-JS entry points).
+    /// Carries the viewer JS (if any) so it can be reused if the XML is
+    /// encrypted, plus remaining JS candidates to try on decrypt failure.
     NeedXml {
         xml_uri: String,
         viewer_js: Vec<u8>,
@@ -104,31 +100,9 @@ impl KrpanoDezoomer {
 
         // --- State machine dispatch ---
 
-        // HTML → JS: we know the XML URL, the current call is the viewer JS.
-        // Save the JS and request the XML.
-        if matches!(&self.state, ResolveState::NeedJs { .. }) {
-            let (xml_uri, remaining_js_uris) = match std::mem::take(&mut self.state) {
-                ResolveState::NeedJs {
-                    xml_uri,
-                    remaining_js_uris,
-                } => (xml_uri, remaining_js_uris),
-                _ => unreachable!(),
-            };
-            debug!(
-                "krpano state=NeedJs → got JS ({} bytes), requesting XML: {xml_uri}",
-                contents.len()
-            );
-            let viewer_js = contents.to_vec();
-            self.state = ResolveState::NeedXml {
-                xml_uri: xml_uri.clone(),
-                viewer_js,
-                remaining_js_uris,
-            };
-            return Err(DezoomerError::NeedsData { uri: xml_uri });
-        }
-
-        // JS → XML: we have the viewer JS; the current call is the XML.
-        // If encrypted, decrypt with the saved JS.  Otherwise parse directly.
+        // XML requested from the HTML or viewer-JS entry point.
+        // The current call is the XML content.  If encrypted, decrypt with
+        // the saved viewer JS (if any) or try JS candidates.  Otherwise parse.
         if matches!(&self.state, ResolveState::NeedXml { .. }) {
             let (xml_uri, viewer_js, mut remaining_js_uris) = match std::mem::take(&mut self.state)
             {
@@ -145,11 +119,20 @@ impl KrpanoDezoomer {
             );
 
             if is_encrypted_xml(contents) {
-                debug!(
-                    "krpano: XML is encrypted, decrypting with saved viewer JS ({} bytes)",
-                    viewer_js.len()
-                );
-                match decrypt_xml(contents, Some(&viewer_js)) {
+                // When viewer_js is empty (HTML entry: XML fetched first), try
+                // decrypting without JS first — works for public Classic payloads.
+                // Otherwise use the saved viewer JS.
+                let decrypt_result = if viewer_js.is_empty() {
+                    debug!("krpano: XML is encrypted, trying decryption without viewer JS");
+                    decrypt_xml(contents, None)
+                } else {
+                    debug!(
+                        "krpano: XML is encrypted, decrypting with saved viewer JS ({} bytes)",
+                        viewer_js.len()
+                    );
+                    decrypt_xml(contents, Some(&viewer_js))
+                };
+                match decrypt_result {
                     Ok(decrypted) => {
                         debug!("krpano: decrypted XML = {} bytes", decrypted.len());
                         return parse(&xml_uri, &decrypted);
@@ -157,7 +140,7 @@ impl KrpanoDezoomer {
                     Err(e) => {
                         if let Some(next_js_uri) = next_js_candidate(&mut remaining_js_uris) {
                             debug!(
-                                "krpano: decrypt failed with candidate JS: {e}; trying next JS candidate {next_js_uri}"
+                                "krpano: decrypt failed: {e}; trying next JS candidate {next_js_uri}"
                             );
                             self.state = ResolveState::NeedJsToDecrypt {
                                 xml_uri,
@@ -216,32 +199,43 @@ impl KrpanoDezoomer {
 
         // --- Content-type detection (fresh entry) ---
 
-        if looks_like_html(contents) {
+        // If the content is a krpano XML file, skip HTML/JS detection and go
+        // straight to encrypted/plain XML handling.  XML files may contain
+        // <script> or embedpano() in comments or data blocks, which would
+        // otherwise trigger false HTML detection.
+        if !looks_like_krpano_xml(contents) && looks_like_html(contents) {
             debug!("krpano: content looks like HTML ({} bytes)", contents.len());
             let html = String::from_utf8_lossy(contents);
-            let mut js_uris = extract_js_candidates_from_html(&html, uri);
+            let js_uris = extract_js_candidates_from_html(&html, uri);
             let xml_uri = extract_xml_from_embedpano(&html)
                 .map(|rel| resolve_relative(uri, &rel))
                 .unwrap_or_else(|| sibling_uri(uri, "tour.xml"));
 
+            // Request the XML first.  For plain-XML pages this avoids fetching
+            // the viewer JS at all; for encrypted pages the JS candidates are
+            // tried only after encryption is detected.
             debug!("krpano HTML: js_uris={js_uris:?}, xml_uri={xml_uri}");
-            if let Some(js_uri) = next_js_candidate(&mut js_uris) {
-                self.state = ResolveState::NeedJs {
-                    xml_uri,
-                    remaining_js_uris: js_uris,
-                };
-                return Err(DezoomerError::NeedsData { uri: js_uri });
-            }
-            debug!("krpano HTML: no JS found, requesting XML directly");
+            self.state = ResolveState::NeedXml {
+                xml_uri: xml_uri.clone(),
+                viewer_js: Vec::new(),
+                remaining_js_uris: js_uris,
+            };
             return Err(DezoomerError::NeedsData { uri: xml_uri });
         }
 
-        if looks_like_viewer_js(contents) {
+        if !looks_like_krpano_xml(contents) && looks_like_viewer_js(contents) {
             let xml_uri = sibling_uri(uri, "tour.xml");
             debug!(
                 "krpano: content looks like viewer JS ({} bytes), requesting XML: {xml_uri}",
                 contents.len()
             );
+            // Store the viewer JS so it can be used to decrypt the XML if it
+            // turns out to be encrypted.
+            self.state = ResolveState::NeedXml {
+                xml_uri: xml_uri.clone(),
+                viewer_js: contents.to_vec(),
+                remaining_js_uris: Vec::new(),
+            };
             return Err(DezoomerError::NeedsData { uri: xml_uri });
         }
 
@@ -259,12 +253,16 @@ impl KrpanoDezoomer {
                 }
                 Err(_) => {
                     // Needs the viewer JS to extract the wrapper key and engine.
-                    let js_uri = sibling_uri(uri, "tour.js");
+                    // Derive JS candidate URIs from the XML filename, with
+                    // tour.js and krpano.js as fallbacks.
+                    let mut js_uris = viewer_js_candidates_for_xml(uri);
+                    let js_uri =
+                        next_js_candidate(&mut js_uris).unwrap_or_else(|| sibling_uri(uri, "tour.js"));
                     debug!("krpano: encrypted XML needs viewer JS, requesting: {js_uri}");
                     self.state = ResolveState::NeedJsToDecrypt {
                         xml_uri: uri.to_string(),
                         xml_contents: contents.to_vec(),
-                        remaining_js_uris: Vec::new(),
+                        remaining_js_uris: js_uris,
                     };
                     return Err(DezoomerError::NeedsData { uri: js_uri });
                 }
@@ -278,6 +276,22 @@ impl KrpanoDezoomer {
         );
         parse(uri, contents)
     }
+}
+
+/// True if the content looks like a krpano XML file rather than HTML.
+///
+/// Detects an XML prolog (`<?xml`) or a `<krpano` root element.  This prevents
+/// XML files that contain `<script>` or `embedpano()` in comments or data
+/// blocks from being misclassified as HTML.
+fn looks_like_krpano_xml(contents: &[u8]) -> bool {
+    // Strip optional UTF-8 BOM, then leading whitespace.
+    let contents = contents.strip_prefix(b"\xef\xbb\xbf").unwrap_or(contents);
+    let text = String::from_utf8_lossy(contents);
+    let trimmed = text.trim_start();
+    if trimmed.starts_with("<?xml") {
+        return true;
+    }
+    trimmed.to_ascii_lowercase().starts_with("<krpano")
 }
 
 /// True if the content looks like an HTML page.
@@ -372,29 +386,19 @@ fn extract_js_candidates_from_html(html: &str, html_uri: &str) -> Vec<String> {
 }
 
 /// Extract the XML URL from an `embedpano({xml:"..."})` call in an HTML page.
+///
+/// Tolerates whitespace around the `xml:` separator (e.g. `xml : "..."`) and
+/// whitespace between the closing `}` and `)` (e.g. pretty-printed `}\n);`).
 fn extract_xml_from_embedpano(html: &str) -> Option<String> {
     let start = html.find("embedpano(")?;
     debug!("extract_xml_from_embedpano: found embedpano( at offset {start}");
     let body = &html[start..];
-    let end = body.find("})")?;
-    let params = &body[..end + 2];
-    // Extract xml:"..." or xml:'...'
-    if let Some(xml_start) = params.find("xml:") {
-        let rest = &params[xml_start + 4..];
-        let rest = rest.trim_start();
-        let quote = rest.chars().next()?;
-        if quote != '"' && quote != '\'' {
-            debug!("extract_xml_from_embedpano: unexpected quote char after xml:");
-            return None;
-        }
-        let inner = &rest[1..];
-        let xml_end = inner.find(quote)?;
-        let xml = &inner[..xml_end];
-        debug!("extract_xml_from_embedpano: found xml={xml:?}");
-        return Some(xml.to_string());
-    }
-    debug!("extract_xml_from_embedpano: no xml: found in embedpano params");
-    None
+    let end = EMBEDPANO_END_RE.find(body)?;
+    let params = &body[..end.end()];
+    let caps = EMBEDPANO_XML_RE.captures(params)?;
+    let xml = &caps[1];
+    debug!("extract_xml_from_embedpano: found xml={xml:?}");
+    Some(xml.to_string())
 }
 
 /// Extract the `src` attribute value from a <script> tag.
@@ -427,15 +431,53 @@ fn extract_viewer_js(contents: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
+/// Build a list of candidate viewer JS URIs for an encrypted XML file.
+///
+/// The primary candidate is derived from the XML filename (e.g. `map_core.xml`
+/// → `map_core.js`), with `tour.js` and `krpano.js` as fallbacks.
+fn viewer_js_candidates_for_xml(xml_uri: &str) -> Vec<String> {
+    let xml_stem = xml_uri
+        .rsplit(['/', '\\'])
+        .next()
+        .and_then(|name| name.rsplit_once('.').map(|(stem, _)| stem))
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("tour");
+    let mut candidates = vec![sibling_uri(xml_uri, &format!("{xml_stem}.js"))];
+    // Add common fallbacks, avoiding duplicates.
+    for fallback in ["tour.js", "krpano.js"] {
+        let uri = sibling_uri(xml_uri, fallback);
+        if !candidates.contains(&uri) {
+            candidates.push(uri);
+        }
+    }
+    candidates
+}
+
 /// Replace the last path component of `uri` with `filename`.
 ///
-/// Handles both `/` (URLs, Unix paths) and `\` (Windows paths) as separators,
-/// reusing the separator found in the input so the result stays consistent
-/// with the original URI style.
+/// Handles both `/` (URLs, Unix paths) and `\` (Windows paths) as separators.
+/// For URLs with a scheme (`https://`), separators inside the `://` authority
+/// prefix are skipped so that bare-origin URLs like `https://example.com`
+/// resolve to `https://example.com/filename` rather than `https://filename`.
 fn sibling_uri(uri: &str, filename: &str) -> String {
-    match uri.rfind(['/', '\\']) {
-        Some(idx) => format!("{}{}{filename}", &uri[..idx], &uri[idx..idx + 1]),
-        None => filename.to_string(),
+    // Find the start of the path (after the "://" scheme prefix if present).
+    let scheme_end = uri.find("://").map(|i| i + 3);
+    let search_start = scheme_end.unwrap_or(0);
+    let after_scheme = &uri[search_start..];
+    match after_scheme.rfind(['/', '\\']) {
+        Some(rel_idx) => {
+            let idx = search_start + rel_idx;
+            format!("{}{}{filename}", &uri[..idx], &uri[idx..idx + 1])
+        }
+        None => {
+            if scheme_end.is_some() {
+                // URL with no path after the authority: append "/filename".
+                format!("{uri}/{filename}")
+            } else {
+                // Local path with no separator: just the filename.
+                filename.to_string()
+            }
+        }
     }
 }
 
@@ -452,6 +494,16 @@ static SCRIPT_TAG_RE: LazyLock<Regex> =
 static SCRIPT_SRC_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?is)(?:^|[\s<])src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))"#).unwrap()
 });
+
+/// Matches the end of an `embedpano({...})` call, tolerating whitespace
+/// between `}` and `)` (e.g. pretty-printed `}\n);`).
+static EMBEDPANO_END_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\}\s*\)").unwrap());
+
+/// Matches the `xml` key inside an embedpano options object, tolerating
+/// whitespace around the colon and optional quotes around the key.
+static EMBEDPANO_XML_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)\bxml["']?\s*:\s*["']([^"']+)["']"#).unwrap());
 
 fn is_javascript_src(src: &str) -> bool {
     let without_query = src
@@ -960,4 +1012,72 @@ fn sibling_uri_handles_url_and_local_paths() {
     assert_eq!(sibling_uri("\\\\server\\share\\tour.js", "tour.xml"), "\\\\server\\share\\tour.xml");
     // No separator: just the filename.
     assert_eq!(sibling_uri("tour.js", "tour.xml"), "tour.xml");
+    // Bare-origin URL (no path after authority): append "/filename".
+    assert_eq!(
+        sibling_uri("https://example.com", "tour.xml"),
+        "https://example.com/tour.xml"
+    );
+    assert_eq!(
+        sibling_uri("http://example.com", "tour.js"),
+        "http://example.com/tour.js"
+    );
+}
+
+#[test]
+fn viewer_js_candidates_derived_from_xml_filename() {
+    // Custom XML name → derived JS first, then fallbacks.
+    assert_eq!(
+        viewer_js_candidates_for_xml("https://example.com/panos/map_core.xml"),
+        vec![
+            "https://example.com/panos/map_core.js".to_string(),
+            "https://example.com/panos/tour.js".to_string(),
+            "https://example.com/panos/krpano.js".to_string(),
+        ]
+    );
+    // tour.xml → tour.js first, then krpano.js (no duplicate).
+    assert_eq!(
+        viewer_js_candidates_for_xml("https://example.com/tour.xml"),
+        vec![
+            "https://example.com/tour.js".to_string(),
+            "https://example.com/krpano.js".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn extract_xml_from_embedpano_tolerates_whitespace() {
+    // Whitespace before the colon: `xml : "..."`.
+    let html = r#"<script>embedpano({ xml : "panos/tour.xml", target:"pano" });</script>"#;
+    assert_eq!(extract_xml_from_embedpano(html), Some("panos/tour.xml".to_string()));
+
+    // Pretty-printed ending: `}\n);` with whitespace between } and ).
+    let html = r#"
+        embedpano({
+            xml: "panos/tour.xml"
+        }
+        );
+    "#;
+    assert_eq!(extract_xml_from_embedpano(html), Some("panos/tour.xml".to_string()));
+
+    // Quoted key: `"xml": "..."`.
+    let html = r#"embedpano({ "xml": "panos/tour.xml" });"#;
+    assert_eq!(extract_xml_from_embedpano(html), Some("panos/tour.xml".to_string()));
+}
+
+#[test]
+fn looks_like_krpano_xml_detects_xml_roots() {
+    // XML prolog.
+    assert!(looks_like_krpano_xml(b"<?xml version=\"1.0\"?><krpano></krpano>"));
+    // Direct <krpano> root.
+    assert!(looks_like_krpano_xml(b"<krpano><image></image></krpano>"));
+    // BOM + XML prolog.
+    assert!(looks_like_krpano_xml(b"\xef\xbb\xbf<?xml version=\"1.0\"?><krpano/>"));
+    // XML with <script> inside should still be detected as XML, not HTML.
+    assert!(looks_like_krpano_xml(
+        b"<?xml version=\"1.0\"?><krpano><action><![CDATA[embedpano();]]></action></krpano>"
+    ));
+    // HTML is not XML.
+    assert!(!looks_like_krpano_xml(b"<html><body></body></html>"));
+    // Viewer JS is not XML.
+    assert!(!looks_like_krpano_xml(b"/* krpano */ function() {}"));
 }
