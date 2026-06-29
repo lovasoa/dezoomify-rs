@@ -439,10 +439,13 @@ fn extract_js_candidates_from_html(html: &str, html_uri: &str) -> Vec<String> {
 ///
 /// Tolerates whitespace around the `xml:` separator (e.g. `xml : "..."`) and
 /// whitespace between the closing `}` and `)` (e.g. pretty-printed `}\n);`).
+/// The embedding call name is matched case-insensitively.
 fn extract_xml_from_embedpano(html: &str) -> Option<String> {
-    let start = html
+    // Case-insensitive search for the embedding call.
+    let lower = html.to_ascii_lowercase();
+    let start = lower
         .find("embedpano(")
-        .or_else(|| html.find("createPanoViewer("))?;
+        .or_else(|| lower.find("createpanoviewer("))?;
     debug!("extract_xml_from_embedpano: found embed call at offset {start}");
     let body = &html[start..];
     let end = EMBEDPANO_END_RE.find(body)?;
@@ -488,7 +491,9 @@ fn extract_viewer_js(contents: &[u8]) -> Option<Vec<u8>> {
 /// The primary candidate is derived from the XML filename (e.g. `map_core.xml`
 /// → `map_core.js`), with `tour.js` and `krpano.js` as fallbacks.
 fn viewer_js_candidates_for_xml(xml_uri: &str) -> Vec<String> {
-    let xml_stem = xml_uri
+    // Strip query/fragment so cache-busting params don't corrupt the stem.
+    let path = xml_uri.split_once(['?', '#']).map_or(xml_uri, |(p, _)| p);
+    let xml_stem = path
         .rsplit(['/', '\\'])
         .next()
         .and_then(|name| name.rsplit_once('.').map(|(stem, _)| stem))
@@ -1125,6 +1130,15 @@ fn viewer_js_candidates_derived_from_xml_filename() {
             "https://example.com/krpano.js".to_string(),
         ]
     );
+    // Query/fragment stripped before deriving the stem.
+    assert_eq!(
+        viewer_js_candidates_for_xml("https://example.com/panos/map_core.xml?v=1.2"),
+        vec![
+            "https://example.com/panos/map_core.js".to_string(),
+            "https://example.com/panos/tour.js".to_string(),
+            "https://example.com/panos/krpano.js".to_string(),
+        ]
+    );
 }
 
 #[test]
@@ -1157,6 +1171,18 @@ fn extract_xml_from_embedpano_tolerates_whitespace() {
 
     // Older createPanoViewer API.
     let html = r#"<script>createPanoViewer({ xml: "panos/tour.xml" });</script>"#;
+    assert_eq!(
+        extract_xml_from_embedpano(html),
+        Some("panos/tour.xml".to_string())
+    );
+
+    // Case-insensitive embedding call lookup.
+    let html = r#"<script>EMBEDPANO({ xml: "panos/tour.xml" });</script>"#;
+    assert_eq!(
+        extract_xml_from_embedpano(html),
+        Some("panos/tour.xml".to_string())
+    );
+    let html = r#"<script>CreatePanoViewer({ xml: "panos/tour.xml" });</script>"#;
     assert_eq!(
         extract_xml_from_embedpano(html),
         Some("panos/tour.xml".to_string())
