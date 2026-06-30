@@ -662,8 +662,7 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, Dezoom
     } else {
         contents
     };
-    let image_properties: KrpanoMetadata =
-        serde_xml_rs::from_reader(contents).map_err(KrpanoError::from)?;
+    let image_properties = KrpanoMetadata::from_reader(contents).map_err(KrpanoError::from)?;
     let base_url = &Arc::from(url);
     let title: &Arc<str> = &Arc::from(image_properties.get_title().unwrap_or(""));
     Ok(image_properties
@@ -671,7 +670,7 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, Dezoom
         .flat_map(move |ImageInfo { image, name }| {
             let root_tile_size = image.tilesize.map(Vec2d::square);
             let base_index = image.baseindex;
-            image.level.into_iter().flat_map(move |level| {
+            image.into_levels().flat_map(move |level| {
                 let name = Arc::clone(&name);
                 level
                     .level_descriptions(None)
@@ -726,8 +725,7 @@ fn load_images_from_properties(
     } else {
         contents
     };
-    let image_properties: KrpanoMetadata =
-        serde_xml_rs::from_reader(contents).map_err(KrpanoError::from)?;
+    let image_properties = KrpanoMetadata::from_reader(contents).map_err(KrpanoError::from)?;
     let base_url = Arc::from(url);
     let global_title = image_properties.get_title().unwrap_or("").to_string();
 
@@ -741,8 +739,7 @@ fn load_images_from_properties(
             let name_for_levels = Arc::clone(&name);
 
             let levels: ZoomLevels = image
-                .level
-                .into_iter()
+                .into_levels()
                 .flat_map(move |level| {
                     let name = Arc::clone(&name_for_levels);
                     let base_url = Arc::clone(&base_url);

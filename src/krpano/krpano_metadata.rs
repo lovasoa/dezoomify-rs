@@ -5,12 +5,46 @@ use serde::{Deserialize, Deserializer, de};
 
 use crate::Vec2d;
 
-#[derive(Debug, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Deserialize, Default)]
 pub struct KrpanoMetadata {
-    #[serde(rename = "#content")]
-    children: Vec<TopLevelTags>,
+    #[serde(default)]
+    image: Vec<KrpanoImage>,
+    #[serde(default)]
+    scene: Vec<KrpanoMetadata>,
+    #[serde(default)]
+    data: Vec<String>,
+    #[serde(default)]
+    source_details: Vec<SourceDetails>,
+
+    // Actions contain krpano scripts, not tile URL metadata.
+    #[serde(default, rename = "action")]
+    _action: Vec<de::IgnoredAny>,
+
+    // Events only bind scripts to viewer lifecycle hooks.
+    #[serde(default, rename = "events")]
+    _events: Vec<de::IgnoredAny>,
+
+    // Includes may add more metadata at runtime, but this parser only handles
+    // the XML document it was given and cannot fetch arbitrary tour UI files.
+    #[serde(default, rename = "include")]
+    _include: Vec<de::IgnoredAny>,
+
+    // Nested krpano elements set global viewer variables, not image levels.
+    #[serde(default, rename = "krpano")]
+    _krpano: Vec<de::IgnoredAny>,
+
+    // Security/cross-domain declarations do not affect tile geometry or URLs.
+    #[serde(default, rename = "security")]
+    _security: Vec<de::IgnoredAny>,
+
     #[serde(default, rename = "@name")]
     name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SourceDetails {
+    #[serde(default, rename = "@subject")]
+    subject: String,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -20,16 +54,38 @@ pub struct ImageInfo {
 }
 
 impl KrpanoMetadata {
-    fn into_image_iter_with_name(self, name: Arc<str>) -> impl Iterator<Item = ImageInfo> {
+    #[cfg(test)]
+    fn from_str(s: &str) -> Result<Self, serde_xml_rs::Error> {
+        serde_xml_rs::SerdeXml::new()
+            .overlapping_sequences(true)
+            .from_str(s)
+    }
+
+    pub fn from_reader<R: std::io::Read>(reader: R) -> Result<Self, serde_xml_rs::Error> {
+        serde_xml_rs::SerdeXml::new()
+            .overlapping_sequences(true)
+            .from_reader(reader)
+    }
+
+    fn into_image_iter_with_name(self, name: Arc<str>) -> Box<dyn Iterator<Item = ImageInfo>> {
         let name: Arc<str> = if name.is_empty() {
             Arc::from(self.name)
         } else {
             let s = [name.as_ref(), &self.name].join(" ");
             Arc::from(s)
         };
-        self.children
+        let images = self.image.into_iter().filter(|image| image.has_tile_levels()).map({
+            let name = Arc::clone(&name);
+            move |image| ImageInfo {
+                image,
+                name: Arc::clone(&name),
+            }
+        });
+        let scene_images = self
+            .scene
             .into_iter()
-            .flat_map(move |t| t.into_image_iter_with_name(name.clone()))
+            .flat_map(move |s| s.into_image_iter_with_name(Arc::clone(&name)));
+        Box::new(images.chain(scene_images))
     }
 
     pub fn into_image_iter(self) -> impl Iterator<Item = ImageInfo> {
@@ -37,45 +93,14 @@ impl KrpanoMetadata {
     }
 
     pub fn get_title(&self) -> Option<&str> {
-        self.children.iter().find_map(|child| child.get_title())
-    }
-}
-
-#[derive(Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum TopLevelTags {
-    Image(KrpanoImage),
-    Scene(KrpanoMetadata),
-    SourceDetails {
-        #[serde(default, rename = "@subject")]
-        subject: String,
-    },
-    Data(String),
-    #[serde(other, deserialize_with = "deserialize_ignore_any")]
-    Other,
-}
-
-fn deserialize_ignore_any<'de, D: Deserializer<'de>>(deserializer: D) -> Result<(), D::Error> {
-    serde::de::IgnoredAny::deserialize(deserializer)?;
-    Ok(())
-}
-
-impl TopLevelTags {
-    fn into_image_iter_with_name(self, name: Arc<str>) -> Box<dyn Iterator<Item = ImageInfo>> {
-        match self {
-            Self::Image(image) => Box::new(std::iter::once(ImageInfo { image, name })),
-            Self::Scene(s) => Box::new(s.into_image_iter_with_name(name)),
-            _ => Box::new(std::iter::empty()),
-        }
-    }
-    fn get_title(&self) -> Option<&str> {
-        match self {
-            Self::SourceDetails { subject } => Some(subject),
-            Self::Data(bytes) => serde_json::from_str::<KrpanoMetaData>(bytes)
-                .ok()
-                .map(|m| m.title),
-            _ => None,
-        }
+        self.source_details
+            .iter()
+            .find_map(|details| (!details.subject.is_empty()).then_some(details.subject.as_str()))
+            .or_else(|| {
+                self.data
+                    .iter()
+                    .find_map(|bytes| serde_json::from_str::<KrpanoMetaData>(bytes).ok().map(|m| m.title))
+            })
     }
 }
 
@@ -84,14 +109,68 @@ struct KrpanoMetaData<'a> {
     title: &'a str,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Default)]
 pub struct KrpanoImage {
     #[serde(rename = "@tilesize")]
     pub tilesize: Option<u32>,
     #[serde(default = "default_base_index", rename = "@baseindex")]
     pub baseindex: u32,
-    #[serde(rename = "#content")]
+    #[serde(default, rename = "#content")]
     pub level: Vec<KrpanoLevel>,
+    #[serde(default)]
+    pub cube: Vec<ShapeDesc>,
+    #[serde(default)]
+    pub cylinder: Vec<ShapeDesc>,
+    #[serde(default)]
+    pub flat: Vec<ShapeDesc>,
+    #[serde(default)]
+    pub sphere: Vec<ShapeDesc>,
+    #[serde(default)]
+    pub left: Vec<ShapeDesc>,
+    #[serde(default)]
+    pub right: Vec<ShapeDesc>,
+    #[serde(default)]
+    pub front: Vec<ShapeDesc>,
+    #[serde(default)]
+    pub back: Vec<ShapeDesc>,
+    #[serde(default)]
+    pub up: Vec<ShapeDesc>,
+    #[serde(default)]
+    pub down: Vec<ShapeDesc>,
+}
+
+impl KrpanoImage {
+    pub fn into_levels(self) -> impl Iterator<Item = KrpanoLevel> {
+        self.into_all_levels()
+    }
+
+    pub fn has_tile_levels(&self) -> bool {
+        !self.level.is_empty()
+            || self.cube.iter().any(|shape| shape.multires.is_some())
+            || self.cylinder.iter().any(|shape| shape.multires.is_some())
+            || self.flat.iter().any(|shape| shape.multires.is_some())
+            || self.sphere.iter().any(|shape| shape.multires.is_some())
+            || self.left.iter().any(|shape| shape.multires.is_some())
+            || self.right.iter().any(|shape| shape.multires.is_some())
+            || self.front.iter().any(|shape| shape.multires.is_some())
+            || self.back.iter().any(|shape| shape.multires.is_some())
+            || self.up.iter().any(|shape| shape.multires.is_some())
+            || self.down.iter().any(|shape| shape.multires.is_some())
+    }
+
+    fn into_all_levels(self) -> impl Iterator<Item = KrpanoLevel> {
+        self.level.into_iter()
+            .chain(self.cube.into_iter().map(KrpanoLevel::Cube))
+            .chain(self.cylinder.into_iter().map(KrpanoLevel::Cylinder))
+            .chain(self.flat.into_iter().map(KrpanoLevel::Flat))
+            .chain(self.sphere.into_iter().map(KrpanoLevel::Sphere))
+            .chain(self.left.into_iter().map(KrpanoLevel::Left))
+            .chain(self.right.into_iter().map(KrpanoLevel::Right))
+            .chain(self.front.into_iter().map(KrpanoLevel::Front))
+            .chain(self.back.into_iter().map(KrpanoLevel::Back))
+            .chain(self.up.into_iter().map(KrpanoLevel::Up))
+            .chain(self.down.into_iter().map(KrpanoLevel::Down))
+    }
 }
 
 fn default_base_index() -> u32 {
@@ -133,6 +212,7 @@ pub enum KrpanoLevel {
     Cube(ShapeDesc),
     Cylinder(ShapeDesc),
     Flat(ShapeDesc),
+    Sphere(ShapeDesc),
     Left(ShapeDesc),
     Right(ShapeDesc),
     Front(ShapeDesc),
@@ -161,6 +241,7 @@ impl KrpanoLevel {
             Self::Cube(d) => shape_descriptions("Cube", d, size),
             Self::Cylinder(d) => shape_descriptions("Cylinder", d, size),
             Self::Flat(d) => shape_descriptions("Flat", d, size),
+            Self::Sphere(d) => shape_descriptions("Sphere", d, size),
             Self::Left(d) => shape_descriptions("Left", d, size),
             Self::Right(d) => shape_descriptions("Right", d, size),
             Self::Front(d) => shape_descriptions("Front", d, size),
@@ -370,7 +451,6 @@ mod test {
     use super::KrpanoLevel::{Cube, Cylinder, Left, Mobile};
     use super::TemplateStringPart::{Literal, Variable};
     use super::TemplateVariable::{LevelIndex, X, Y};
-    use super::TopLevelTags::{Image, Scene};
     use super::*;
 
     fn str(s: &str) -> TemplateStringPart<TemplateVariable> {
@@ -400,7 +480,7 @@ mod test {
 
     #[test]
     fn parse_xml_cylinder() {
-        let parsed: KrpanoMetadata = serde_xml_rs::from_str(r#"
+        let parsed = KrpanoMetadata::from_str(r#"
         <krpano version="1.18"  bgcolor="0xFFFFFF">
             <include url="skin/flatpano_setup.xml" />
             <view devices="mobile" hlookat="0" vlookat="0" maxpixelzoom="0.7" limitview="fullrange" fov="1.8" fovmax="1.8" fovmin="0.02"/>
@@ -436,6 +516,7 @@ mod test {
                             multires: None,
                         })],
                     }),],
+                    ..Default::default()
                 },
             }]
         );
@@ -443,7 +524,7 @@ mod test {
 
     #[test]
     fn get_title_json_metadata() {
-        let parsed: KrpanoMetadata = serde_xml_rs::from_str(
+        let parsed = KrpanoMetadata::from_str(
             r#"
         <krpano version="1.18"  bgcolor="0xFFFFFF">
             <data name="metadata"><![CDATA[
@@ -458,7 +539,7 @@ mod test {
 
     #[test]
     fn get_title_source_details() {
-        let parsed: KrpanoMetadata = serde_xml_rs::from_str(
+        let parsed = KrpanoMetadata::from_str(
             r#"
         <krpano version="1.18"  bgcolor="0xFFFFFF">
             <source_details subject="the subject"/>
@@ -471,69 +552,64 @@ mod test {
 
     #[test]
     fn parse_xml_old_cube() {
-        let parsed: KrpanoMetadata = serde_xml_rs::from_str(r#"<krpano showerrors="false" logkey="false">
+        let parsed = KrpanoMetadata::from_str(r#"<krpano showerrors="false" logkey="false">
         <image type="cube" multires="true" tilesize="512" baseindex="0" progressive="false" multiresthreshold="-0.3">
             <level download="view" decode="view" tiledimagewidth="3280" tiledimageheight="3280">
                 <left  url="https://example.com/%000r/%0000c.jpg"/>
             </level>
         </image>
         </krpano>"#).unwrap();
+        let images: Vec<ImageInfo> = parsed.into_image_iter().collect();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].image.baseindex, 0);
+        assert_eq!(images[0].image.tilesize, Some(512));
         assert_eq!(
-            parsed,
-            KrpanoMetadata {
-                children: vec![Image(KrpanoImage {
-                    baseindex: 0,
-                    tilesize: Some(512),
-                    level: vec![KrpanoLevel::Level(LevelAttributes {
-                        tiledimagewidth: 3280,
-                        tiledimageheight: 3280,
-                        shape: vec![Left(ShapeDesc {
-                            url: TemplateString(vec![
-                                str("https://example.com/"),
-                                y(4),
-                                str("/"),
-                                x(5),
-                                str(".jpg")
-                            ]),
-                            multires: None,
-                        })],
-                    })],
+            images[0].image.level,
+            vec![KrpanoLevel::Level(LevelAttributes {
+                tiledimagewidth: 3280,
+                tiledimageheight: 3280,
+                shape: vec![Left(ShapeDesc {
+                    url: TemplateString(vec![
+                        str("https://example.com/"),
+                        y(4),
+                        str("/"),
+                        x(5),
+                        str(".jpg")
+                    ]),
+                    multires: None,
                 })],
-                ..Default::default()
-            }
+            })]
         )
     }
 
     #[test]
     fn parse_xml_multires() {
-        let parsed: KrpanoMetadata = serde_xml_rs::from_str(r#"
+        let parsed = KrpanoMetadata::from_str(r#"
         <krpano>
         <image>
             <flat url="https://example.com/" multires="512,768x554,1664x1202,3200x2310,6400x4618,12800x9234"/>
         </image>
         </krpano>"#).unwrap();
+        let mut images = parsed.into_image_iter();
+        let image = images.next().unwrap().image;
+        assert!(images.next().is_none());
+        assert_eq!(image.baseindex, 1);
+        assert_eq!(image.tilesize, None);
         assert_eq!(
-            parsed,
-            KrpanoMetadata {
-                children: vec![Image(KrpanoImage {
-                    baseindex: 1,
-                    tilesize: None,
-                    level: vec![KrpanoLevel::Flat(ShapeDesc {
-                        url: TemplateString(vec![str("https://example.com/"),]),
-                        multires: Some(
-                            "512,768x554,1664x1202,3200x2310,6400x4618,12800x9234".to_string()
-                        ),
-                    })],
-                })],
-                ..Default::default()
-            }
+            image.into_levels().collect::<Vec<_>>(),
+            vec![KrpanoLevel::Flat(ShapeDesc {
+                url: TemplateString(vec![str("https://example.com/"),]),
+                multires: Some(
+                    "512,768x554,1664x1202,3200x2310,6400x4618,12800x9234".to_string()
+                ),
+            })]
         )
     }
 
     #[test]
     fn parse_xml_mobile() {
         // See https://github.com/lovasoa/dezoomify-rs/issues/58
-        let parsed: KrpanoMetadata = serde_xml_rs::from_str(
+        let parsed = KrpanoMetadata::from_str(
             r#"
         <krpano>
         <image>
@@ -544,26 +620,23 @@ mod test {
         </krpano>"#,
         )
         .unwrap();
+        let images: Vec<ImageInfo> = parsed.into_image_iter().collect();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].image.baseindex, 1);
+        assert_eq!(images[0].image.tilesize, None);
         assert_eq!(
-            parsed,
-            KrpanoMetadata {
-                children: vec![Image(KrpanoImage {
-                    baseindex: 1,
-                    tilesize: None,
-                    level: vec![Mobile(vec![Cube(ShapeDesc {
-                        url: TemplateString(vec![str("test.jpg")]),
-                        multires: None,
-                    })])],
-                })],
-                ..Default::default()
-            }
+            images[0].image.level,
+            vec![Mobile(vec![Cube(ShapeDesc {
+                url: TemplateString(vec![str("test.jpg")]),
+                multires: None,
+            })])]
         )
     }
 
     #[test]
     fn parse_xml_with_scene() {
         // See https://github.com/lovasoa/dezoomify-rs/issues/100#issuecomment-767048175
-        let parsed: KrpanoMetadata = serde_xml_rs::from_str(r#"<krpano version="1.18">
+        let parsed = KrpanoMetadata::from_str(r#"<krpano version="1.18">
         <scene name="scene_Color">
             <image type="CYLINDER" hfov="1.00" vfov="1.291661" voffset="0.00" multires="true" tilesize="512">
                 <level tiledimagewidth="7424" tiledimageheight="9590">
@@ -572,42 +645,70 @@ mod test {
             </image>
         </scene>
         </krpano>"#).unwrap();
+        let images: Vec<ImageInfo> = parsed.into_image_iter().collect();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].name.as_ref(), "scene_Color");
+        assert_eq!(images[0].image.baseindex, 1);
+        assert_eq!(images[0].image.tilesize, Some(512));
         assert_eq!(
-            parsed,
-            KrpanoMetadata {
-                children: vec![Scene(KrpanoMetadata {
-                    children: vec![Image(KrpanoImage {
-                        baseindex: 1,
-                        tilesize: Some(512),
-                        level: vec![KrpanoLevel::Level(LevelAttributes {
-                            tiledimagewidth: 7424,
-                            tiledimageheight: 9590,
-                            shape: vec![Cylinder(ShapeDesc {
-                                url: TemplateString(vec![
-                                    str("xxx/"),
-                                    y(2),
-                                    str("/l5_"),
-                                    y(2),
-                                    str("_"),
-                                    x(2),
-                                    str(".jpg")
-                                ]),
-                                multires: None,
-                            })],
-                        })],
-                    })],
-                    name: "scene_Color".to_string()
+            images[0].image.level,
+            vec![KrpanoLevel::Level(LevelAttributes {
+                tiledimagewidth: 7424,
+                tiledimageheight: 9590,
+                shape: vec![Cylinder(ShapeDesc {
+                    url: TemplateString(vec![
+                        str("xxx/"),
+                        y(2),
+                        str("/l5_"),
+                        y(2),
+                        str("_"),
+                        x(2),
+                        str(".jpg")
+                    ]),
+                    multires: None,
                 })],
-                ..Default::default()
-            }
+            })]
         )
+    }
+
+    #[test]
+    fn parse_panotour_xml_with_interleaved_unknown_tags() {
+        let parsed = KrpanoMetadata::from_str(r#"<krpano version="1.19">
+            <security><allowdomain domain="*" /></security>
+            <events name="startbehavioursevents" />
+            <include url="%FIRSTXML%/index_skin.xml" />
+            <scene name="pano1">
+                <autorotate speed="5" />
+                <preview url="pano1/preview.jpg" type="CYLINDER" />
+                <image type="CYLINDER" multires="true" baseindex="0" tilesize="512">
+                    <level tiledimagewidth="25000" tiledimageheight="15431">
+                        <cylinder url="pano1/4/%v/%u.jpg" />
+                    </level>
+                </image>
+                <action name="ignored">noop();</action>
+            </scene>
+            <scene name="pano2">
+                <image type="CUBE" multires="true" baseindex="0" tilesize="512">
+                    <level tiledimagewidth="1024" tiledimageheight="1024">
+                        <front url="pano2/0/%v_%u.jpg" />
+                    </level>
+                </image>
+            </scene>
+            <krpano nofullspherepanoavailable="false" />
+        </krpano>"#)
+        .unwrap();
+
+        let infos: Vec<ImageInfo> = parsed.into_image_iter().collect();
+        assert_eq!(infos.len(), 2);
+        assert_eq!(infos[0].name.as_ref(), "pano1");
+        assert_eq!(infos[1].name.as_ref(), "pano2");
     }
 
     #[test]
     fn parse_factum_arte() {
         // See https://github.com/lovasoa/dezoomify-rs/issues/100#issuecomment-767048175
         let f = std::fs::File::open("testdata/krpano/krpano_scenes.xml").unwrap();
-        let parsed: KrpanoMetadata = serde_xml_rs::from_reader(f).unwrap();
+        let parsed = KrpanoMetadata::from_reader(f).unwrap();
         let infos: Vec<ImageInfo> = parsed.into_image_iter().collect();
         assert_eq!(infos.len(), 3);
         let names: Vec<String> = infos
@@ -621,10 +722,19 @@ mod test {
     fn parse_360cities() {
         // title: St George Hotel Dubai Tip Top English Disco by 360emirates
         let f = std::fs::File::open("testdata/krpano/krpano_360cities.xml").unwrap();
-        let parsed: KrpanoMetadata = serde_xml_rs::from_reader(f).unwrap();
+        let parsed = KrpanoMetadata::from_reader(f).unwrap();
         let infos: Vec<ImageInfo> = parsed.into_image_iter().collect();
         assert_eq!(infos.len(), 1);
         assert_eq!(infos[0].image.level.len(), 4);
+    }
+
+    #[test]
+    fn parse_geografiche_panotour() {
+        let f = std::fs::File::open("testdata/krpano/geografiche.xml").unwrap();
+        let parsed = KrpanoMetadata::from_reader(f).unwrap();
+        let infos: Vec<ImageInfo> = parsed.into_image_iter().collect();
+        assert_eq!(infos.len(), 13);
+        assert_eq!(infos[0].name.as_ref(), "pano23128");
     }
 
     #[test]
