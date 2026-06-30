@@ -371,12 +371,13 @@ fn looks_like_viewer_js(contents: &[u8]) -> bool {
     }
 
     // Very old krpano viewer JS starts with "function ".
-    // Look for "krpano" or "embedpano" in the first 8 KB to avoid
+    // Look for known viewer entry points or "krpano" in the first 8 KB to avoid
     // false positives on random JS files that start with "function ".
     if contents.starts_with(b"function ") {
         let window = &contents[..contents.len().min(8192)];
         return window.windows(6).any(|w| w == b"krpano")
-            || window.windows(9).any(|w| w == b"embedpano");
+            || window.windows(9).any(|w| w == b"embedpano")
+            || window.windows(16).any(|w| w == b"createPanoViewer");
     }
 
     false
@@ -1230,6 +1231,29 @@ fn viewer_js_is_detected_before_html_embed_markers() {
         dezoomer.state,
         ResolveState::NeedXml { ref viewer_js, ref remaining_js_uris, .. }
             if viewer_js == b"function embedpano(opts) { /* krpano viewer */ }"
+                && remaining_js_uris.is_empty()
+    ));
+}
+
+#[test]
+fn old_create_pano_viewer_js_is_detected_as_viewer_js() {
+    let mut dezoomer = KrpanoDezoomer::default();
+    let viewer_js = b"function createPanoViewer(opts) { return buildViewer(opts); }";
+    let data = DezoomerInput {
+        uri: "https://example.com/viewer.js".to_string(),
+        contents: PageContents::Success(viewer_js.to_vec()),
+    };
+
+    let err = dezoomer.dezoomer_result(&data).unwrap_err();
+
+    assert!(matches!(
+        err,
+        DezoomerError::NeedsData { ref uri } if uri == "https://example.com/tour.xml"
+    ));
+    assert!(matches!(
+        dezoomer.state,
+        ResolveState::NeedXml { ref viewer_js, ref remaining_js_uris, .. }
+            if viewer_js == b"function createPanoViewer(opts) { return buildViewer(opts); }"
                 && remaining_js_uris.is_empty()
     ));
 }
