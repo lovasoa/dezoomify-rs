@@ -1,6 +1,6 @@
 [package]
 name = "dezoomify-rs"
-version = "2.16.0"
+version = "2.17.0"
 authors = ["lovasoa"]
 edition = "2024"
 license-file = "LICENSE"
@@ -21,7 +21,7 @@ clap = { version = "4.4.6", features = ["derive"] }
 evalexpr = "13"
 regex = "1"
 lazy_static = "1.4"
-itertools = "0.14"
+itertools = "0.15"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 serde-xml-rs = "0.8"
