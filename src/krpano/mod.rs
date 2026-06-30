@@ -240,6 +240,22 @@ impl KrpanoDezoomer {
         // straight to encrypted/plain XML handling.  XML files may contain
         // <script> or embedpano() in comments or data blocks, which would
         // otherwise trigger false HTML detection.
+        if !looks_like_krpano_xml(contents) && looks_like_viewer_js(contents) {
+            let xml_uri = sibling_uri(uri, "tour.xml");
+            debug!(
+                "krpano: content looks like viewer JS ({} bytes), requesting XML: {xml_uri}",
+                contents.len()
+            );
+            // Store the viewer JS so it can be used to decrypt the XML if it
+            // turns out to be encrypted.
+            self.state = ResolveState::NeedXml {
+                xml_uri: xml_uri.clone(),
+                viewer_js: contents.to_vec(),
+                remaining_js_uris: Vec::new(),
+            };
+            return Err(DezoomerError::NeedsData { uri: xml_uri });
+        }
+
         if !looks_like_krpano_xml(contents) && looks_like_krpano_html(contents) {
             debug!("krpano: content looks like HTML ({} bytes)", contents.len());
             let html = String::from_utf8_lossy(contents);
@@ -256,22 +272,6 @@ impl KrpanoDezoomer {
                 xml_uri: xml_uri.clone(),
                 viewer_js: Vec::new(),
                 remaining_js_uris: js_uris,
-            };
-            return Err(DezoomerError::NeedsData { uri: xml_uri });
-        }
-
-        if !looks_like_krpano_xml(contents) && looks_like_viewer_js(contents) {
-            let xml_uri = sibling_uri(uri, "tour.xml");
-            debug!(
-                "krpano: content looks like viewer JS ({} bytes), requesting XML: {xml_uri}",
-                contents.len()
-            );
-            // Store the viewer JS so it can be used to decrypt the XML if it
-            // turns out to be encrypted.
-            self.state = ResolveState::NeedXml {
-                xml_uri: xml_uri.clone(),
-                viewer_js: contents.to_vec(),
-                remaining_js_uris: Vec::new(),
             };
             return Err(DezoomerError::NeedsData { uri: xml_uri });
         }
@@ -1209,6 +1209,29 @@ fn looks_like_krpano_xml_detects_xml_roots() {
     assert!(!looks_like_krpano_xml(b"<html><body></body></html>"));
     // Viewer JS is not XML.
     assert!(!looks_like_krpano_xml(b"/* krpano */ function() {}"));
+}
+
+#[test]
+fn viewer_js_is_detected_before_html_embed_markers() {
+    let mut dezoomer = KrpanoDezoomer::default();
+    let viewer_js = b"function embedpano(opts) { /* krpano viewer */ }";
+    let data = DezoomerInput {
+        uri: "https://example.com/krpano.js".to_string(),
+        contents: PageContents::Success(viewer_js.to_vec()),
+    };
+
+    let err = dezoomer.dezoomer_result(&data).unwrap_err();
+
+    assert!(matches!(
+        err,
+        DezoomerError::NeedsData { ref uri } if uri == "https://example.com/tour.xml"
+    ));
+    assert!(matches!(
+        dezoomer.state,
+        ResolveState::NeedXml { ref viewer_js, ref remaining_js_uris, .. }
+            if viewer_js == b"function embedpano(opts) { /* krpano viewer */ }"
+                && remaining_js_uris.is_empty()
+    ));
 }
 
 #[test]

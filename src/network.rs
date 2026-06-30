@@ -206,8 +206,11 @@ pub fn resolve_relative(base: &str, path: &str) -> String {
     //
     // Absolute paths (starting with `/` or a Windows drive prefix) replace the
     // base entirely, matching `PathBuf::push` semantics.
-    if path.starts_with('/') || path.starts_with('\\')
-        || (path.len() >= 2 && path.as_bytes()[1] == b':' && path.as_bytes()[0].is_ascii_alphabetic())
+    if path.starts_with('/')
+        || path.starts_with('\\')
+        || (path.len() >= 2
+            && path.as_bytes()[1] == b':'
+            && path.as_bytes()[0].is_ascii_alphabetic())
     {
         return path.to_string();
     }
@@ -241,7 +244,10 @@ fn test_resolve_relative() {
     assert_eq!(resolve_relative("http://a.b/x", "c/d"), "http://a.b/c/d");
     assert_eq!(resolve_relative("http://a.b/x/", "c/d"), "http://a.b/x/c/d");
     // Absolute local paths replace the base entirely.
-    assert_eq!(resolve_relative("/metadata/tour.xml", "/tiles/0_0.jpg"), "/tiles/0_0.jpg");
+    assert_eq!(
+        resolve_relative("/metadata/tour.xml", "/tiles/0_0.jpg"),
+        "/tiles/0_0.jpg"
+    );
     // Absolute Windows paths replace the base entirely.
     assert_eq!(
         resolve_relative("C:\\metadata\\tour.xml", "C:\\tiles\\0_0.jpg"),
