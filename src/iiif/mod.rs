@@ -372,7 +372,6 @@ fn is_legacy_presentation_manifest(value: &serde_json::Value) -> bool {
 }
 
 fn manifest_type(value: &serde_json::Value) -> Option<&str> {
-    
     value
         .get("type")
         .or_else(|| value.get("@type"))

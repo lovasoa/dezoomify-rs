@@ -199,21 +199,38 @@ pub fn resolve_relative(base: &str, path: &str) -> String {
     {
         return r.to_string();
     }
-    let mut res = PathBuf::from(base.rsplitn(2, '/').last().unwrap_or_default());
-    res.push(path);
-    res.to_string_lossy().to_string()
+    // Local-path fallback: drop the last component of `base` and append `path`.
+    // Recognize both `/` and `\` so that Windows local paths resolve correctly
+    // (a bare `C:\foo\bar\tour.js` has no `/`, so the old `/`-only split treated
+    // the entire string as the directory and appended instead of replacing).
+    //
+    // Absolute paths (starting with `/` or a Windows drive prefix) replace the
+    // base entirely, matching `PathBuf::push` semantics.
+    if path.starts_with('/')
+        || path.starts_with('\\')
+        || (path.len() >= 2
+            && path.as_bytes()[1] == b':'
+            && path.as_bytes()[0].is_ascii_alphabetic())
+    {
+        return path.to_string();
+    }
+    let dir = base.rfind(['/', '\\']).map_or("", |idx| &base[..idx]);
+    let dir = dir.trim_end_matches(['/', '\\']);
+    if dir.is_empty() {
+        path.to_string()
+    } else {
+        format!("{}/{}", dir, path)
+    }
 }
 
 #[test]
 fn test_resolve_relative() {
-    use std::path::MAIN_SEPARATOR;
+    assert_eq!(resolve_relative("/a/b", "c/d"), "/a/c/d");
+    // Windows local path: the last component must be replaced, not appended.
+    assert_eq!(resolve_relative("C:\\\\foo\\\\bar", "c/d"), "C:\\\\foo/c/d");
     assert_eq!(
-        resolve_relative("/a/b", "c/d"),
-        format!("/a{}c/d", MAIN_SEPARATOR)
-    );
-    assert_eq!(
-        resolve_relative("C:\\\\X", "c/d"),
-        format!("C:\\\\X{}c/d", MAIN_SEPARATOR)
+        resolve_relative("C:\\\\foo\\\\bar\\\\tour.js", "tour.xml"),
+        "C:\\\\foo\\\\bar/tour.xml"
     );
     assert_eq!(
         resolve_relative("/a/b", "http://example.com/x"),
@@ -226,4 +243,14 @@ fn test_resolve_relative() {
     assert_eq!(resolve_relative("http://a.b", "c/d"), "http://a.b/c/d");
     assert_eq!(resolve_relative("http://a.b/x", "c/d"), "http://a.b/c/d");
     assert_eq!(resolve_relative("http://a.b/x/", "c/d"), "http://a.b/x/c/d");
+    // Absolute local paths replace the base entirely.
+    assert_eq!(
+        resolve_relative("/metadata/tour.xml", "/tiles/0_0.jpg"),
+        "/tiles/0_0.jpg"
+    );
+    // Absolute Windows paths replace the base entirely.
+    assert_eq!(
+        resolve_relative("C:\\metadata\\tour.xml", "C:\\tiles\\0_0.jpg"),
+        "C:\\tiles\\0_0.jpg"
+    );
 }
