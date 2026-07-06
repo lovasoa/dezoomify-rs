@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use image::{DynamicImage, GenericImageView, Rgb, Rgba, SubImage};
 use log::debug;
 
-use crate::tile::Tile;
+use crate::tile::{EncodedTile, Tile};
 use crate::{Vec2d, ZoomError, max_size_in_rect};
 
 pub mod canvas;
@@ -12,10 +12,21 @@ pub mod pixel_streamer;
 pub mod png_encoder;
 mod retiler;
 pub mod tile_buffer;
+pub mod zif_tiff_encoder;
 
 pub trait Encoder: Send + 'static {
     /// Add a tile to the image
     fn add_tile(&mut self, tile: Tile) -> std::io::Result<()>;
+    /// Add an encoded tile to the image without decoding it.
+    fn add_encoded_tile(&mut self, _tile: EncodedTile) -> std::io::Result<()> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            format!(
+                "{} does not support encoded tile passthrough",
+                std::any::type_name::<Self>()
+            ),
+        ))
+    }
     /// To be called when no more tile will be added
     fn finalize(&mut self) -> std::io::Result<()>;
     /// Size of the image being encoded
@@ -43,6 +54,12 @@ fn encoder_for_name(
             destination,
             size,
             quality,
+        )?))
+    } else if extension == "tiff" || extension == "tif" {
+        debug!("Using the zif-tiff passthrough encoder");
+        Ok(Box::new(zif_tiff_encoder::ZifTiffEncoder::new(
+            destination,
+            size,
         )?))
     } else if extension == "jpeg" || extension == "jpg" {
         debug!("Using the jpeg encoder with a quality of {quality}");

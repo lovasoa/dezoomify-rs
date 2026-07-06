@@ -774,6 +774,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "url",
+ "zif-tiff",
 ]
 
 [[package]]
@@ -3787,6 +3788,12 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "zif-tiff"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5492412367307b544ffff1321ef7261f7f707e726e6b47e72ff3c1069e3b7918"
 
 [[package]]
 name = "zmij"
