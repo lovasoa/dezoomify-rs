@@ -6,7 +6,7 @@ use crate::errors::{self, ZoomError}; // `self` imports the errors module itself
 use crate::max_size_in_rect;
 use crate::network::{TileDownloader, client as network_client};
 use crate::throttler::Throttler;
-use crate::tile::Tile;
+use crate::tile::{EncodedTile, Tile};
 use crate::vec2d::Vec2d; // This is a public function from lib.rs
 
 use futures::stream::StreamExt;
@@ -110,6 +110,17 @@ impl ProgressManager {
         }
     }
 
+    pub(crate) fn update_for_encoded_tile(&self, tile: &Option<EncodedTile>, success: bool) {
+        if success {
+            if let Some(tile) = tile {
+                self.progress
+                    .set_message(format!("Loaded encoded tile at {}", tile.position));
+            }
+        } else {
+            self.progress.set_message("Failed to load encoded tile");
+        }
+    }
+
     pub(crate) fn finish(&self) {
         self.progress.finish_with_message("Finished tile download");
     }
@@ -161,12 +172,28 @@ impl<'a> TileDownloadCoordinator<'a> {
 
         prepare_canvas_size(canvas, zoom_level_iter).await?;
 
+        if canvas.prefers_encoded_tiles() {
+            self.download_encoded_batch(tile_refs, canvas, state, progress)
+                .await
+        } else {
+            self.download_decoded_batch(tile_refs, canvas, state, progress, zoom_level_iter)
+                .await
+        }
+    }
+    async fn download_decoded_batch(
+        &mut self,
+        tile_refs: Vec<TileReference>,
+        canvas: &mut TileBuffer,
+        state: &mut DownloadState,
+        progress: &ProgressManager,
+        zoom_level_iter: &ZoomLevelIter<'_>,
+    ) -> Result<(), ZoomError> {
         let mut stream = futures::stream::iter(tile_refs)
             .map(|tile_ref: TileReference| self.downloader.download_tile(tile_ref))
             .buffer_unordered(self.args.parallelism);
 
         while let Some(tile_result) = stream.next().await {
-            debug!("Received tile result: {:?}", tile_result); // Tile and TileDownloadError need Debug
+            debug!("Received tile result: {:?}", tile_result);
             progress.increment();
 
             let (tile, success) = process_tile_result(
@@ -186,6 +213,43 @@ impl<'a> TileDownloadCoordinator<'a> {
 
             if let Some(tile) = tile {
                 canvas.add_tile(tile).await;
+            }
+            self.throttler.wait().await;
+        }
+        Ok(())
+    }
+
+    async fn download_encoded_batch(
+        &mut self,
+        tile_refs: Vec<TileReference>,
+        canvas: &mut TileBuffer,
+        state: &mut DownloadState,
+        progress: &ProgressManager,
+    ) -> Result<(), ZoomError> {
+        let mut stream = futures::stream::iter(tile_refs)
+            .map(|tile_ref: TileReference| self.downloader.download_encoded_tile(tile_ref))
+            .buffer_unordered(self.args.parallelism);
+
+        while let Some(tile_result) = stream.next().await {
+            debug!("Received encoded tile result: {:?}", tile_result);
+            progress.increment();
+
+            let (tile, success) = match tile_result {
+                Ok(tile) => (Some(tile), true),
+                Err(_) => (None, false),
+            };
+
+            progress.update_for_encoded_tile(&tile, success);
+
+            if success {
+                state.record_success();
+                if let Some(ref tile) = tile {
+                    state.set_tile_size(tile.size);
+                }
+            }
+
+            if let Some(tile) = tile {
+                canvas.add_encoded_tile(tile).await;
             }
             self.throttler.wait().await;
         }

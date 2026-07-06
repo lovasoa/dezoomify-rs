@@ -1,8 +1,18 @@
-use image::{DynamicImage, GenericImageView, ImageDecoder, ImageReader};
+use image::{DynamicImage, GenericImageView, ImageDecoder, ImageFormat, ImageReader};
 use log::{trace, warn};
 use std::io::Cursor;
+use std::sync::Arc;
 
 use crate::{Vec2d, display_bytes};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EncodedTile {
+    pub position: Vec2d,
+    pub bytes: Arc<Vec<u8>>,
+    pub format: ImageFormat,
+    pub size: Vec2d,
+    pub color_type: image::ColorType,
+}
 
 #[derive(Clone)]
 pub struct Tile {
@@ -99,12 +109,38 @@ pub struct ImageWithMetadata {
     pub image: DynamicImage,
     pub icc_profile: Option<Vec<u8>>,
     pub exif_metadata: Option<Vec<u8>>,
+    pub format: ImageFormat,
 }
 
-type MetadataResult = Result<ImageWithMetadata, image::ImageError>;
+type MetadataResult<T> = Result<T, image::ImageError>;
 
-pub fn load_image_with_metadata(bytes: &[u8]) -> MetadataResult {
+pub fn load_encoded_tile(bytes: Arc<Vec<u8>>) -> MetadataResult<EncodedTile> {
+    let reader = ImageReader::new(Cursor::new(bytes.as_slice())).with_guessed_format()?;
+    let format = reader.format().ok_or_else(unknown_format_error)?;
+    let (size, color_type) = {
+        let decoder = reader.into_decoder()?;
+        (decoder.dimensions().into(), decoder.color_type())
+    };
+
+    Ok(EncodedTile {
+        position: Vec2d { x: 0, y: 0 },
+        bytes,
+        format,
+        size,
+        color_type,
+    })
+}
+
+fn unknown_format_error() -> image::ImageError {
+    image::ImageError::Unsupported(image::error::UnsupportedError::from_format_and_kind(
+        image::error::ImageFormatHint::Unknown,
+        image::error::UnsupportedErrorKind::Format(image::error::ImageFormatHint::Unknown),
+    ))
+}
+
+pub fn load_image_with_metadata(bytes: &[u8]) -> MetadataResult<ImageWithMetadata> {
     let reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
+    let format = reader.format().ok_or_else(unknown_format_error)?;
 
     // Try to get a decoder from the reader
     let mut decoder = reader.into_decoder()?;
@@ -133,6 +169,7 @@ pub fn load_image_with_metadata(bytes: &[u8]) -> MetadataResult {
         image,
         icc_profile,
         exif_metadata,
+        format,
     })
 }
 

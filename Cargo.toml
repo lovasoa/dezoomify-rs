@@ -43,6 +43,7 @@ url = "2"
 fixedbitset = "0.5"
 reqwest = { version = "0.13", features = ["gzip", "zstd"] }
 krpano-decrypt = "0.2"
+zif-tiff = "0.3.0"
 
 [dev-dependencies]
 criterion = "0.8"
