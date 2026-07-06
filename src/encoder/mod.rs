@@ -14,7 +14,18 @@ mod retiler;
 pub mod tile_buffer;
 pub mod zif_tiff_encoder;
 
+#[derive(Clone, Copy, Debug)]
+pub struct SourceLevel {
+    pub index: usize,
+    pub size: Vec2d,
+    pub scale_factor: u32,
+}
+
 pub trait Encoder: Send + 'static {
+    /// Start writing a source pyramid level.
+    fn begin_level(&mut self, _level: SourceLevel) -> std::io::Result<()> {
+        Ok(())
+    }
     /// Add a tile to the image
     fn add_tile(&mut self, tile: Tile) -> std::io::Result<()>;
     /// Add an encoded tile to the image without decoding it.

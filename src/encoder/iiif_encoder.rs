@@ -14,11 +14,14 @@ use crate::iiif::tile_info;
 use crate::tile::Tile;
 use crate::{Vec2d, ZoomError};
 
-use super::Encoder;
+use super::{Encoder, SourceLevel};
 
 pub struct IiifEncoder {
     retiler: Retiler<IIIFTileSaver>,
     root_path: PathBuf,
+    direct_tile_saver: Arc<IIIFTileSaver>,
+    direct_levels: Vec<SourceLevel>,
+    current_level: Option<SourceLevel>,
 }
 
 impl IiifEncoder {
@@ -26,28 +29,51 @@ impl IiifEncoder {
         let _ = std::fs::remove_file(&destination);
         debug!("Creating IIIF  directory at {:?}", &destination);
         std::fs::create_dir(&destination)?;
-        let tile_saver = IIIFTileSaver {
+        let tile_saver = Arc::new(IIIFTileSaver {
             root_path: destination.clone(),
             quality,
-        };
+        });
         let tile_size = Vec2d::square(512);
         Ok(IiifEncoder {
-            retiler: Retiler::new(size, tile_size, Arc::new(tile_saver), 1),
+            retiler: Retiler::new(size, tile_size, Arc::clone(&tile_saver), 1),
             root_path: destination,
+            direct_tile_saver: tile_saver,
+            direct_levels: Vec::new(),
+            current_level: None,
         })
     }
 }
 
 impl Encoder for IiifEncoder {
+    fn begin_level(&mut self, level: SourceLevel) -> io::Result<()> {
+        self.current_level = Some(level);
+        self.direct_levels.push(level);
+        Ok(())
+    }
+
     fn add_tile(&mut self, tile: Tile) -> io::Result<()> {
-        self.retiler.add_tile(&tile)
+        if let Some(level) = self.current_level {
+            self.direct_tile_saver
+                .save_tile_at_scale(level.scale_factor, tile)
+        } else {
+            self.retiler.add_tile(&tile)
+        }
     }
 
     fn finalize(&mut self) -> io::Result<()> {
-        self.retiler.finalize();
-        let scale_factors = (0..self.retiler.level_count())
-            .map(|n| 2u32.pow(n))
-            .collect::<Vec<_>>();
+        if self.direct_levels.is_empty() {
+            self.retiler.finalize();
+        }
+        let scale_factors = if self.direct_levels.is_empty() {
+            (0..self.retiler.level_count())
+                .map(|n| 2u32.pow(n))
+                .collect::<Vec<_>>()
+        } else {
+            self.direct_levels
+                .iter()
+                .map(|level| level.scale_factor)
+                .collect::<Vec<_>>()
+        };
         let tile_size = self.retiler.tile_size;
         let image_info = tile_info::ImageInfo {
             context: Some("http://iiif.io/api/image/3/context.json".to_string()),
@@ -103,12 +129,14 @@ struct IIIFTileSaver {
     quality: u8,
 }
 
-impl TileSaver for IIIFTileSaver {
-    fn save_tile(&self, size: Vec2d, tile: Tile) -> io::Result<()> {
+impl IIIFTileSaver {
+    fn save_tile_at_scale(&self, scale_factor: u32, tile: Tile) -> io::Result<()> {
         let tile_size = tile.size();
+        let full_position = tile.position * scale_factor;
+        let full_size = tile.size() * scale_factor;
         let region = format!(
             "{},{},{},{}",
-            tile.position.x, tile.position.y, size.x, size.y
+            full_position.x, full_position.y, full_size.x, full_size.y
         );
         let tile_size_str = format!("{},{}", tile_size.x, tile_size.y);
         let rotation = "0";
@@ -125,5 +153,11 @@ impl TileSaver for IIIFTileSaver {
         tile.image
             .write_with_encoder(jpeg_writer)
             .map_err(image_error_to_io_error)
+    }
+}
+
+impl TileSaver for IIIFTileSaver {
+    fn save_tile(&self, _size: Vec2d, tile: Tile) -> io::Result<()> {
+        self.save_tile_at_scale(1, tile)
     }
 }

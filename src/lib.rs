@@ -21,6 +21,7 @@ use tile::Tile;
 pub use vec2d::Vec2d;
 
 use crate::dezoomer::{DezoomerResult, PageContents, ZoomableImage};
+use crate::encoder::SourceLevel;
 use crate::encoder::tile_buffer::TileBuffer;
 
 use crate::output_file::reserve_output_file;
@@ -225,31 +226,6 @@ fn choose_image(
     }
 }
 
-/// Finds the appropriate zoomlevel for a given size if one is specified,
-async fn find_zoomlevel(args: &Arguments) -> Result<ZoomLevel, ZoomError> {
-    let uri = args.choose_input_uri()?;
-    let http_client = client(args.headers(), args, Some(&uri))?;
-    debug!("Trying to locate a zoomable image...");
-
-    // Use the new unified processing pipeline
-    let images = get_images_from_uri(args, &http_client, &uri).await?;
-    debug!("Found {} zoomable images", images.len());
-
-    // Select an image from the available options (before resolving)
-    let selected_image = choose_image(images, args)?;
-    debug!("Selected image: {:?}", selected_image.title());
-
-    // NOW resolve the selected image to get its zoom levels
-    let zoom_levels = selected_image
-        .into_zoom_levels(&http_client)
-        .await
-        .map_err(|e| ZoomError::Dezoomer { source: e })?;
-    debug!("Extracted {} zoom levels", zoom_levels.len());
-
-    // Select a zoom level from the available options
-    choose_level(zoom_levels, args)
-}
-
 /// Prepares the output file path for saving
 fn prepare_output_path(
     outfile_arg: &Option<PathBuf>,
@@ -268,19 +244,71 @@ async fn create_tile_buffer(save_as: PathBuf, compression: u8) -> Result<TileBuf
     TileBuffer::new(save_as, compression).await
 }
 
+fn output_prefers_source_pyramid(path: &Path, args: &Arguments) -> bool {
+    if args.has_level_specifying_args() || args.largest {
+        return false;
+    }
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("iiif" | "tif" | "tiff")
+    )
+}
+
+async fn dezoomify_source_pyramid(
+    args: &Arguments,
+    levels: Vec<ZoomLevel>,
+    tile_buffer: TileBuffer,
+) -> Result<(), ZoomError> {
+    let mut canvas = tile_buffer;
+    let full_size = levels
+        .last()
+        .and_then(|level| level.size_hint())
+        .ok_or(ZoomError::NoLevels)?;
+
+    for (index, zoom_level) in levels.into_iter().rev().enumerate() {
+        let level_size = zoom_level.size_hint().unwrap_or(full_size);
+        let scale_factor = full_size.x.div_ceil(level_size.x).max(1);
+        canvas
+            .begin_level(SourceLevel {
+                index,
+                size: full_size,
+                scale_factor,
+            })
+            .await?;
+        let state = dezoomify_level_into_buffer(args, zoom_level, &mut canvas).await?;
+        validate_download_success(&state)?;
+    }
+
+    finalize_canvas(&mut canvas).await
+}
+
 pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
-    let zoom_level = find_zoomlevel(args).await?;
+    let uri = args.choose_input_uri()?;
+    let http_client = client(args.headers(), args, Some(&uri))?;
+    debug!("Trying to locate a zoomable image...");
+    let images = get_images_from_uri(args, &http_client, &uri).await?;
+    debug!("Found {} zoomable images", images.len());
+    let selected_image = choose_image(images, args)?;
+    let title = selected_image.title().map(|title| title.into_owned());
+    let zoom_levels = selected_image
+        .into_zoom_levels(&http_client)
+        .await
+        .map_err(|e| ZoomError::Dezoomer { source: e })?;
+
     let base_dir = current_dir()?;
     let output_file = args.output_file();
-    let save_as = prepare_output_path(
-        &output_file,
-        &zoom_level.title(),
-        &base_dir,
-        zoom_level.size_hint(),
-    )?;
+    let largest_size = zoom_levels.last().and_then(|level| level.size_hint());
+    let save_as = prepare_output_path(&output_file, &title, &base_dir, largest_size)?;
     let tile_buffer = create_tile_buffer(save_as.clone(), args.compression).await?;
-    info!("Dezooming {}", zoom_level.name());
-    dezoomify_level(args, zoom_level, tile_buffer).await?;
+
+    if output_prefers_source_pyramid(&save_as, args) && zoom_levels.len() > 1 {
+        info!("Dezooming source pyramid with {} levels", zoom_levels.len());
+        dezoomify_source_pyramid(args, zoom_levels, tile_buffer).await?;
+    } else {
+        let zoom_level = choose_level(zoom_levels, args)?;
+        info!("Dezooming {}", zoom_level.name());
+        dezoomify_level(args, zoom_level, tile_buffer).await?;
+    }
     Ok(save_as)
 }
 
@@ -587,11 +615,23 @@ fn determine_final_result(
 
 pub async fn dezoomify_level(
     args: &Arguments,
-    mut zoom_level: ZoomLevel,
+    zoom_level: ZoomLevel,
     tile_buffer: TileBuffer,
 ) -> Result<(), ZoomError> {
     debug!("Starting to dezoomify {zoom_level:?}");
     let mut canvas = tile_buffer;
+    let state = dezoomify_level_into_buffer(args, zoom_level, &mut canvas).await?;
+    validate_download_success(&state)?;
+    finalize_canvas(&mut canvas).await?;
+    let destination = canvas.destination().to_string_lossy().to_string();
+    determine_final_result(&state, destination)
+}
+
+async fn dezoomify_level_into_buffer(
+    args: &Arguments,
+    mut zoom_level: ZoomLevel,
+    canvas: &mut TileBuffer,
+) -> Result<download_state::DownloadState, ZoomError> {
     let mut coordinator = download_state::TileDownloadCoordinator::new(&zoom_level, args)?;
     let mut state = download_state::DownloadState::new();
     let progress = download_state::ProgressManager::new();
@@ -602,26 +642,22 @@ pub async fn dezoomify_level(
 
     while let Some(tile_refs) = zoom_level_iter.next_tile_references() {
         coordinator
-            .download_batch(
-                tile_refs,
-                &mut canvas,
-                &mut state,
-                &progress,
-                &zoom_level_iter,
-            )
+            .download_batch(tile_refs, canvas, &mut state, &progress, &zoom_level_iter)
             .await?;
 
         zoom_level_iter.set_fetch_result(state.create_fetch_result());
     }
 
-    validate_download_success(&state)?;
+    progress.finish();
+    Ok(state)
+}
 
+async fn finalize_canvas(canvas: &mut TileBuffer) -> Result<(), ZoomError> {
+    let progress = download_state::ProgressManager::new();
     progress.set_finalizing();
     canvas.finalize().await?;
     progress.finish();
-
-    let destination = canvas.destination().to_string_lossy().to_string();
-    determine_final_result(&state, destination)
+    Ok(())
 }
 
 /// Returns the maximal size a tile can have in order to fit in a canvas of the given size
