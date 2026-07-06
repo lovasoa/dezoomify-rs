@@ -6,7 +6,7 @@ Used to receive tiles asynchronously and provide them to the encoder
 use log::debug;
 use tokio::sync::mpsc;
 
-use crate::encoder::{Encoder, encoder_for_name};
+use crate::encoder::{Encoder, SourceLevel, encoder_for_name};
 use crate::tile::{EncodedTile, Tile};
 use crate::{Vec2d, ZoomError};
 use log::warn;
@@ -70,6 +70,25 @@ impl TileBuffer {
     pub fn prefers_encoded_tiles(&self) -> bool {
         let extension = self.destination().extension().unwrap_or_default();
         extension == "tiff" || extension == "tif"
+    }
+
+    /// Start writing a source pyramid level.
+    pub async fn begin_level(&mut self, level: SourceLevel) -> Result<(), ZoomError> {
+        match self {
+            TileBuffer::Buffering { .. } => {
+                self.set_size(level.size).await?;
+                if let TileBuffer::Writing { tile_sender, .. } = self {
+                    tile_sender.send(TileBufferMsg::BeginLevel(level)).await?;
+                    Ok(())
+                } else {
+                    unreachable!("set_size transitions buffering to writing")
+                }
+            }
+            TileBuffer::Writing { tile_sender, .. } => {
+                tile_sender.send(TileBufferMsg::BeginLevel(level)).await?;
+                Ok(())
+            }
+        }
     }
 
     /// Add a tile to the image
@@ -145,6 +164,7 @@ impl TileBuffer {
 
 #[derive(Debug)]
 pub enum TileBufferMsg {
+    BeginLevel(SourceLevel),
     AddTile(Tile),
     AddEncodedTile(EncodedTile),
     Close,
@@ -156,6 +176,14 @@ async fn buffer_tiles(mut encoder: Box<dyn Encoder>, destination: PathBuf) -> Ti
     tokio::spawn(async move {
         while let Some(msg) = tile_receiver.recv().await {
             match msg {
+                TileBufferMsg::BeginLevel(level) => {
+                    debug!("Starting output source level: {level:?}");
+                    let result = tokio::task::block_in_place(|| encoder.begin_level(level));
+                    if let Err(err) = result {
+                        warn!("Error when starting output source level: {err}");
+                        error_sender.send(err).await.expect("could not send error");
+                    }
+                }
                 TileBufferMsg::AddTile(tile) => {
                     debug!("Sending tile to encoder: {tile:?}");
                     let result = tokio::task::block_in_place(|| encoder.add_tile(tile));

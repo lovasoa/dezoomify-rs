@@ -7,7 +7,7 @@ use log::debug;
 use zif_tiff::{Codec, ColorModel};
 
 use crate::Vec2d;
-use crate::encoder::Encoder;
+use crate::encoder::{Encoder, SourceLevel};
 use crate::tile::{EncodedTile, Tile};
 
 pub struct ZifTiffEncoder {
@@ -17,6 +17,7 @@ pub struct ZifTiffEncoder {
     codec: Option<Codec>,
     occupied_tiles: HashSet<(u64, u64)>,
     size: Vec2d,
+    current_level: usize,
 }
 
 impl ZifTiffEncoder {
@@ -39,6 +40,7 @@ impl ZifTiffEncoder {
             codec: None,
             occupied_tiles: HashSet::new(),
             size,
+            current_level: 0,
         })
     }
 
@@ -61,6 +63,7 @@ impl ZifTiffEncoder {
             .color_model(color_model)
             .channels(channels)
             .map_err(to_io_error)?
+            .pyramid()
             .build()
             .map_err(to_io_error)?;
         self.tile_size = Some(tile_size);
@@ -70,6 +73,11 @@ impl ZifTiffEncoder {
 }
 
 impl Encoder for ZifTiffEncoder {
+    fn begin_level(&mut self, level: SourceLevel) -> io::Result<()> {
+        self.current_level = level.index;
+        Ok(())
+    }
+
     fn add_tile(&mut self, _tile: Tile) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -107,7 +115,7 @@ impl Encoder for ZifTiffEncoder {
         self.output
             .apply(
                 self.writer
-                    .put_tile((col, row), tile.bytes.as_slice())
+                    .put_tile_at_level(self.current_level, (col, row), tile.bytes.as_slice())
                     .map_err(to_io_error)?,
             )
             .map_err(to_io_error)
