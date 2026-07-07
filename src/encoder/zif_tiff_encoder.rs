@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use image::{ColorType, ImageFormat, Rgba};
 use log::debug;
-use zif_tiff::{Codec, ColorModel};
+use zif_tiff::{Codec, ColorModel, LevelConfig};
 
 use crate::Vec2d;
 use crate::encoder::canvas::Canvas;
@@ -23,7 +23,6 @@ pub struct ZifTiffEncoder {
     declared_tile_size: Option<Vec2d>,
     fallback: Option<Canvas<Rgba<u8>>>,
     force_decoded_fallback: bool,
-    wants_pyramid: bool,
     current_level: usize,
 }
 
@@ -52,7 +51,6 @@ impl ZifTiffEncoder {
             declared_tile_size: None,
             fallback: None,
             force_decoded_fallback: false,
-            wants_pyramid: false,
             current_level: 0,
         })
     }
@@ -71,33 +69,51 @@ impl ZifTiffEncoder {
         debug!(
             "Using zif-tiff passthrough encoder: tile size {tile_size}, codec {codec:?}, color {color_model:?}/{channels} channels"
         );
-        let mut builder = zif_tiff::Writer::new()
+        self.writer = zif_tiff::Writer::new()
             .dimensions((u64::from(self.size.x), u64::from(self.size.y)))
             .tile_size((tile_size.x, tile_size.y))
             .map_err(to_io_error)?
             .codec(codec)
             .color_model(color_model)
             .channels(channels)
+            .map_err(to_io_error)?
+            .build()
             .map_err(to_io_error)?;
-        if self.wants_pyramid {
-            builder = builder.pyramid();
-        }
-        self.writer = builder.build().map_err(to_io_error)?;
         self.tile_size = Some(tile_size);
         self.codec = Some(codec);
         self.color = Some((color_model, channels));
         Ok(())
     }
+
+    fn add_sub_level(&mut self, index: usize, level: &SourceLevel) -> io::Result<()> {
+        let sf = u64::from(level.scale_factor);
+        let dims = (
+            u64::from(self.size.x).div_ceil(sf),
+            u64::from(self.size.y).div_ceil(sf),
+        );
+        let ts = self
+            .declared_tile_size
+            .or(self.tile_size)
+            .expect("tile size is set before sub-levels arrive");
+        debug!("Adding level {index} with dimensions {dims:?}, tile size {ts:?}");
+        let batch = self
+            .writer
+            .add_level(index, LevelConfig::new(dims, (ts.x, ts.y)).map_err(to_io_error)?)
+            .map_err(to_io_error)?;
+        self.output.apply(batch).map_err(to_io_error)
+    }
 }
 
 impl Encoder for ZifTiffEncoder {
     fn begin_level(&mut self, level: SourceLevel) -> io::Result<()> {
-        self.wants_pyramid = true;
         self.current_level = level.index;
         if let Some(tile_size) = level.tile_size {
             self.declared_tile_size = Some(tile_size);
         }
         self.force_decoded_fallback |= level.has_overlapping_tiles;
+        if self.tile_size.is_some() {
+            self.add_sub_level(level.index, &level)?;
+        }
         Ok(())
     }
 
