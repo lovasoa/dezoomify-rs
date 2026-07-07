@@ -4,9 +4,9 @@ use crate::dezoomer::{TileFetchResult, TileReference, ZoomLevel, ZoomLevelIter};
 use crate::encoder::tile_buffer::TileBuffer;
 use crate::errors::{self, ZoomError}; // `self` imports the errors module itself
 use crate::max_size_in_rect;
-use crate::network::{TileDownloader, client as network_client};
+use crate::network::{DownloadedTile, TileDownloader, client as network_client};
 use crate::throttler::Throttler;
-use crate::tile::{EncodedTile, Tile};
+use crate::tile::{EncodedTile, Tile, load_encoded_tile, load_tile_with_metadata};
 use crate::vec2d::Vec2d; // This is a public function from lib.rs
 
 use futures::stream::StreamExt;
@@ -196,11 +196,12 @@ impl<'a> TileDownloadCoordinator<'a> {
             debug!("Received tile result: {:?}", tile_result);
             progress.increment();
 
-            let (tile, success) = process_tile_result(
+            let (tile, success) = process_downloaded_tile_result(
                 tile_result,
                 &mut state.tile_size,
                 zoom_level_iter.size_hint(),
-            );
+            )
+            .await?;
 
             progress.update_for_tile(&tile, success);
 
@@ -227,17 +228,14 @@ impl<'a> TileDownloadCoordinator<'a> {
         progress: &ProgressManager,
     ) -> Result<(), ZoomError> {
         let mut stream = futures::stream::iter(tile_refs)
-            .map(|tile_ref: TileReference| self.downloader.download_encoded_tile(tile_ref))
+            .map(|tile_ref: TileReference| self.downloader.download_tile(tile_ref))
             .buffer_unordered(self.args.parallelism);
 
         while let Some(tile_result) = stream.next().await {
             debug!("Received encoded tile result: {:?}", tile_result);
             progress.increment();
 
-            let (tile, success) = match tile_result {
-                Ok(tile) => (Some(tile), true),
-                Err(_) => (None, false),
-            };
+            let (tile, success) = process_encoded_tile_result(tile_result).await?;
 
             progress.update_for_encoded_tile(&tile, success);
 
@@ -284,50 +282,84 @@ async fn prepare_canvas_size(
 }
 
 // Helper function, private to this module
-fn process_tile_result(
-    tile_result: Result<Tile, errors::TileDownloadError>,
+async fn process_downloaded_tile_result(
+    tile_result: Result<DownloadedTile, errors::TileDownloadError>,
     tile_size: &mut Option<Vec2d>,
     canvas_size: Option<Vec2d>,
-) -> (Option<Tile>, bool) {
+) -> Result<(Option<Tile>, bool), ZoomError> {
     match tile_result {
-        Ok(tile) => {
-            *tile_size = Some(tile.size()); // Update tile_size with the size of the successfully downloaded tile
-            (Some(tile), true)
+        Ok(downloaded) => {
+            let tile = tokio::task::spawn_blocking(move || {
+                load_tile_with_metadata(downloaded.position, &downloaded.bytes)
+            })
+            .await??;
+            *tile_size = Some(tile.size());
+            Ok((Some(tile), true))
         }
         Err(err) => {
             let position = err.tile_reference.position;
-            // Try to create an empty tile only if we know the expected tile_size and canvas_size
             let empty_tile = match (*tile_size, canvas_size) {
                 (Some(current_tile_size), Some(current_canvas_size)) => {
                     let size = max_size_in_rect(position, current_tile_size, current_canvas_size);
                     Some(Tile::empty(position, size))
                 }
-                _ => None, // Not enough info to create a correctly sized empty tile
+                _ => None,
             };
-            (empty_tile, false)
+            Ok((empty_tile, false))
         }
+    }
+}
+
+async fn process_encoded_tile_result(
+    tile_result: Result<DownloadedTile, errors::TileDownloadError>,
+) -> Result<(Option<EncodedTile>, bool), ZoomError> {
+    match tile_result {
+        Ok(downloaded) => {
+            let tile = tokio::task::spawn_blocking(move || {
+                load_encoded_tile(downloaded.position, downloaded.bytes)
+            })
+            .await??;
+            Ok((Some(tile), true))
+        }
+        Err(_) => Ok((None, false)),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::process_tile_result; // From the parent module 'download_state'
+    use std::sync::Arc;
+
+    use image::ImageEncoder;
+
+    use super::process_downloaded_tile_result;
     use crate::dezoomer::TileReference;
     use crate::errors::{TileDownloadError, ZoomError};
     use crate::max_size_in_rect;
-    use crate::tile::Tile;
-    use crate::vec2d::Vec2d; // Used by process_tile_result, ensure it's in scope for understanding test logic
+    use crate::network::DownloadedTile;
+    use crate::vec2d::Vec2d;
 
-    #[test]
-    fn test_process_tile_result() {
+    #[tokio::test]
+    async fn test_process_downloaded_tile_result() {
         let mut tile_size: Option<Vec2d> = None;
         let canvas_size = Vec2d { x: 1000, y: 1000 };
 
-        // Test successful tile result
-        let tile_to_test = Tile::empty(Vec2d { x: 0, y: 0 }, Vec2d { x: 256, y: 256 });
-        let ok_result: Result<Tile, TileDownloadError> = Ok(tile_to_test.clone());
+        let mut encoded_png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut encoded_png)
+            .write_image(
+                &vec![255; 256 * 256 * 3],
+                256,
+                256,
+                image::ExtendedColorType::Rgb8,
+            )
+            .unwrap();
+        let ok_result = Ok(DownloadedTile {
+            position: Vec2d { x: 0, y: 0 },
+            bytes: Arc::new(encoded_png),
+        });
         let (result_tile_opt, success) =
-            process_tile_result(ok_result, &mut tile_size, Some(canvas_size));
+            process_downloaded_tile_result(ok_result, &mut tile_size, Some(canvas_size))
+                .await
+                .unwrap();
 
         assert!(success, "Tile processing should succeed for Ok result");
         assert!(
@@ -347,9 +379,6 @@ mod tests {
             "tile_size variable mismatch after success"
         );
 
-        // Test failed tile result
-        // process_tile_result will use the current value of tile_size (if Some) to determine the size of the empty tile.
-        // So, we set it to what a previously successful tile might have set.
         tile_size = Some(Vec2d { x: 256, y: 256 });
 
         let tile_ref = TileReference {
@@ -357,12 +386,14 @@ mod tests {
             position: Vec2d { x: 100, y: 100 },
         };
         let error = TileDownloadError {
-            tile_reference: tile_ref.clone(), // Clone if tile_ref is used later, or ensure it's not.
-            cause: ZoomError::NoLevels,       // Using an arbitrary ZoomError variant
+            tile_reference: tile_ref.clone(),
+            cause: ZoomError::NoLevels,
         };
-        let err_result: Result<Tile, TileDownloadError> = Err(error);
+        let err_result = Err(error);
         let (result_tile_opt_err, success_err) =
-            process_tile_result(err_result, &mut tile_size, Some(canvas_size));
+            process_downloaded_tile_result(err_result, &mut tile_size, Some(canvas_size))
+                .await
+                .unwrap();
 
         assert!(!success_err, "Tile processing should fail for Err result");
         assert!(
@@ -370,9 +401,6 @@ mod tests {
             "Result tile should be Some (empty tile) for Err result"
         );
         if let Some(ref empty_tile) = result_tile_opt_err {
-            // The empty tile's size is determined by max_size_in_rect.
-            // Given position (100,100), tile_size (256,256), canvas_size (1000,1000),
-            // max_size_in_rect should return (256,256) as it fits.
             let expected_empty_size =
                 max_size_in_rect(tile_ref.position, tile_size.unwrap(), canvas_size);
             assert_eq!(
@@ -386,7 +414,6 @@ mod tests {
                 "Empty tile position mismatch"
             );
         }
-        // tile_size should remain Some(Vec2d { x: 256, y: 256 }) as per logic in process_tile_result for Err case.
         assert_eq!(
             tile_size,
             Some(Vec2d { x: 256, y: 256 }),
