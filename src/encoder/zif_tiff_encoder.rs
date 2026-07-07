@@ -23,6 +23,7 @@ pub struct ZifTiffEncoder {
     declared_tile_size: Option<Vec2d>,
     fallback: Option<Canvas<Rgba<u8>>>,
     force_decoded_fallback: bool,
+    wants_pyramid: bool,
     current_level: usize,
 }
 
@@ -51,6 +52,7 @@ impl ZifTiffEncoder {
             declared_tile_size: None,
             fallback: None,
             force_decoded_fallback: false,
+            wants_pyramid: false,
             current_level: 0,
         })
     }
@@ -69,17 +71,18 @@ impl ZifTiffEncoder {
         debug!(
             "Using zif-tiff passthrough encoder: tile size {tile_size}, codec {codec:?}, color {color_model:?}/{channels} channels"
         );
-        self.writer = zif_tiff::Writer::new()
+        let mut builder = zif_tiff::Writer::new()
             .dimensions((u64::from(self.size.x), u64::from(self.size.y)))
             .tile_size((tile_size.x, tile_size.y))
             .map_err(to_io_error)?
             .codec(codec)
             .color_model(color_model)
             .channels(channels)
-            .map_err(to_io_error)?
-            .pyramid()
-            .build()
             .map_err(to_io_error)?;
+        if self.wants_pyramid {
+            builder = builder.pyramid();
+        }
+        self.writer = builder.build().map_err(to_io_error)?;
         self.tile_size = Some(tile_size);
         self.codec = Some(codec);
         self.color = Some((color_model, channels));
@@ -89,6 +92,7 @@ impl ZifTiffEncoder {
 
 impl Encoder for ZifTiffEncoder {
     fn begin_level(&mut self, level: SourceLevel) -> io::Result<()> {
+        self.wants_pyramid = true;
         self.current_level = level.index;
         if let Some(tile_size) = level.tile_size {
             self.declared_tile_size = Some(tile_size);
