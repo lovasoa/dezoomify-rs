@@ -23,6 +23,7 @@ pub struct ZifTiffEncoder {
     declared_tile_size: Option<Vec2d>,
     fallback: Option<Canvas<Rgba<u8>>>,
     force_decoded_fallback: bool,
+    source_pyramid: bool,
     current_level: usize,
 }
 
@@ -51,6 +52,7 @@ impl ZifTiffEncoder {
             declared_tile_size: None,
             fallback: None,
             force_decoded_fallback: false,
+            source_pyramid: false,
             current_level: 0,
         })
     }
@@ -98,14 +100,30 @@ impl ZifTiffEncoder {
         debug!("Adding level {index} with dimensions {dims:?}, tile size {ts:?}");
         let batch = self
             .writer
-            .add_level(index, LevelConfig::new(dims, (ts.x, ts.y)).map_err(to_io_error)?)
+            .add_level(
+                index,
+                LevelConfig::new(dims, (ts.x, ts.y)).map_err(to_io_error)?,
+            )
             .map_err(to_io_error)?;
         self.output.apply(batch).map_err(to_io_error)
+    }
+
+    fn decode_or_fall_back(&mut self, tile: EncodedTile) -> io::Result<()> {
+        if self.source_pyramid {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "source-pyramid TIFF requires passthrough-compatible JPEG tiles; use --largest for decoded TIFF output",
+            ));
+        }
+        let decoded = load_tile_with_metadata(tile.position, &tile.bytes)
+            .map_err(|err| io::Error::other(err.to_string()))?;
+        self.add_tile(decoded)
     }
 }
 
 impl Encoder for ZifTiffEncoder {
     fn begin_level(&mut self, level: SourceLevel) -> io::Result<()> {
+        self.source_pyramid = true;
         self.current_level = level.index;
         if let Some(tile_size) = level.tile_size {
             self.declared_tile_size = Some(tile_size);
@@ -138,25 +156,15 @@ impl Encoder for ZifTiffEncoder {
 
     fn add_encoded_tile(&mut self, tile: EncodedTile) -> io::Result<()> {
         if self.fallback.is_some() || self.force_decoded_fallback {
-            let decoded = load_tile_with_metadata(tile.position, &tile.bytes)
-                .map_err(|err| io::Error::other(err.to_string()))?;
-            return self.add_tile(decoded);
+            return self.decode_or_fall_back(tile);
         }
         let codec = match codec_for_format(tile.format) {
             Ok(codec) => codec,
-            Err(_) => {
-                let decoded = load_tile_with_metadata(tile.position, &tile.bytes)
-                    .map_err(|err| io::Error::other(err.to_string()))?;
-                return self.add_tile(decoded);
-            }
+            Err(_) => return self.decode_or_fall_back(tile),
         };
         let (mut color_model, channels) = match color_from_encoded_tile(&tile) {
             Ok(color) => color,
-            Err(_) => {
-                let decoded = load_tile_with_metadata(tile.position, &tile.bytes)
-                    .map_err(|err| io::Error::other(err.to_string()))?;
-                return self.add_tile(decoded);
-            }
+            Err(_) => return self.decode_or_fall_back(tile),
         };
         if codec == Codec::Jpeg {
             color_model = ColorModel::YCbCr;

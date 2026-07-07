@@ -135,9 +135,21 @@ struct IIIFTileSaver {
 
 impl IIIFTileSaver {
     fn save_tile_at_scale(&self, scale_factor: u32, tile: Tile) -> io::Result<()> {
-        let tile_size = tile.size();
-        let full_position = tile.position * scale_factor;
-        let full_size = tile.size() * scale_factor;
+        self.save_tile_region(
+            tile.position * scale_factor,
+            tile.size() * scale_factor,
+            tile.size(),
+            tile,
+        )
+    }
+
+    fn save_tile_region(
+        &self,
+        full_position: Vec2d,
+        full_size: Vec2d,
+        tile_size: Vec2d,
+        tile: Tile,
+    ) -> io::Result<()> {
         let region = format!(
             "{},{},{},{}",
             full_position.x, full_position.y, full_size.x, full_size.y
@@ -161,7 +173,7 @@ impl IIIFTileSaver {
 }
 
 impl TileSaver for IIIFTileSaver {
-    fn save_tile(&self, _size: Vec2d, tile: Tile) -> io::Result<()> {
-        self.save_tile_at_scale(1, tile)
+    fn save_tile(&self, size: Vec2d, tile: Tile) -> io::Result<()> {
+        self.save_tile_region(tile.position, size, tile.size(), tile)
     }
 }

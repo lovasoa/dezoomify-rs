@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::iter::once;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -72,10 +73,15 @@ pub struct TileDownloader {
 }
 
 impl TileDownloader {
-    pub async fn download_tile(
+    pub async fn download_tile_and_then<T, F, Fut>(
         &self,
         tile_reference: TileReference,
-    ) -> Result<DownloadedTile, TileDownloadError> {
+        mut process: F,
+    ) -> Result<T, TileDownloadError>
+    where
+        F: FnMut(DownloadedTile) -> Fut,
+        Fut: Future<Output = Result<T, ZoomError>>,
+    {
         let n = 100;
         let idx: f64 = ((tile_reference.position.x + tile_reference.position.y) % n).into();
         let tile_reference = Arc::new(tile_reference);
@@ -83,8 +89,12 @@ impl TileDownloader {
             + Duration::from_secs_f64(idx * self.retry_delay.as_secs_f64() / n as f64);
         let mut failures: usize = 0;
         loop {
-            match self.load_tile_bytes(Arc::clone(&tile_reference)).await {
-                Ok(tile) => return Ok(tile),
+            let result = match self.load_tile_bytes(Arc::clone(&tile_reference)).await {
+                Ok(tile) => process(tile).await,
+                Err(cause) => Err(cause),
+            };
+            match result {
+                Ok(processed) => return Ok(processed),
                 Err(cause) => {
                     if failures >= self.retries {
                         return Err(TileDownloadError {

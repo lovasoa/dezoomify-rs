@@ -299,6 +299,10 @@ impl TilesRect for IIIFZoomLevel {
             format = self.format,
         )
     }
+
+    fn scale_factor_hint(&self) -> Option<u32> {
+        Some(self.scale_factor)
+    }
 }
 
 struct TileSizeFormatter {
