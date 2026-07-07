@@ -74,7 +74,11 @@ impl Encoder for IiifEncoder {
                 .map(|level| level.scale_factor)
                 .collect::<Vec<_>>()
         };
-        let tile_size = self.retiler.tile_size;
+        let tile_size = self
+            .direct_levels
+            .iter()
+            .find_map(|level| level.tile_size)
+            .unwrap_or(self.retiler.tile_size);
         let image_info = tile_info::ImageInfo {
             context: Some("http://iiif.io/api/image/3/context.json".to_string()),
             iiif_type: Some("ImageService3".to_string()),

@@ -16,11 +16,13 @@ pub struct ZifTiffEncoder {
     output: zif_tiff::std::FileRangeWriter,
     tile_size: Option<Vec2d>,
     codec: Option<Codec>,
+    color: Option<(ColorModel, u16)>,
     occupied_tiles: HashSet<(usize, u64, u64)>,
     size: Vec2d,
     destination: PathBuf,
     declared_tile_size: Option<Vec2d>,
     fallback: Option<Canvas<Rgba<u8>>>,
+    force_decoded_fallback: bool,
     current_level: usize,
 }
 
@@ -42,11 +44,13 @@ impl ZifTiffEncoder {
             output,
             tile_size: None,
             codec: None,
+            color: None,
             occupied_tiles: HashSet::new(),
             size,
             destination,
             declared_tile_size: None,
             fallback: None,
+            force_decoded_fallback: false,
             current_level: 0,
         })
     }
@@ -75,6 +79,7 @@ impl ZifTiffEncoder {
             .map_err(to_io_error)?;
         self.tile_size = Some(tile_size);
         self.codec = Some(codec);
+        self.color = Some((color_model, channels));
         Ok(())
     }
 }
@@ -85,6 +90,7 @@ impl Encoder for ZifTiffEncoder {
         if let Some(tile_size) = level.tile_size {
             self.declared_tile_size = Some(tile_size);
         }
+        self.force_decoded_fallback |= level.has_overlapping_tiles;
         Ok(())
     }
 
@@ -108,24 +114,40 @@ impl Encoder for ZifTiffEncoder {
     }
 
     fn add_encoded_tile(&mut self, tile: EncodedTile) -> io::Result<()> {
-        if self.fallback.is_some() {
+        if self.fallback.is_some() || self.force_decoded_fallback {
             let decoded = load_tile_with_metadata(tile.position, &tile.bytes)
                 .map_err(|err| io::Error::other(err.to_string()))?;
             return self.add_tile(decoded);
         }
-        if codec_for_format(tile.format).is_err() || color_from_encoded_tile(&tile).is_err() {
-            let decoded = load_tile_with_metadata(tile.position, &tile.bytes)
-                .map_err(|err| io::Error::other(err.to_string()))?;
-            return self.add_tile(decoded);
-        }
+        let codec = match codec_for_format(tile.format) {
+            Ok(codec) => codec,
+            Err(_) => {
+                let decoded = load_tile_with_metadata(tile.position, &tile.bytes)
+                    .map_err(|err| io::Error::other(err.to_string()))?;
+                return self.add_tile(decoded);
+            }
+        };
+        let color = match color_from_encoded_tile(&tile) {
+            Ok(color) => color,
+            Err(_) => {
+                let decoded = load_tile_with_metadata(tile.position, &tile.bytes)
+                    .map_err(|err| io::Error::other(err.to_string()))?;
+                return self.add_tile(decoded);
+            }
+        };
         self.configure_from_first_tile(&tile)?;
 
         let expected_size = self.tile_size.expect("configured above");
-        let codec = codec_for_format(tile.format)?;
         if Some(codec) != self.codec {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "cannot mix tile codecs in one zif TIFF",
+            ));
+        }
+        if Some(color) != self.color {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "cannot mix tile color models in one zif TIFF",
             ));
         }
         if !tile.position.x.is_multiple_of(expected_size.x)

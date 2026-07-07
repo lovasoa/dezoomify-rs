@@ -20,6 +20,7 @@ pub struct SourceLevel {
     pub size: Vec2d,
     pub scale_factor: u32,
     pub tile_size: Option<Vec2d>,
+    pub has_overlapping_tiles: bool,
 }
 
 pub trait Encoder: Send + 'static {

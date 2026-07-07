@@ -291,24 +291,37 @@ async fn process_downloaded_tile_result(
 ) -> Result<(Option<Tile>, bool), ZoomError> {
     match tile_result {
         Ok(downloaded) => {
+            let position = downloaded.position;
             let tile = tokio::task::spawn_blocking(move || {
                 load_tile_with_metadata(downloaded.position, &downloaded.bytes)
             })
-            .await??;
-            *tile_size = Some(tile.size());
-            Ok((Some(tile), true))
-        }
-        Err(err) => {
-            let position = err.tile_reference.position;
-            let empty_tile = match (*tile_size, canvas_size) {
-                (Some(current_tile_size), Some(current_canvas_size)) => {
-                    let size = max_size_in_rect(position, current_tile_size, current_canvas_size);
-                    Some(Tile::empty(position, size))
+            .await?;
+            match tile {
+                Ok(tile) => {
+                    *tile_size = Some(tile.size());
+                    Ok((Some(tile), true))
                 }
-                _ => None,
-            };
-            Ok((empty_tile, false))
+                Err(_) => Ok((empty_tile_for(position, *tile_size, canvas_size), false)),
+            }
         }
+        Err(err) => Ok((
+            empty_tile_for(err.tile_reference.position, *tile_size, canvas_size),
+            false,
+        )),
+    }
+}
+
+fn empty_tile_for(
+    position: Vec2d,
+    tile_size: Option<Vec2d>,
+    canvas_size: Option<Vec2d>,
+) -> Option<Tile> {
+    match (tile_size, canvas_size) {
+        (Some(current_tile_size), Some(current_canvas_size)) => {
+            let size = max_size_in_rect(position, current_tile_size, current_canvas_size);
+            Some(Tile::empty(position, size))
+        }
+        _ => None,
     }
 }
 
@@ -320,8 +333,11 @@ async fn process_encoded_tile_result(
             let tile = tokio::task::spawn_blocking(move || {
                 load_encoded_tile(downloaded.position, downloaded.bytes)
             })
-            .await??;
-            Ok((Some(tile), true))
+            .await?;
+            match tile {
+                Ok(tile) => Ok((Some(tile), true)),
+                Err(_) => Ok((None, false)),
+            }
         }
         Err(_) => Ok((None, false)),
     }
