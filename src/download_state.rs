@@ -4,7 +4,7 @@ use crate::dezoomer::{TileFetchResult, TileReference, ZoomLevel, ZoomLevelIter};
 use crate::encoder::tile_buffer::TileBuffer;
 use crate::errors::{self, ZoomError}; // `self` imports the errors module itself
 use crate::max_size_in_rect;
-use crate::network::{DownloadedTile, TileDownloader, client as network_client};
+use crate::network::{TileDownloader, client as network_client};
 use crate::throttler::Throttler;
 use crate::tile::{EncodedTile, Tile, load_encoded_tile, load_tile_with_metadata};
 use crate::vec2d::Vec2d; // This is a public function from lib.rs
@@ -189,19 +189,27 @@ impl<'a> TileDownloadCoordinator<'a> {
         zoom_level_iter: &ZoomLevelIter<'_>,
     ) -> Result<(), ZoomError> {
         let mut stream = futures::stream::iter(tile_refs)
-            .map(|tile_ref: TileReference| self.downloader.download_tile(tile_ref))
+            .map(|tile_ref: TileReference| {
+                self.downloader
+                    .download_tile_and_then(tile_ref, |downloaded| async move {
+                        tokio::task::spawn_blocking(move || {
+                            load_tile_with_metadata(downloaded.position, &downloaded.bytes)
+                        })
+                        .await?
+                        .map_err(ZoomError::from)
+                    })
+            })
             .buffer_unordered(self.args.parallelism);
 
         while let Some(tile_result) = stream.next().await {
             debug!("Received tile result: {:?}", tile_result);
             progress.increment();
 
-            let (tile, success) = process_downloaded_tile_result(
+            let (tile, success) = process_decoded_tile_result(
                 tile_result,
                 &mut state.tile_size,
                 zoom_level_iter.size_hint(),
-            )
-            .await?;
+            );
 
             progress.update_for_tile(&tile, success);
 
@@ -228,7 +236,16 @@ impl<'a> TileDownloadCoordinator<'a> {
         progress: &ProgressManager,
     ) -> Result<(), ZoomError> {
         let mut stream = futures::stream::iter(tile_refs)
-            .map(|tile_ref: TileReference| self.downloader.download_tile(tile_ref))
+            .map(|tile_ref: TileReference| {
+                self.downloader
+                    .download_tile_and_then(tile_ref, |downloaded| async move {
+                        tokio::task::spawn_blocking(move || {
+                            load_encoded_tile(downloaded.position, downloaded.bytes)
+                        })
+                        .await?
+                        .map_err(ZoomError::from)
+                    })
+            })
             .buffer_unordered(self.args.parallelism);
 
         while let Some(tile_result) = stream.next().await {
@@ -284,30 +301,20 @@ async fn prepare_canvas_size(
 }
 
 // Helper function, private to this module
-async fn process_downloaded_tile_result(
-    tile_result: Result<DownloadedTile, errors::TileDownloadError>,
+fn process_decoded_tile_result(
+    tile_result: Result<Tile, errors::TileDownloadError>,
     tile_size: &mut Option<Vec2d>,
     canvas_size: Option<Vec2d>,
-) -> Result<(Option<Tile>, bool), ZoomError> {
+) -> (Option<Tile>, bool) {
     match tile_result {
-        Ok(downloaded) => {
-            let position = downloaded.position;
-            let tile = tokio::task::spawn_blocking(move || {
-                load_tile_with_metadata(downloaded.position, &downloaded.bytes)
-            })
-            .await?;
-            match tile {
-                Ok(tile) => {
-                    *tile_size = Some(tile.size());
-                    Ok((Some(tile), true))
-                }
-                Err(_) => Ok((empty_tile_for(position, *tile_size, canvas_size), false)),
-            }
+        Ok(tile) => {
+            *tile_size = Some(tile.size());
+            (Some(tile), true)
         }
-        Err(err) => Ok((
+        Err(err) => (
             empty_tile_for(err.tile_reference.position, *tile_size, canvas_size),
             false,
-        )),
+        ),
     }
 }
 
@@ -326,58 +333,31 @@ fn empty_tile_for(
 }
 
 async fn process_encoded_tile_result(
-    tile_result: Result<DownloadedTile, errors::TileDownloadError>,
+    tile_result: Result<EncodedTile, errors::TileDownloadError>,
 ) -> Result<(Option<EncodedTile>, bool), ZoomError> {
     match tile_result {
-        Ok(downloaded) => {
-            let tile = tokio::task::spawn_blocking(move || {
-                load_encoded_tile(downloaded.position, downloaded.bytes)
-            })
-            .await?;
-            match tile {
-                Ok(tile) => Ok((Some(tile), true)),
-                Err(_) => Ok((None, false)),
-            }
-        }
+        Ok(tile) => Ok((Some(tile), true)),
         Err(_) => Ok((None, false)),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use image::ImageEncoder;
-
-    use super::process_downloaded_tile_result;
+    use super::process_decoded_tile_result;
     use crate::dezoomer::TileReference;
     use crate::errors::{TileDownloadError, ZoomError};
     use crate::max_size_in_rect;
-    use crate::network::DownloadedTile;
+    use crate::tile::Tile;
     use crate::vec2d::Vec2d;
 
-    #[tokio::test]
-    async fn test_process_downloaded_tile_result() {
+    #[test]
+    fn test_process_decoded_tile_result() {
         let mut tile_size: Option<Vec2d> = None;
         let canvas_size = Vec2d { x: 1000, y: 1000 };
 
-        let mut encoded_png = Vec::new();
-        image::codecs::png::PngEncoder::new(&mut encoded_png)
-            .write_image(
-                &vec![255; 256 * 256 * 3],
-                256,
-                256,
-                image::ExtendedColorType::Rgb8,
-            )
-            .unwrap();
-        let ok_result = Ok(DownloadedTile {
-            position: Vec2d { x: 0, y: 0 },
-            bytes: Arc::new(encoded_png),
-        });
+        let ok_result = Ok(Tile::empty(Vec2d { x: 0, y: 0 }, Vec2d { x: 256, y: 256 }));
         let (result_tile_opt, success) =
-            process_downloaded_tile_result(ok_result, &mut tile_size, Some(canvas_size))
-                .await
-                .unwrap();
+            process_decoded_tile_result(ok_result, &mut tile_size, Some(canvas_size));
 
         assert!(success, "Tile processing should succeed for Ok result");
         assert!(
@@ -409,9 +389,7 @@ mod tests {
         };
         let err_result = Err(error);
         let (result_tile_opt_err, success_err) =
-            process_downloaded_tile_result(err_result, &mut tile_size, Some(canvas_size))
-                .await
-                .unwrap();
+            process_decoded_tile_result(err_result, &mut tile_size, Some(canvas_size));
 
         assert!(!success_err, "Tile processing should fail for Err result");
         assert!(

@@ -18,11 +18,13 @@ pub enum TileBuffer {
         buffer: Vec<Tile>,
         encoded_buffer: Vec<EncodedTile>,
         compression: u8,
+        prefer_encoded_tiles: bool,
     },
     Writing {
         destination: PathBuf,
         tile_sender: mpsc::Sender<TileBufferMsg>,
-        error_receiver: mpsc::Receiver<std::io::Error>,
+        error_receiver: mpsc::UnboundedReceiver<std::io::Error>,
+        prefer_encoded_tiles: bool,
     },
 }
 
@@ -36,6 +38,7 @@ impl TileBuffer {
             buffer: vec![],
             encoded_buffer: vec![],
             compression,
+            prefer_encoded_tiles: false,
         })
     }
 
@@ -46,6 +49,7 @@ impl TileBuffer {
                 encoded_buffer,
                 destination,
                 compression,
+                prefer_encoded_tiles,
             } => {
                 let destination = std::mem::take(destination);
                 debug!("Creating a tile writer for an image of size {size}");
@@ -57,7 +61,7 @@ impl TileBuffer {
                 for tile in encoded_buffer.drain(..) {
                     encoder.add_encoded_tile(tile)?;
                 }
-                buffer_tiles(encoder, destination).await
+                buffer_tiles(encoder, destination, *prefer_encoded_tiles).await
             }
             TileBuffer::Writing { .. } => {
                 unreachable!("The size of the image can be set only once")
@@ -72,14 +76,30 @@ impl TileBuffer {
     }
 
     pub fn prefers_encoded_tiles(&self) -> bool {
-        let extension = self.destination().extension().unwrap_or_default();
-        extension == "tiff" || extension == "tif"
+        match self {
+            TileBuffer::Buffering {
+                prefer_encoded_tiles,
+                ..
+            }
+            | TileBuffer::Writing {
+                prefer_encoded_tiles,
+                ..
+            } => *prefer_encoded_tiles,
+        }
     }
 
     /// Start writing a source pyramid level.
     pub async fn begin_level(&mut self, level: SourceLevel) -> Result<(), ZoomError> {
+        let prefer_encoded_tiles = {
+            let extension = self.destination().extension().unwrap_or_default();
+            extension == "tiff" || extension == "tif"
+        };
         match self {
-            TileBuffer::Buffering { .. } => {
+            TileBuffer::Buffering {
+                prefer_encoded_tiles: current_preference,
+                ..
+            } => {
+                *current_preference = prefer_encoded_tiles;
                 self.set_size(level.size).await?;
                 if let TileBuffer::Writing { tile_sender, .. } = self {
                     tile_sender.send(TileBufferMsg::BeginLevel(level)).await?;
@@ -88,7 +108,12 @@ impl TileBuffer {
                     unreachable!("set_size transitions buffering to writing")
                 }
             }
-            TileBuffer::Writing { tile_sender, .. } => {
+            TileBuffer::Writing {
+                tile_sender,
+                prefer_encoded_tiles: current_preference,
+                ..
+            } => {
+                *current_preference = prefer_encoded_tiles;
                 tile_sender.send(TileBufferMsg::BeginLevel(level)).await?;
                 Ok(())
             }
@@ -174,9 +199,13 @@ pub enum TileBufferMsg {
     Close,
 }
 
-async fn buffer_tiles(mut encoder: Box<dyn Encoder>, destination: PathBuf) -> TileBuffer {
+async fn buffer_tiles(
+    mut encoder: Box<dyn Encoder>,
+    destination: PathBuf,
+    prefer_encoded_tiles: bool,
+) -> TileBuffer {
     let (tile_sender, mut tile_receiver) = mpsc::channel(1024);
-    let (error_sender, error_receiver) = mpsc::channel(1);
+    let (error_sender, error_receiver) = mpsc::unbounded_channel();
     tokio::spawn(async move {
         while let Some(msg) = tile_receiver.recv().await {
             match msg {
@@ -185,7 +214,7 @@ async fn buffer_tiles(mut encoder: Box<dyn Encoder>, destination: PathBuf) -> Ti
                     let result = tokio::task::block_in_place(|| encoder.begin_level(level));
                     if let Err(err) = result {
                         warn!("Error when starting output source level: {err}");
-                        error_sender.send(err).await.expect("could not send error");
+                        error_sender.send(err).expect("could not send error");
                     }
                 }
                 TileBufferMsg::AddTile(tile) => {
@@ -193,7 +222,7 @@ async fn buffer_tiles(mut encoder: Box<dyn Encoder>, destination: PathBuf) -> Ti
                     let result = tokio::task::block_in_place(|| encoder.add_tile(tile));
                     if let Err(err) = result {
                         warn!("Error when adding tile: {err}");
-                        error_sender.send(err).await.expect("could not send error");
+                        error_sender.send(err).expect("could not send error");
                     }
                 }
                 TileBufferMsg::AddEncodedTile(tile) => {
@@ -201,7 +230,7 @@ async fn buffer_tiles(mut encoder: Box<dyn Encoder>, destination: PathBuf) -> Ti
                     let result = tokio::task::block_in_place(|| encoder.add_encoded_tile(tile));
                     if let Err(err) = result {
                         warn!("Error when adding encoded tile: {err}");
-                        error_sender.send(err).await.expect("could not send error");
+                        error_sender.send(err).expect("could not send error");
                     }
                 }
                 TileBufferMsg::Close => {
@@ -212,12 +241,13 @@ async fn buffer_tiles(mut encoder: Box<dyn Encoder>, destination: PathBuf) -> Ti
         debug!("Finalizing the encoder");
         if let Err(err) = encoder.finalize() {
             warn!("Error when finalizing image: {err}");
-            error_sender.send(err).await.expect("could not send error");
+            error_sender.send(err).expect("could not send error");
         }
     });
     TileBuffer::Writing {
         tile_sender,
         error_receiver,
         destination,
+        prefer_encoded_tiles,
     }
 }

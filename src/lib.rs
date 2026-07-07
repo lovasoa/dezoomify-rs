@@ -254,6 +254,16 @@ fn output_prefers_source_pyramid(path: &Path, args: &Arguments) -> bool {
     )
 }
 
+fn can_dezoomify_source_pyramid(path: &Path, args: &Arguments, levels: &[ZoomLevel]) -> bool {
+    output_prefers_source_pyramid(path, args)
+        && largest_level_size(levels).is_some()
+        && levels.iter().all(|level| {
+            level.size_hint().is_some()
+                && level.tile_size_hint().is_some()
+                && !level.has_overlapping_tiles()
+        })
+}
+
 async fn dezoomify_source_pyramid(
     args: &Arguments,
     mut levels: Vec<ZoomLevel>,
@@ -267,7 +277,7 @@ async fn dezoomify_source_pyramid(
     let mut successful_tiles = 0;
     for (index, zoom_level) in levels.into_iter().enumerate() {
         let level_size = zoom_level.size_hint().unwrap_or(full_size);
-        let scale_factor = full_size.x.div_ceil(level_size.x).max(1);
+        let scale_factor = source_level_scale_factor(full_size, level_size, &zoom_level);
         canvas
             .begin_level(SourceLevel {
                 index,
@@ -293,6 +303,13 @@ async fn dezoomify_source_pyramid(
     } else {
         Ok(())
     }
+}
+
+fn source_level_scale_factor(full_size: Vec2d, level_size: Vec2d, level: &ZoomLevel) -> u32 {
+    level
+        .scale_factor_hint()
+        .filter(|&scale_factor| scale_factor > 0)
+        .unwrap_or_else(|| full_size.x.div_ceil(level_size.x).max(1))
 }
 
 fn largest_level_size(levels: &[ZoomLevel]) -> Option<Vec2d> {
@@ -325,7 +342,7 @@ pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
     let largest_size = largest_level_size(&zoom_levels);
     let source_pyramid_path = get_outname(&output_file, &title, &base_dir, largest_size);
 
-    if output_prefers_source_pyramid(&source_pyramid_path, args) {
+    if can_dezoomify_source_pyramid(&source_pyramid_path, args, &zoom_levels) {
         let save_as = prepare_output_path(&output_file, &title, &base_dir, largest_size)?;
         let tile_buffer = create_tile_buffer(save_as.clone(), args.compression).await?;
         info!("Dezooming source pyramid with {} levels", zoom_levels.len());

@@ -208,6 +208,10 @@ impl TileProvider for TitledZoomLevel {
         self.inner.tile_size_hint()
     }
 
+    fn scale_factor_hint(&self) -> Option<u32> {
+        self.inner.scale_factor_hint()
+    }
+
     fn has_overlapping_tiles(&self) -> bool {
         self.inner.has_overlapping_tiles()
     }
@@ -367,6 +371,10 @@ pub trait TileProvider: Debug {
         None
     }
 
+    fn scale_factor_hint(&self) -> Option<u32> {
+        None
+    }
+
     fn has_overlapping_tiles(&self) -> bool {
         false
     }
@@ -440,6 +448,9 @@ impl<'a> ZoomLevelIter<'a> {
     pub fn tile_size_hint(&self) -> Option<Vec2d> {
         self.zoom_level.tile_size_hint()
     }
+    pub fn scale_factor_hint(&self) -> Option<u32> {
+        self.zoom_level.scale_factor_hint()
+    }
     pub fn has_overlapping_tiles(&self) -> bool {
         self.zoom_level.has_overlapping_tiles()
     }
@@ -471,6 +482,10 @@ pub trait TilesRect: Debug {
 
     fn has_overlapping_tiles(&self) -> bool {
         false
+    }
+
+    fn scale_factor_hint(&self) -> Option<u32> {
+        None
     }
 
     fn tile_count(&self) -> u32 {
@@ -522,6 +537,10 @@ impl<T: TilesRect> TileProvider for T {
 
     fn tile_size_hint(&self) -> Option<Vec2d> {
         Some(self.tile_size())
+    }
+
+    fn scale_factor_hint(&self) -> Option<u32> {
+        TilesRect::scale_factor_hint(self)
     }
 
     fn has_overlapping_tiles(&self) -> bool {
