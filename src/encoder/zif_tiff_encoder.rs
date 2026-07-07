@@ -2,27 +2,31 @@ use std::collections::HashSet;
 use std::io;
 use std::path::PathBuf;
 
-use image::{ColorType, ImageFormat};
+use image::{ColorType, ImageFormat, Rgba};
 use log::debug;
 use zif_tiff::{Codec, ColorModel};
 
 use crate::Vec2d;
+use crate::encoder::canvas::Canvas;
 use crate::encoder::{Encoder, SourceLevel};
-use crate::tile::{EncodedTile, Tile};
+use crate::tile::{EncodedTile, Tile, load_tile_with_metadata};
 
 pub struct ZifTiffEncoder {
     writer: zif_tiff::Writer,
     output: zif_tiff::std::FileRangeWriter,
     tile_size: Option<Vec2d>,
     codec: Option<Codec>,
-    occupied_tiles: HashSet<(u64, u64)>,
+    occupied_tiles: HashSet<(usize, u64, u64)>,
     size: Vec2d,
+    destination: PathBuf,
+    declared_tile_size: Option<Vec2d>,
+    fallback: Option<Canvas<Rgba<u8>>>,
     current_level: usize,
 }
 
 impl ZifTiffEncoder {
     pub fn new(destination: PathBuf, size: Vec2d) -> io::Result<Self> {
-        let output = zif_tiff::std::FileRangeWriter::create(destination).map_err(to_io_error)?;
+        let output = zif_tiff::std::FileRangeWriter::create(&destination).map_err(to_io_error)?;
         Ok(Self {
             writer: zif_tiff::Writer::new()
                 .dimensions((u64::from(size.x), u64::from(size.y)))
@@ -40,6 +44,9 @@ impl ZifTiffEncoder {
             codec: None,
             occupied_tiles: HashSet::new(),
             size,
+            destination,
+            declared_tile_size: None,
+            fallback: None,
             current_level: 0,
         })
     }
@@ -49,7 +56,7 @@ impl ZifTiffEncoder {
             return Ok(());
         }
 
-        let tile_size = tile.size;
+        let tile_size = self.declared_tile_size.unwrap_or(tile.size);
         let codec = codec_for_format(tile.format)?;
         let (color_model, channels) = color_from_encoded_tile(tile)?;
         debug!(
@@ -75,17 +82,42 @@ impl ZifTiffEncoder {
 impl Encoder for ZifTiffEncoder {
     fn begin_level(&mut self, level: SourceLevel) -> io::Result<()> {
         self.current_level = level.index;
+        if let Some(tile_size) = level.tile_size {
+            self.declared_tile_size = Some(tile_size);
+        }
         Ok(())
     }
 
-    fn add_tile(&mut self, _tile: Tile) -> io::Result<()> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "zif TIFF passthrough requires encoded tiles",
-        ))
+    fn add_tile(&mut self, tile: Tile) -> io::Result<()> {
+        if self.tile_size.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "cannot fall back to decoded TIFF after starting zif passthrough",
+            ));
+        }
+        if self.fallback.is_none() {
+            self.fallback = Some(
+                Canvas::<Rgba<u8>>::new_generic(self.destination.clone(), self.size)
+                    .map_err(|err| io::Error::other(err.to_string()))?,
+            );
+        }
+        self.fallback
+            .as_mut()
+            .expect("created above")
+            .add_tile(tile)
     }
 
     fn add_encoded_tile(&mut self, tile: EncodedTile) -> io::Result<()> {
+        if self.fallback.is_some() {
+            let decoded = load_tile_with_metadata(tile.position, &tile.bytes)
+                .map_err(|err| io::Error::other(err.to_string()))?;
+            return self.add_tile(decoded);
+        }
+        if codec_for_format(tile.format).is_err() || color_from_encoded_tile(&tile).is_err() {
+            let decoded = load_tile_with_metadata(tile.position, &tile.bytes)
+                .map_err(|err| io::Error::other(err.to_string()))?;
+            return self.add_tile(decoded);
+        }
         self.configure_from_first_tile(&tile)?;
 
         let expected_size = self.tile_size.expect("configured above");
@@ -105,7 +137,7 @@ impl Encoder for ZifTiffEncoder {
 
         let col = u64::from(tile.position.x / expected_size.x);
         let row = u64::from(tile.position.y / expected_size.y);
-        if !self.occupied_tiles.insert((col, row)) {
+        if !self.occupied_tiles.insert((self.current_level, col, row)) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "overlapping tiles cannot be passed through to zif TIFF",
@@ -122,6 +154,9 @@ impl Encoder for ZifTiffEncoder {
     }
 
     fn finalize(&mut self) -> io::Result<()> {
+        if let Some(fallback) = &mut self.fallback {
+            return fallback.finalize();
+        }
         if self.tile_size.is_none() {
             self.output
                 .apply(self.writer.init().map_err(to_io_error)?)
@@ -150,6 +185,12 @@ fn color_from_encoded_tile(tile: &EncodedTile) -> io::Result<(ColorModel, u16)> 
     match tile.color_type {
         ColorType::L8 | ColorType::L16 => Ok((ColorModel::BlackIsZero, 1)),
         ColorType::Rgb8 | ColorType::Rgb16 => Ok((ColorModel::Rgb, 3)),
+        ColorType::Rgba8 | ColorType::Rgba16 | ColorType::La8 | ColorType::La16 => {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "zif TIFF passthrough does not support alpha-channel tiles",
+            ))
+        }
         _ if tile.color_type.has_color() => Ok((ColorModel::Rgb, 3)),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,

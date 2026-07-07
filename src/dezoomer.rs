@@ -355,6 +355,10 @@ pub trait TileProvider: Debug {
         None
     }
 
+    fn tile_size_hint(&self) -> Option<Vec2d> {
+        None
+    }
+
     /// A collection of http headers to use when requesting the tiles
     fn http_headers(&self) -> HashMap<String, String> {
         HashMap::new()
@@ -420,6 +424,9 @@ impl<'a> ZoomLevelIter<'a> {
     }
     pub fn size_hint(&self) -> Option<Vec2d> {
         self.zoom_level.size_hint()
+    }
+    pub fn tile_size_hint(&self) -> Option<Vec2d> {
+        self.zoom_level.tile_size_hint()
     }
 }
 
@@ -492,6 +499,10 @@ impl<T: TilesRect> TileProvider for T {
 
     fn tile_count_hint(&self) -> Option<u32> {
         Some(self.tile_count())
+    }
+
+    fn tile_size_hint(&self) -> Option<Vec2d> {
+        Some(self.tile_size())
     }
 
     fn http_headers(&self) -> HashMap<String, String> {
