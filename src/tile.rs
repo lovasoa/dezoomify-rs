@@ -114,7 +114,7 @@ pub struct ImageWithMetadata {
 
 type MetadataResult<T> = Result<T, image::ImageError>;
 
-pub fn load_encoded_tile(bytes: Arc<Vec<u8>>) -> MetadataResult<EncodedTile> {
+pub fn load_encoded_tile(position: Vec2d, bytes: Arc<Vec<u8>>) -> MetadataResult<EncodedTile> {
     let reader = ImageReader::new(Cursor::new(bytes.as_slice())).with_guessed_format()?;
     let format = reader.format().ok_or_else(unknown_format_error)?;
     let (size, color_type) = {
@@ -123,7 +123,7 @@ pub fn load_encoded_tile(bytes: Arc<Vec<u8>>) -> MetadataResult<EncodedTile> {
     };
 
     Ok(EncodedTile {
-        position: Vec2d { x: 0, y: 0 },
+        position,
         bytes,
         format,
         size,
@@ -136,6 +136,16 @@ fn unknown_format_error() -> image::ImageError {
         image::error::ImageFormatHint::Unknown,
         image::error::UnsupportedErrorKind::Format(image::error::ImageFormatHint::Unknown),
     ))
+}
+
+pub fn load_tile_with_metadata(position: Vec2d, bytes: &[u8]) -> MetadataResult<Tile> {
+    let image_with_metadata = load_image_with_metadata(bytes)?;
+    Ok(Tile::builder()
+        .with_image(image_with_metadata.image)
+        .at_position(position)
+        .with_optional_icc_profile(image_with_metadata.icc_profile)
+        .with_optional_exif_metadata(image_with_metadata.exif_metadata)
+        .build())
 }
 
 pub fn load_image_with_metadata(bytes: &[u8]) -> MetadataResult<ImageWithMetadata> {

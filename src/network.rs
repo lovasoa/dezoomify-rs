@@ -15,7 +15,6 @@ use crate::binary_display::display_bytes;
 use crate::dezoomer::{PostProcessFn, TileReference};
 use crate::errors::BufferToImageError;
 use crate::errors::{TileDownloadError, ZoomError};
-use crate::tile::{EncodedTile, Tile, load_encoded_tile, load_image_with_metadata};
 
 /// Fetch data, either from an URL or a path to a local file.
 /// If uri doesnt start with "http(s)://", it is considered to be a path
@@ -58,6 +57,12 @@ pub async fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DownloadedTile {
+    pub position: crate::Vec2d,
+    pub bytes: Arc<Vec<u8>>,
+}
+
 pub struct TileDownloader {
     pub http_client: reqwest::Client,
     pub post_process_fn: PostProcessFn,
@@ -70,9 +75,7 @@ impl TileDownloader {
     pub async fn download_tile(
         &self,
         tile_reference: TileReference,
-    ) -> Result<Tile, TileDownloadError> {
-        // The initial delay after which a failed request is retried depends on the position of the tile
-        // in order to avoid sending repeated "bursts" of requests to a server that is struggling
+    ) -> Result<DownloadedTile, TileDownloadError> {
         let n = 100;
         let idx: f64 = ((tile_reference.position.x + tile_reference.position.y) % n).into();
         let tile_reference = Arc::new(tile_reference);
@@ -80,39 +83,7 @@ impl TileDownloader {
             + Duration::from_secs_f64(idx * self.retry_delay.as_secs_f64() / n as f64);
         let mut failures: usize = 0;
         loop {
-            match self.load_image(Arc::clone(&tile_reference)).await {
-                Ok(tile) => {
-                    return Ok(tile);
-                }
-                Err(cause) => {
-                    if failures >= self.retries {
-                        return Err(TileDownloadError {
-                            tile_reference: Arc::try_unwrap(tile_reference)
-                                .expect("tile reference shouldn't leak"),
-                            cause,
-                        });
-                    }
-                    failures += 1;
-                    warn!("{cause}. Retrying tile download in {wait_time:?}.");
-                    tokio::time::sleep(wait_time).await;
-                    wait_time *= 2;
-                }
-            }
-        }
-    }
-
-    pub async fn download_encoded_tile(
-        &self,
-        tile_reference: TileReference,
-    ) -> Result<EncodedTile, TileDownloadError> {
-        let n = 100;
-        let idx: f64 = ((tile_reference.position.x + tile_reference.position.y) % n).into();
-        let tile_reference = Arc::new(tile_reference);
-        let mut wait_time = self.retry_delay
-            + Duration::from_secs_f64(idx * self.retry_delay.as_secs_f64() / n as f64);
-        let mut failures: usize = 0;
-        loop {
-            match self.load_encoded_image(Arc::clone(&tile_reference)).await {
+            match self.load_tile_bytes(Arc::clone(&tile_reference)).await {
                 Ok(tile) => return Ok(tile),
                 Err(cause) => {
                     if failures >= self.retries {
@@ -131,33 +102,10 @@ impl TileDownloader {
         }
     }
 
-    async fn load_image(&self, tile_reference: Arc<TileReference>) -> Result<Tile, ZoomError> {
-        let bytes = if let Some(bytes) = self.read_from_tile_cache(&tile_reference.url).await {
-            bytes
-        } else {
-            let bytes = self
-                .download_image_bytes(Arc::clone(&tile_reference))
-                .await?;
-            self.write_to_tile_cache(&tile_reference.url, &bytes).await;
-            bytes
-        };
-
-        let position = tile_reference.position;
-        let image_with_metadata =
-            tokio::task::spawn_blocking(move || load_image_with_metadata(&bytes)).await??;
-
-        Ok(Tile::builder()
-            .with_image(image_with_metadata.image)
-            .at_position(position)
-            .with_optional_icc_profile(image_with_metadata.icc_profile)
-            .with_optional_exif_metadata(image_with_metadata.exif_metadata)
-            .build())
-    }
-
-    async fn load_encoded_image(
+    async fn load_tile_bytes(
         &self,
         tile_reference: Arc<TileReference>,
-    ) -> Result<EncodedTile, ZoomError> {
+    ) -> Result<DownloadedTile, ZoomError> {
         let bytes = if let Some(bytes) = self.read_from_tile_cache(&tile_reference.url).await {
             bytes
         } else {
@@ -168,11 +116,10 @@ impl TileDownloader {
             bytes
         };
 
-        let position = tile_reference.position;
-        let bytes = Arc::new(bytes);
-        let mut encoded = tokio::task::spawn_blocking(move || load_encoded_tile(bytes)).await??;
-        encoded.position = position;
-        Ok(encoded)
+        Ok(DownloadedTile {
+            position: tile_reference.position,
+            bytes: Arc::new(bytes),
+        })
     }
 
     async fn download_image_bytes(
