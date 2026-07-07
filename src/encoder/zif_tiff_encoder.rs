@@ -128,7 +128,9 @@ impl Encoder for ZifTiffEncoder {
                 "cannot mix tile codecs in one zif TIFF",
             ));
         }
-        if tile.position.x % expected_size.x != 0 || tile.position.y % expected_size.y != 0 {
+        if !tile.position.x.is_multiple_of(expected_size.x)
+            || !tile.position.y.is_multiple_of(expected_size.y)
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "tile positions must align to the zif TIFF tile grid",
