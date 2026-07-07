@@ -224,10 +224,9 @@ impl Encoder for ZifTiffEncoder {
 fn codec_for_format(format: ImageFormat) -> io::Result<Codec> {
     match format {
         ImageFormat::Jpeg => Ok(Codec::Jpeg),
-        ImageFormat::Png => Ok(Codec::Png),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "zif TIFF passthrough supports only JPEG and PNG input tiles",
+            "zif TIFF passthrough supports only JPEG input tiles",
         )),
     }
 }
@@ -268,16 +267,16 @@ mod tests {
 
     #[test]
     fn writes_input_tile_bytes_without_reencoding() {
-        let mut encoded_png = Vec::new();
-        image::codecs::png::PngEncoder::new(&mut encoded_png)
+        let mut encoded = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut encoded, 95)
             .write_image(
-                &vec![255; 16 * 16 * 3],
+                &vec![128; 16 * 16 * 3],
                 16,
                 16,
                 image::ExtendedColorType::Rgb8,
             )
             .unwrap();
-        let bytes = Arc::new(encoded_png);
+        let bytes = Arc::new(encoded);
         let dir = tempfile::tempdir().unwrap();
         let destination = dir.path().join("passthrough.tiff");
         let mut encoder = ZifTiffEncoder::new(destination.clone(), Vec2d { x: 16, y: 16 }).unwrap();
@@ -286,7 +285,7 @@ mod tests {
             .add_encoded_tile(EncodedTile {
                 position: Vec2d { x: 0, y: 0 },
                 bytes: Arc::clone(&bytes),
-                format: ImageFormat::Png,
+                format: ImageFormat::Jpeg,
                 size: Vec2d { x: 16, y: 16 },
                 color_type: ColorType::Rgb8,
             })
