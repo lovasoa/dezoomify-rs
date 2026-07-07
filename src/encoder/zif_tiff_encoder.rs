@@ -62,7 +62,10 @@ impl ZifTiffEncoder {
 
         let tile_size = self.declared_tile_size.unwrap_or(tile.size);
         let codec = codec_for_format(tile.format)?;
-        let (color_model, channels) = color_from_encoded_tile(tile)?;
+        let (mut color_model, channels) = color_from_encoded_tile(tile)?;
+        if codec == Codec::Jpeg {
+            color_model = ColorModel::YCbCr;
+        }
         debug!(
             "Using zif-tiff passthrough encoder: tile size {tile_size}, codec {codec:?}, color {color_model:?}/{channels} channels"
         );
@@ -127,7 +130,7 @@ impl Encoder for ZifTiffEncoder {
                 return self.add_tile(decoded);
             }
         };
-        let color = match color_from_encoded_tile(&tile) {
+        let (mut color_model, channels) = match color_from_encoded_tile(&tile) {
             Ok(color) => color,
             Err(_) => {
                 let decoded = load_tile_with_metadata(tile.position, &tile.bytes)
@@ -135,6 +138,10 @@ impl Encoder for ZifTiffEncoder {
                 return self.add_tile(decoded);
             }
         };
+        if codec == Codec::Jpeg {
+            color_model = ColorModel::YCbCr;
+        }
+        let color = (color_model, channels);
         self.configure_from_first_tile(&tile)?;
 
         let expected_size = self.tile_size.expect("configured above");
