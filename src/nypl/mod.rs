@@ -138,6 +138,10 @@ impl TilesRect for Level {
             position: self.tile_size() * pos - delta,
         }
     }
+
+    fn has_overlapping_tiles(&self) -> bool {
+        self.metadata.overlap > 0
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]

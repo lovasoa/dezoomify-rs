@@ -208,6 +208,10 @@ impl TileProvider for TitledZoomLevel {
         self.inner.tile_size_hint()
     }
 
+    fn has_overlapping_tiles(&self) -> bool {
+        self.inner.has_overlapping_tiles()
+    }
+
     fn http_headers(&self) -> HashMap<String, String> {
         self.inner.http_headers()
     }
@@ -363,6 +367,10 @@ pub trait TileProvider: Debug {
         None
     }
 
+    fn has_overlapping_tiles(&self) -> bool {
+        false
+    }
+
     /// A collection of http headers to use when requesting the tiles
     fn http_headers(&self) -> HashMap<String, String> {
         HashMap::new()
@@ -432,6 +440,9 @@ impl<'a> ZoomLevelIter<'a> {
     pub fn tile_size_hint(&self) -> Option<Vec2d> {
         self.zoom_level.tile_size_hint()
     }
+    pub fn has_overlapping_tiles(&self) -> bool {
+        self.zoom_level.has_overlapping_tiles()
+    }
 }
 
 /// Shortcut to return a single zoom level from a dezoomer
@@ -456,6 +467,10 @@ pub trait TilesRect: Debug {
     }
     fn post_process_fn(&self) -> PostProcessFn {
         PostProcessFn::None
+    }
+
+    fn has_overlapping_tiles(&self) -> bool {
+        false
     }
 
     fn tile_count(&self) -> u32 {
@@ -507,6 +522,10 @@ impl<T: TilesRect> TileProvider for T {
 
     fn tile_size_hint(&self) -> Option<Vec2d> {
         Some(self.tile_size())
+    }
+
+    fn has_overlapping_tiles(&self) -> bool {
+        TilesRect::has_overlapping_tiles(self)
     }
 
     fn http_headers(&self) -> HashMap<String, String> {

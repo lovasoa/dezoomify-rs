@@ -274,6 +274,7 @@ async fn dezoomify_source_pyramid(
                 size: full_size,
                 scale_factor,
                 tile_size: zoom_level.tile_size_hint(),
+                has_overlapping_tiles: zoom_level.has_overlapping_tiles(),
             })
             .await?;
         let state = dezoomify_level_into_buffer(args, zoom_level, &mut canvas).await?;
@@ -322,18 +323,22 @@ pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
     let base_dir = current_dir()?;
     let output_file = args.output_file();
     let largest_size = largest_level_size(&zoom_levels);
-    let save_as = prepare_output_path(&output_file, &title, &base_dir, largest_size)?;
-    let tile_buffer = create_tile_buffer(save_as.clone(), args.compression).await?;
+    let source_pyramid_path = get_outname(&output_file, &title, &base_dir, largest_size);
 
-    if output_prefers_source_pyramid(&save_as, args) {
+    if output_prefers_source_pyramid(&source_pyramid_path, args) {
+        let save_as = prepare_output_path(&output_file, &title, &base_dir, largest_size)?;
+        let tile_buffer = create_tile_buffer(save_as.clone(), args.compression).await?;
         info!("Dezooming source pyramid with {} levels", zoom_levels.len());
         dezoomify_source_pyramid(args, zoom_levels, tile_buffer).await?;
+        Ok(save_as)
     } else {
         let zoom_level = choose_level(zoom_levels, args)?;
+        let save_as = prepare_output_path(&output_file, &title, &base_dir, zoom_level.size_hint())?;
+        let tile_buffer = create_tile_buffer(save_as.clone(), args.compression).await?;
         info!("Dezooming {}", zoom_level.name());
         dezoomify_level(args, zoom_level, tile_buffer).await?;
+        Ok(save_as)
     }
-    Ok(save_as)
 }
 
 /// Statistics for bulk processing

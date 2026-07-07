@@ -142,6 +142,10 @@ impl TilesRect for DziLevel {
         let name = suffix.trim_end_matches("_files");
         Some(name.to_string())
     }
+
+    fn has_overlapping_tiles(&self) -> bool {
+        self.overlap > 0
+    }
 }
 
 impl std::fmt::Debug for DziLevel {
