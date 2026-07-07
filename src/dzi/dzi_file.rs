@@ -5,6 +5,7 @@ use serde::Deserialize;
 use crate::Vec2d;
 use crate::json_utils::number_or_string;
 use crate::network::resolve_relative;
+use url::Url;
 
 use super::DziError;
 
@@ -50,13 +51,33 @@ impl DziFile {
             let relative_url_str = s.trim_end_matches('/');
             resolve_relative(resource_url, relative_url_str)
         } else {
-            let until_dot = if let Some(dot_pos) = resource_url.rfind('.') {
-                &resource_url[0..dot_pos]
-            } else {
-                resource_url
-            };
-            format!("{until_dot}_files")
+            format!("{}_files", resource_url_without_extension(resource_url))
         }
+    }
+}
+
+fn resource_url_without_extension(resource_url: &str) -> String {
+    if let Ok(mut url) = Url::parse(resource_url) {
+        let path = url.path().to_string();
+        let stripped_path = strip_last_path_segment_extension(&path);
+        if stripped_path != path {
+            url.set_path(&stripped_path);
+        }
+        return url.to_string();
+    }
+
+    strip_last_path_segment_extension(resource_url).into_owned()
+}
+
+fn strip_last_path_segment_extension(path: &str) -> std::borrow::Cow<'_, str> {
+    let last_separator = path.rfind(['/', '\\']);
+    let last_segment_start = last_separator.map_or(0, |idx| idx + 1);
+    let last_segment = &path[last_segment_start..];
+
+    if let Some(dot_pos) = last_segment.rfind('.') {
+        std::borrow::Cow::Owned(path[..last_segment_start + dot_pos].to_string())
+    } else {
+        std::borrow::Cow::Borrowed(path)
     }
 }
 
@@ -114,4 +135,42 @@ fn test_dzi_json() {
     assert_eq!(dzi.get_size().unwrap(), Vec2d { y: 4409, x: 7793 });
     assert_eq!(dzi.get_tile_size(), Vec2d { x: 254, y: 254 });
     assert_eq!(dzi.max_level(), 13);
+}
+
+#[test]
+fn test_base_url_without_extension_ignores_host_dots() {
+    let dzi = DziFile {
+        overlap: 0,
+        tile_size: 256,
+        format: "jpg".to_string(),
+        size: Size {
+            width: 482096,
+            height: 5550,
+        },
+        base_url: None,
+    };
+
+    assert_eq!(
+        dzi.base_url("https://www.bayeuxmuseum.com/datasviewer/manifest"),
+        "https://www.bayeuxmuseum.com/datasviewer/manifest_files"
+    );
+}
+
+#[test]
+fn test_base_url_strips_only_last_path_segment_extension() {
+    let dzi = DziFile {
+        overlap: 0,
+        tile_size: 256,
+        format: "jpg".to_string(),
+        size: Size {
+            width: 1,
+            height: 1,
+        },
+        base_url: None,
+    };
+
+    assert_eq!(
+        dzi.base_url("https://example.com/a.b/image.dzi"),
+        "https://example.com/a.b/image_files"
+    );
 }
