@@ -204,6 +204,10 @@ impl TileProvider for TitledZoomLevel {
         self.inner.tile_count_hint()
     }
 
+    fn tile_size_hint(&self) -> Option<Vec2d> {
+        self.inner.tile_size_hint()
+    }
+
     fn http_headers(&self) -> HashMap<String, String> {
         self.inner.http_headers()
     }

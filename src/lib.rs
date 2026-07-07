@@ -256,16 +256,16 @@ fn output_prefers_source_pyramid(path: &Path, args: &Arguments) -> bool {
 
 async fn dezoomify_source_pyramid(
     args: &Arguments,
-    levels: Vec<ZoomLevel>,
+    mut levels: Vec<ZoomLevel>,
     tile_buffer: TileBuffer,
 ) -> Result<(), ZoomError> {
     let mut canvas = tile_buffer;
-    let full_size = levels
-        .last()
-        .and_then(|level| level.size_hint())
-        .ok_or(ZoomError::NoLevels)?;
+    let full_size = largest_level_size(&levels).ok_or(ZoomError::NoLevels)?;
+    levels.sort_by_key(|level| std::cmp::Reverse(level_area(level.size_hint())));
 
-    for (index, zoom_level) in levels.into_iter().rev().enumerate() {
+    let mut total_tiles = 0;
+    let mut successful_tiles = 0;
+    for (index, zoom_level) in levels.into_iter().enumerate() {
         let level_size = zoom_level.size_hint().unwrap_or(full_size);
         let scale_factor = full_size.x.div_ceil(level_size.x).max(1);
         canvas
@@ -278,9 +278,32 @@ async fn dezoomify_source_pyramid(
             .await?;
         let state = dezoomify_level_into_buffer(args, zoom_level, &mut canvas).await?;
         validate_download_success(&state)?;
+        total_tiles += state.total_tiles;
+        successful_tiles += state.successful_tiles;
     }
 
-    finalize_canvas(&mut canvas).await
+    finalize_canvas(&mut canvas).await?;
+    if successful_tiles < total_tiles {
+        Err(ZoomError::PartialDownload {
+            successful_tiles,
+            total_tiles,
+            destination: canvas.destination().to_string_lossy().to_string(),
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn largest_level_size(levels: &[ZoomLevel]) -> Option<Vec2d> {
+    levels
+        .iter()
+        .filter_map(|level| level.size_hint())
+        .max_by_key(|size| level_area(Some(*size)))
+}
+
+fn level_area(size: Option<Vec2d>) -> u64 {
+    size.map(|size| u64::from(size.x) * u64::from(size.y))
+        .unwrap_or(0)
 }
 
 pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
@@ -298,7 +321,7 @@ pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
 
     let base_dir = current_dir()?;
     let output_file = args.output_file();
-    let largest_size = zoom_levels.last().and_then(|level| level.size_hint());
+    let largest_size = largest_level_size(&zoom_levels);
     let save_as = prepare_output_path(&output_file, &title, &base_dir, largest_size)?;
     let tile_buffer = create_tile_buffer(save_as.clone(), args.compression).await?;
 
