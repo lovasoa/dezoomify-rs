@@ -67,6 +67,10 @@ impl TileBuffer {
         Ok(())
     }
 
+    pub fn has_size(&self) -> bool {
+        matches!(self, TileBuffer::Writing { .. })
+    }
+
     pub fn prefers_encoded_tiles(&self) -> bool {
         let extension = self.destination().extension().unwrap_or_default();
         extension == "tiff" || extension == "tif"

@@ -19,6 +19,7 @@ pub struct SourceLevel {
     pub index: usize,
     pub size: Vec2d,
     pub scale_factor: u32,
+    pub tile_size: Option<Vec2d>,
 }
 
 pub trait Encoder: Send + 'static {

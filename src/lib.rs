@@ -273,6 +273,7 @@ async fn dezoomify_source_pyramid(
                 index,
                 size: full_size,
                 scale_factor,
+                tile_size: zoom_level.tile_size_hint(),
             })
             .await?;
         let state = dezoomify_level_into_buffer(args, zoom_level, &mut canvas).await?;
@@ -301,7 +302,7 @@ pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
     let save_as = prepare_output_path(&output_file, &title, &base_dir, largest_size)?;
     let tile_buffer = create_tile_buffer(save_as.clone(), args.compression).await?;
 
-    if output_prefers_source_pyramid(&save_as, args) && zoom_levels.len() > 1 {
+    if output_prefers_source_pyramid(&save_as, args) {
         info!("Dezooming source pyramid with {} levels", zoom_levels.len());
         dezoomify_source_pyramid(args, zoom_levels, tile_buffer).await?;
     } else {

@@ -275,8 +275,10 @@ async fn prepare_canvas_size(
     canvas: &mut TileBuffer,
     zoom_level_iter: &ZoomLevelIter<'_>,
 ) -> Result<(), ZoomError> {
-    if let Some(size) = zoom_level_iter.size_hint() {
-        canvas.set_size(size).await?;
+    if !canvas.has_size() {
+        if let Some(size) = zoom_level_iter.size_hint() {
+            canvas.set_size(size).await?;
+        }
     }
     Ok(())
 }
