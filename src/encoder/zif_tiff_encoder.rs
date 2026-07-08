@@ -164,6 +164,16 @@ impl Encoder for ZifTiffEncoder {
             ));
         }
         if self.fallback.is_none() {
+            if self
+                .destination
+                .extension()
+                .is_some_and(|extension| extension == "zif")
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "zif output requires passthrough-compatible JPEG tiles; use a .tiff extension for decoded fallback output",
+                ));
+            }
             let fallback_destination = decoded_fallback_destination(&self.destination);
             self.fallback = Some(
                 Canvas::<Rgba<u8>>::new_generic(fallback_destination.clone(), self.size)
@@ -474,6 +484,44 @@ mod tests {
                 subsampling: (2, 2)
             }
         );
+    }
+
+    #[test]
+    fn rejects_decoded_fallback_for_zif_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("fallback.zif");
+        let mut encoder = ZifTiffEncoder::new(destination.clone(), Vec2d { x: 1, y: 1 }).unwrap();
+
+        let err = encoder
+            .add_tile(Tile {
+                position: Vec2d { x: 0, y: 0 },
+                image: image::DynamicImage::new_rgba8(1, 1),
+                icc_profile: None,
+                exif_metadata: None,
+            })
+            .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(!destination.with_extension("tiff").exists());
+    }
+
+    #[test]
+    fn allows_decoded_fallback_for_tiff_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("fallback.tiff");
+        let mut encoder = ZifTiffEncoder::new(destination.clone(), Vec2d { x: 1, y: 1 }).unwrap();
+
+        encoder
+            .add_tile(Tile {
+                position: Vec2d { x: 0, y: 0 },
+                image: image::DynamicImage::new_rgba8(1, 1),
+                icc_profile: None,
+                exif_metadata: None,
+            })
+            .unwrap();
+        encoder.finalize().unwrap();
+
+        assert!(destination.exists());
     }
 
     fn minimal_jpeg_with_sof(marker: u8, first_component_sampling: u8) -> Vec<u8> {
