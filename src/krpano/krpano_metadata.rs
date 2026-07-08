@@ -74,13 +74,17 @@ impl KrpanoMetadata {
             let s = [name.as_ref(), &self.name].join(" ");
             Arc::from(s)
         };
-        let images = self.image.into_iter().filter(|image| image.has_tile_levels()).map({
-            let name = Arc::clone(&name);
-            move |image| ImageInfo {
-                image,
-                name: Arc::clone(&name),
-            }
-        });
+        let images = self
+            .image
+            .into_iter()
+            .filter(|image| image.has_tile_levels())
+            .map({
+                let name = Arc::clone(&name);
+                move |image| ImageInfo {
+                    image,
+                    name: Arc::clone(&name),
+                }
+            });
         let scene_images = self
             .scene
             .into_iter()
@@ -97,9 +101,11 @@ impl KrpanoMetadata {
             .iter()
             .find_map(|details| (!details.subject.is_empty()).then_some(details.subject.as_str()))
             .or_else(|| {
-                self.data
-                    .iter()
-                    .find_map(|bytes| serde_json::from_str::<KrpanoMetaData>(bytes).ok().map(|m| m.title))
+                self.data.iter().find_map(|bytes| {
+                    serde_json::from_str::<KrpanoMetaData>(bytes)
+                        .ok()
+                        .map(|m| m.title)
+                })
             })
     }
 }
@@ -159,7 +165,8 @@ impl KrpanoImage {
     }
 
     fn into_all_levels(self) -> impl Iterator<Item = KrpanoLevel> {
-        self.level.into_iter()
+        self.level
+            .into_iter()
             .chain(self.cube.into_iter().map(KrpanoLevel::Cube))
             .chain(self.cylinder.into_iter().map(KrpanoLevel::Cylinder))
             .chain(self.flat.into_iter().map(KrpanoLevel::Flat))
@@ -599,9 +606,7 @@ mod test {
             image.into_levels().collect::<Vec<_>>(),
             vec![KrpanoLevel::Flat(ShapeDesc {
                 url: TemplateString(vec![str("https://example.com/"),]),
-                multires: Some(
-                    "512,768x554,1664x1202,3200x2310,6400x4618,12800x9234".to_string()
-                ),
+                multires: Some("512,768x554,1664x1202,3200x2310,6400x4618,12800x9234".to_string()),
             })]
         )
     }
@@ -673,7 +678,8 @@ mod test {
 
     #[test]
     fn parse_panotour_xml_with_interleaved_unknown_tags() {
-        let parsed = KrpanoMetadata::from_str(r#"<krpano version="1.19">
+        let parsed = KrpanoMetadata::from_str(
+            r#"<krpano version="1.19">
             <security><allowdomain domain="*" /></security>
             <events name="startbehavioursevents" />
             <include url="%FIRSTXML%/index_skin.xml" />
@@ -695,7 +701,8 @@ mod test {
                 </image>
             </scene>
             <krpano nofullspherepanoavailable="false" />
-        </krpano>"#)
+        </krpano>"#,
+        )
         .unwrap();
 
         let infos: Vec<ImageInfo> = parsed.into_image_iter().collect();
