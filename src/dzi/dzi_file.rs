@@ -2,9 +2,9 @@ use std::fmt::Debug;
 
 use serde::Deserialize;
 
-use crate::Vec2d;
 use crate::json_utils::number_or_string;
 use crate::network::resolve_relative;
+use crate::Vec2d;
 use url::Url;
 
 use super::DziError;
@@ -51,22 +51,23 @@ impl DziFile {
             let relative_url_str = s.trim_end_matches('/');
             resolve_relative(resource_url, relative_url_str)
         } else {
-            format!("{}_files", resource_url_without_extension(resource_url))
+            implicit_base_url(resource_url)
         }
     }
 }
 
-fn resource_url_without_extension(resource_url: &str) -> String {
+fn implicit_base_url(resource_url: &str) -> String {
     if let Ok(mut url) = Url::parse(resource_url) {
         let path = url.path().to_string();
         let stripped_path = strip_last_path_segment_extension(&path);
-        if stripped_path != path {
-            url.set_path(&stripped_path);
-        }
+        let tile_path = format!("{stripped_path}_files");
+        url.set_path(&tile_path);
+        url.set_query(None);
+        url.set_fragment(None);
         return url.to_string();
     }
 
-    strip_last_path_segment_extension(resource_url).into_owned()
+    format!("{}_files", strip_last_path_segment_extension(resource_url))
 }
 
 fn strip_last_path_segment_extension(path: &str) -> std::borrow::Cow<'_, str> {
@@ -172,5 +173,24 @@ fn test_base_url_strips_only_last_path_segment_extension() {
     assert_eq!(
         dzi.base_url("https://example.com/a.b/image.dzi"),
         "https://example.com/a.b/image_files"
+    );
+}
+
+#[test]
+fn test_base_url_drops_query_and_fragment() {
+    let dzi = DziFile {
+        overlap: 0,
+        tile_size: 256,
+        format: "jpg".to_string(),
+        size: Size {
+            width: 1,
+            height: 1,
+        },
+        base_url: None,
+    };
+
+    assert_eq!(
+        dzi.base_url("https://host/image.dzi?token=abc#frag"),
+        "https://host/image_files"
     );
 }
