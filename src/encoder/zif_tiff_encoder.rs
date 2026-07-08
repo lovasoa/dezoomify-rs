@@ -192,10 +192,14 @@ impl Encoder for ZifTiffEncoder {
         if codec == Codec::Jpeg {
             color_model = ColorModel::YCbCr;
         }
-        let jpeg = match parse_jpeg_tile_info(&tile.bytes) {
-            Ok(jpeg) => jpeg,
-            Err(err) if self.source_pyramid => return Err(err),
-            Err(_) => return self.decode_or_fall_back(tile),
+        let jpeg = if codec == Codec::Jpeg {
+            match parse_jpeg_tile_info(&tile.bytes) {
+                Ok(jpeg) => Some(jpeg),
+                Err(err) if self.source_pyramid => return Err(err),
+                Err(_) => return self.decode_or_fall_back(tile),
+            }
+        } else {
+            None
         };
         let color = (color_model, channels);
         self.configure_from_first_tile(&tile)?;
@@ -213,7 +217,7 @@ impl Encoder for ZifTiffEncoder {
                 "cannot mix tile color models in one zif TIFF",
             ));
         }
-        if Some(jpeg) != self.jpeg {
+        if jpeg != self.jpeg {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "cannot mix JPEG sampling layouts in one zif TIFF",
@@ -307,13 +311,7 @@ fn parse_jpeg_tile_info(bytes: &[u8]) -> io::Result<JpegTileInfo> {
         }
         let segment = &bytes[pos + 2..pos + len];
         match marker {
-            0xc0 => return parse_jpeg_start_of_frame(segment),
-            0xc2 => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "progressive JPEG tiles cannot be passed through to zif TIFF",
-                ));
-            }
+            0xc0 | 0xc1 | 0xc2 => return parse_jpeg_start_of_frame(segment),
             _ => {}
         }
         pos += len;
@@ -468,9 +466,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_progressive_jpeg_passthrough_metadata() {
+    fn parses_jpeg_subsampling_from_progressive_frame() {
         let jpeg = minimal_jpeg_with_sof(0xc2, 0x22);
-        assert!(parse_jpeg_tile_info(&jpeg).is_err());
+        assert_eq!(
+            parse_jpeg_tile_info(&jpeg).unwrap(),
+            JpegTileInfo {
+                subsampling: (2, 2)
+            }
+        );
     }
 
     fn minimal_jpeg_with_sof(marker: u8, first_component_sampling: u8) -> Vec<u8> {
