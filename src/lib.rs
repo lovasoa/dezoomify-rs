@@ -271,13 +271,21 @@ async fn dezoomify_source_pyramid(
 ) -> Result<(), ZoomError> {
     let mut canvas = tile_buffer;
     let full_size = largest_level_size(&levels).ok_or(ZoomError::NoLevels)?;
+    let base_scale_factor = levels
+        .iter()
+        .filter(|level| level.size_hint() == Some(full_size))
+        .filter_map(|level| level.scale_factor_hint())
+        .filter(|&scale_factor| scale_factor > 0)
+        .min()
+        .unwrap_or(1);
     levels.sort_by_key(|level| std::cmp::Reverse(level_area(level.size_hint())));
 
     let mut total_tiles = 0;
     let mut successful_tiles = 0;
     for (index, zoom_level) in levels.into_iter().enumerate() {
         let level_size = zoom_level.size_hint().unwrap_or(full_size);
-        let scale_factor = source_level_scale_factor(full_size, level_size, &zoom_level);
+        let scale_factor =
+            source_level_scale_factor(full_size, level_size, &zoom_level, base_scale_factor);
         canvas
             .begin_level(SourceLevel {
                 index,
@@ -305,11 +313,33 @@ async fn dezoomify_source_pyramid(
     }
 }
 
-fn source_level_scale_factor(full_size: Vec2d, level_size: Vec2d, level: &ZoomLevel) -> u32 {
-    level
-        .scale_factor_hint()
+fn source_level_scale_factor(
+    full_size: Vec2d,
+    level_size: Vec2d,
+    level: &ZoomLevel,
+    base_scale_factor: u32,
+) -> u32 {
+    source_level_scale_factor_from_hint(
+        full_size,
+        level_size,
+        level.scale_factor_hint(),
+        base_scale_factor,
+    )
+}
+
+fn source_level_scale_factor_from_hint(
+    full_size: Vec2d,
+    level_size: Vec2d,
+    scale_factor_hint: Option<u32>,
+    base_scale_factor: u32,
+) -> u32 {
+    if let Some(scale_factor) = scale_factor_hint
         .filter(|&scale_factor| scale_factor > 0)
-        .unwrap_or_else(|| full_size.x.div_ceil(level_size.x).max(1))
+        .filter(|scale_factor| scale_factor % base_scale_factor == 0)
+    {
+        return (scale_factor / base_scale_factor).max(1);
+    }
+    full_size.x.div_ceil(level_size.x).max(1)
 }
 
 fn largest_level_size(levels: &[ZoomLevel]) -> Option<Vec2d> {
@@ -794,6 +824,50 @@ mod tests {
                 Vec2d { x: 100, y: 100 }
             ),
             Vec2d { x: 100, y: 100 }
+        );
+    }
+
+    #[test]
+    fn source_level_scale_factor_uses_relative_hints() {
+        assert_eq!(
+            source_level_scale_factor_from_hint(
+                Vec2d { x: 5156, y: 3816 },
+                Vec2d { x: 2578, y: 1908 },
+                Some(2),
+                1,
+            ),
+            2
+        );
+        assert_eq!(
+            source_level_scale_factor_from_hint(
+                Vec2d { x: 515, y: 381 },
+                Vec2d { x: 515, y: 381 },
+                Some(10),
+                10,
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn source_level_scale_factor_falls_back_for_unusable_hints() {
+        assert_eq!(
+            source_level_scale_factor_from_hint(
+                Vec2d { x: 5156, y: 3816 },
+                Vec2d { x: 2578, y: 1908 },
+                None,
+                1,
+            ),
+            2
+        );
+        assert_eq!(
+            source_level_scale_factor_from_hint(
+                Vec2d { x: 5156, y: 3816 },
+                Vec2d { x: 2578, y: 1908 },
+                Some(3),
+                2,
+            ),
+            2
         );
     }
 
