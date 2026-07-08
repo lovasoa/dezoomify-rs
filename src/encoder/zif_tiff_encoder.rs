@@ -17,6 +17,7 @@ pub struct ZifTiffEncoder {
     tile_size: Option<Vec2d>,
     codec: Option<Codec>,
     color: Option<(ColorModel, u16)>,
+    jpeg: Option<JpegTileInfo>,
     occupied_tiles: HashSet<(usize, u64, u64)>,
     size: Vec2d,
     destination: PathBuf,
@@ -47,6 +48,7 @@ impl ZifTiffEncoder {
             tile_size: None,
             codec: None,
             color: None,
+            jpeg: None,
             occupied_tiles: HashSet::new(),
             size,
             destination,
@@ -67,25 +69,42 @@ impl ZifTiffEncoder {
         let tile_size = self.declared_tile_size.unwrap_or(tile.size);
         let codec = codec_for_format(tile.format)?;
         let (mut color_model, channels) = color_from_encoded_tile(tile)?;
+        let jpeg = if codec == Codec::Jpeg {
+            Some(parse_jpeg_tile_info(&tile.bytes)?)
+        } else {
+            None
+        };
         if codec == Codec::Jpeg {
             color_model = ColorModel::YCbCr;
         }
+        let ycbcr_subsampling = jpeg.map(|info| info.subsampling);
         debug!(
-            "Using zif-tiff passthrough encoder: tile size {tile_size}, codec {codec:?}, color {color_model:?}/{channels} channels"
+            "Using zif-tiff passthrough encoder: tile size {tile_size}, codec {codec:?}, color {color_model:?}/{channels} channels, JPEG subsampling {ycbcr_subsampling:?}"
         );
-        self.writer = zif_tiff::Writer::new()
+        let mut builder = zif_tiff::Writer::new()
             .dimensions((u64::from(self.size.x), u64::from(self.size.y)))
             .tile_size((tile_size.x, tile_size.y))
             .map_err(to_io_error)?
             .codec(codec)
             .color_model(color_model)
             .channels(channels)
-            .map_err(to_io_error)?
-            .build()
             .map_err(to_io_error)?;
+        if let Some(subsampling) = ycbcr_subsampling {
+            builder = if subsampling == (1, 1) || subsampling == (2, 2) {
+                builder
+                    .ycbcr_subsampling(subsampling)
+                    .map_err(to_io_error)?
+            } else {
+                builder
+                    .preserve_nonstandard_ycbcr_subsampling(subsampling)
+                    .map_err(to_io_error)?
+            };
+        }
+        self.writer = builder.build().map_err(to_io_error)?;
         self.tile_size = Some(tile_size);
         self.codec = Some(codec);
         self.color = Some((color_model, channels));
+        self.jpeg = jpeg;
         Ok(())
     }
 
@@ -173,6 +192,11 @@ impl Encoder for ZifTiffEncoder {
         if codec == Codec::Jpeg {
             color_model = ColorModel::YCbCr;
         }
+        let jpeg = match parse_jpeg_tile_info(&tile.bytes) {
+            Ok(jpeg) => jpeg,
+            Err(err) if self.source_pyramid => return Err(err),
+            Err(_) => return self.decode_or_fall_back(tile),
+        };
         let color = (color_model, channels);
         self.configure_from_first_tile(&tile)?;
 
@@ -187,6 +211,12 @@ impl Encoder for ZifTiffEncoder {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "cannot mix tile color models in one zif TIFF",
+            ));
+        }
+        if Some(jpeg) != self.jpeg {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "cannot mix JPEG sampling layouts in one zif TIFF",
             ));
         }
         if !tile.position.x.is_multiple_of(expected_size.x)
@@ -237,6 +267,96 @@ impl Encoder for ZifTiffEncoder {
     fn size(&self) -> Vec2d {
         self.size
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct JpegTileInfo {
+    subsampling: (u16, u16),
+}
+
+fn parse_jpeg_tile_info(bytes: &[u8]) -> io::Result<JpegTileInfo> {
+    if bytes.len() < 4 || bytes[0] != 0xff || bytes[1] != 0xd8 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid JPEG tile",
+        ));
+    }
+
+    let mut pos = 2;
+    while pos + 4 <= bytes.len() {
+        while pos < bytes.len() && bytes[pos] == 0xff {
+            pos += 1;
+        }
+        if pos >= bytes.len() {
+            break;
+        }
+        let marker = bytes[pos];
+        pos += 1;
+        if marker == 0xd9 || marker == 0xda {
+            break;
+        }
+        if marker == 0x01 || (0xd0..=0xd7).contains(&marker) {
+            continue;
+        }
+        if pos + 2 > bytes.len() {
+            break;
+        }
+        let len = usize::from(u16::from_be_bytes([bytes[pos], bytes[pos + 1]]));
+        if len < 2 || pos + len > bytes.len() {
+            break;
+        }
+        let segment = &bytes[pos + 2..pos + len];
+        match marker {
+            0xc0 => return parse_jpeg_start_of_frame(segment),
+            0xc2 => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "progressive JPEG tiles cannot be passed through to zif TIFF",
+                ));
+            }
+            _ => {}
+        }
+        pos += len;
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        "JPEG tile has no supported start-of-frame marker",
+    ))
+}
+
+fn parse_jpeg_start_of_frame(segment: &[u8]) -> io::Result<JpegTileInfo> {
+    if segment.len() < 6 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "truncated JPEG start-of-frame segment",
+        ));
+    }
+    let components = usize::from(segment[5]);
+    if components == 0 || segment.len() < 6 + components * 3 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid JPEG component table",
+        ));
+    }
+
+    let mut max_h = 1u16;
+    let mut max_v = 1u16;
+    for component in segment[6..6 + components * 3].chunks_exact(3) {
+        let sampling = component[1];
+        max_h = max_h.max(u16::from(sampling >> 4));
+        max_v = max_v.max(u16::from(sampling & 0x0f));
+    }
+    if max_h == 0 || max_v == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid JPEG sampling factors",
+        ));
+    }
+
+    Ok(JpegTileInfo {
+        subsampling: (max_h, max_v),
+    })
 }
 
 fn decoded_fallback_destination(destination: &std::path::Path) -> PathBuf {
@@ -326,5 +446,58 @@ mod tests {
         let tile = image.level_tiles(0).unwrap().next().unwrap();
         let stored = reader.fetch(tile.range()).unwrap();
         assert_eq!(stored.bytes(), bytes.as_slice());
+    }
+
+    #[test]
+    fn parses_jpeg_subsampling_from_baseline_frame() {
+        let jpeg = minimal_jpeg_with_sof(0xc0, 0x11);
+        assert_eq!(
+            parse_jpeg_tile_info(&jpeg).unwrap(),
+            JpegTileInfo {
+                subsampling: (1, 1)
+            }
+        );
+
+        let jpeg = minimal_jpeg_with_sof(0xc0, 0x22);
+        assert_eq!(
+            parse_jpeg_tile_info(&jpeg).unwrap(),
+            JpegTileInfo {
+                subsampling: (2, 2)
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_progressive_jpeg_passthrough_metadata() {
+        let jpeg = minimal_jpeg_with_sof(0xc2, 0x22);
+        assert!(parse_jpeg_tile_info(&jpeg).is_err());
+    }
+
+    fn minimal_jpeg_with_sof(marker: u8, first_component_sampling: u8) -> Vec<u8> {
+        vec![
+            0xff,
+            0xd8,
+            0xff,
+            marker,
+            0x00,
+            0x11,
+            0x08,
+            0x00,
+            0x10,
+            0x00,
+            0x10,
+            0x03,
+            0x01,
+            first_component_sampling,
+            0x00,
+            0x02,
+            0x11,
+            0x00,
+            0x03,
+            0x11,
+            0x00,
+            0xff,
+            0xd9,
+        ]
     }
 }
