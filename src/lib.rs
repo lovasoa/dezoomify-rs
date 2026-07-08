@@ -250,7 +250,7 @@ fn output_prefers_source_pyramid(path: &Path, args: &Arguments) -> bool {
     }
     matches!(
         path.extension().and_then(|ext| ext.to_str()),
-        Some("iiif" | "tif" | "tiff")
+        Some("iiif" | "tif" | "tiff" | "zif")
     )
 }
 

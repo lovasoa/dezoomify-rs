@@ -68,7 +68,7 @@ fn encoder_for_name(
             size,
             quality,
         )?))
-    } else if extension == "tiff" || extension == "tif" {
+    } else if extension == "tiff" || extension == "tif" || extension == "zif" {
         debug!("Using the zif-tiff passthrough encoder");
         Ok(Box::new(zif_tiff_encoder::ZifTiffEncoder::new(
             destination,

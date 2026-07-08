@@ -92,7 +92,7 @@ impl TileBuffer {
     pub async fn begin_level(&mut self, level: SourceLevel) -> Result<(), ZoomError> {
         let prefer_encoded_tiles = {
             let extension = self.destination().extension().unwrap_or_default();
-            extension == "tiff" || extension == "tif"
+            extension == "tiff" || extension == "tif" || extension == "zif"
         };
         match self {
             TileBuffer::Buffering {
