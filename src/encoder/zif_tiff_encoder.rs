@@ -22,6 +22,7 @@ pub struct ZifTiffEncoder {
     destination: PathBuf,
     declared_tile_size: Option<Vec2d>,
     fallback: Option<Canvas<Rgba<u8>>>,
+    fallback_destination: Option<PathBuf>,
     force_decoded_fallback: bool,
     source_pyramid: bool,
     current_level: usize,
@@ -51,6 +52,7 @@ impl ZifTiffEncoder {
             destination,
             declared_tile_size: None,
             fallback: None,
+            fallback_destination: None,
             force_decoded_fallback: false,
             source_pyramid: false,
             current_level: 0,
@@ -143,10 +145,12 @@ impl Encoder for ZifTiffEncoder {
             ));
         }
         if self.fallback.is_none() {
+            let fallback_destination = decoded_fallback_destination(&self.destination);
             self.fallback = Some(
-                Canvas::<Rgba<u8>>::new_generic(self.destination.clone(), self.size)
+                Canvas::<Rgba<u8>>::new_generic(fallback_destination.clone(), self.size)
                     .map_err(|err| io::Error::other(err.to_string()))?,
             );
+            self.fallback_destination = Some(fallback_destination);
         }
         self.fallback
             .as_mut()
@@ -214,7 +218,13 @@ impl Encoder for ZifTiffEncoder {
 
     fn finalize(&mut self) -> io::Result<()> {
         if let Some(fallback) = &mut self.fallback {
-            return fallback.finalize();
+            fallback.finalize()?;
+            if let Some(fallback_destination) = &self.fallback_destination {
+                if fallback_destination != &self.destination {
+                    std::fs::rename(fallback_destination, &self.destination)?;
+                }
+            }
+            return Ok(());
         }
         if self.tile_size.is_none() {
             self.output
@@ -226,6 +236,17 @@ impl Encoder for ZifTiffEncoder {
 
     fn size(&self) -> Vec2d {
         self.size
+    }
+}
+
+fn decoded_fallback_destination(destination: &std::path::Path) -> PathBuf {
+    if destination
+        .extension()
+        .is_some_and(|extension| extension == "zif")
+    {
+        destination.with_extension("tiff")
+    } else {
+        destination.to_owned()
     }
 }
 
