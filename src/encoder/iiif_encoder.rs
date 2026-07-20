@@ -27,7 +27,7 @@ pub struct IiifEncoder {
 impl IiifEncoder {
     pub fn new(destination: PathBuf, size: Vec2d, quality: u8) -> Result<Self, ZoomError> {
         let _ = std::fs::remove_file(&destination);
-        debug!("Creating IIIF  directory at {:?}", &destination);
+        debug!("Creating IIIF  directory at {:?}", destination);
         std::fs::create_dir(&destination)?;
         let tile_saver = Arc::new(IIIFTileSaver {
             root_path: destination.clone(),

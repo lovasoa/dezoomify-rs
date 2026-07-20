@@ -263,10 +263,10 @@ impl Encoder for ZifTiffEncoder {
     fn finalize(&mut self) -> io::Result<()> {
         if let Some(fallback) = &mut self.fallback {
             fallback.finalize()?;
-            if let Some(fallback_destination) = &self.fallback_destination {
-                if fallback_destination != &self.destination {
-                    std::fs::rename(fallback_destination, &self.destination)?;
-                }
+            if let Some(fallback_destination) = &self.fallback_destination
+                && fallback_destination != &self.destination
+            {
+                std::fs::rename(fallback_destination, &self.destination)?;
             }
             return Ok(());
         }
@@ -320,9 +320,8 @@ fn parse_jpeg_tile_info(bytes: &[u8]) -> io::Result<JpegTileInfo> {
             break;
         }
         let segment = &bytes[pos + 2..pos + len];
-        match marker {
-            0xc0 | 0xc1 | 0xc2 => return parse_jpeg_start_of_frame(segment),
-            _ => {}
+        if let 0xc0..=0xc2 = marker {
+            return parse_jpeg_start_of_frame(segment);
         }
         pos += len;
     }
