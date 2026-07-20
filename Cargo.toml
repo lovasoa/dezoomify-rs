@@ -41,7 +41,14 @@ log = "0.4"
 env_logger = "0.11"
 url = "2"
 fixedbitset = "0.5"
-reqwest = { version = "0.13", features = ["gzip", "zstd"] }
+reqwest = { version = "0.13", default-features = false, features = [
+    "charset",
+    "gzip",
+    "http2",
+    "native-tls",
+    "system-proxy",
+    "zstd",
+] }
 krpano-decrypt = "0.2"
 zif-tiff = "0.3.0"
 

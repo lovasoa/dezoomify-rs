@@ -185,6 +185,7 @@ pub fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
         .collect::<Result<header::HeaderMap, ZoomError>>()?;
     debug!("Creating an http client with the following headers: {header_map:?}");
     let client = reqwest::Client::builder()
+        .use_native_tls()
         .http1_title_case_headers()
         .default_headers(header_map)
         .referer(false)
