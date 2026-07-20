@@ -236,7 +236,7 @@ impl TmpTile {
         let tmp_tile_path = Self::path(self_position, scale_factor);
         debug!(
             "Opening partial tile of size {} at {:?} in order to paste pixels from {} to {}",
-            scaled_size, &tmp_tile_path, top_left, bottom_right
+            scaled_size, tmp_tile_path, top_left, bottom_right
         );
         let mut tile_img = image::open(&tmp_tile_path)
             .unwrap_or_else(|_| image::DynamicImage::new_rgb8(scaled_size.x, scaled_size.y));
@@ -253,7 +253,7 @@ impl TmpTile {
             // The tile has been fully covered by pixels
             debug!(
                 "Removing completed tile of level {} at position {}: {:?}",
-                level_size, self_position, &tmp_tile_path
+                level_size, self_position, tmp_tile_path
             );
             let _ = std::fs::remove_file(&tmp_tile_path);
             Ok(Some(tile_img))

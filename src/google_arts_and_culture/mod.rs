@@ -134,7 +134,7 @@ fn post_process_tile(
 
 impl std::fmt::Debug for GAPZoomLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", &self.page_info.name)
+        write!(f, "{}", self.page_info.name)
     }
 }
 

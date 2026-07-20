@@ -105,13 +105,9 @@ impl Dezoomer for IIIF {
             match type_str {
                 "ImageService2" | "ImageService3" | "iiif:ImageProfile" => {
                     // This is clearly an Image Service info.json, try parsing it directly
-                    match zoom_levels(uri, contents) {
-                        Ok(levels) => {
-                            let image = IIIFZoomableImage::new(levels, None);
-                            return Ok(dezoomer_result_from_single_image(image));
-                        }
-                        Err(e) => return Err(e.into()),
-                    }
+                    let levels = zoom_levels(uri, contents)?;
+                    let image = IIIFZoomableImage::new(levels, None);
+                    return Ok(dezoomer_result_from_single_image(image));
                 }
                 "Manifest" | "sc:Manifest" => {
                     // This is clearly a manifest, try parsing it as such

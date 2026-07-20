@@ -84,7 +84,7 @@ fn encoder_for_name(
     } else {
         debug!(
             "Using the generic canvas implementation {}",
-            &destination.to_string_lossy()
+            destination.to_string_lossy()
         );
         Ok(Box::new(canvas::Canvas::<Rgba<u8>>::new_generic(
             destination,

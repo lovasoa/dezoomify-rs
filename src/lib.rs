@@ -78,7 +78,7 @@ async fn get_dezoomer_result(
             Ok(result) => return Ok(result),
             Err(DezoomerError::NeedsData { uri }) => {
                 let contents = fetch_uri(&uri, http).await.into();
-                debug!("Response for metadata file '{}': {:?}", uri, &contents);
+                debug!("Response for metadata file '{}': {:?}", uri, contents);
                 i.uri = uri;
                 i.contents = contents;
             }

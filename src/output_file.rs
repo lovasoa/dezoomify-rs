@@ -58,7 +58,7 @@ pub fn get_outname(
             }
             debug!(
                 "File {:?} already exists. Trying another file name...",
-                &path
+                path
             );
             let mut name = OsString::from(&filename);
             name.push(format!("_{i:04}."));
@@ -92,9 +92,9 @@ mod tests {
             .expect("Unable to create a temporary directory to run the tests in");
         let lock = CWD_MUTEX.lock().unwrap(); // prevents multiple threads from changing cwd at once
         let cwd = current_dir().expect("Unable to getcwd");
-        set_current_dir(&tmp).expect(&format!("Unable to cd into {:?}", &tmp));
+        set_current_dir(&tmp).expect(&format!("Unable to cd into {:?}", tmp));
         let res = f(tmp.as_ref());
-        set_current_dir(&cwd).expect(&format!("Unable to cd into {:?}", &cwd));
+        set_current_dir(&cwd).expect(&format!("Unable to cd into {:?}", cwd));
         drop(lock);
         res
     }
