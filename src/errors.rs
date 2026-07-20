@@ -9,7 +9,7 @@ use tokio::sync::mpsc::error::SendError;
 
 custom_error! {
     pub ZoomError
-    Networking{source: reqwest::Error} = "network error: {source}",
+    Networking{source: reqwest::Error, details: String} = "{details}",
     Dezoomer{source: DezoomerError} = "Dezoomer error: {source}",
     NoLevels = "A zoomable image was found, but it did not contain any zoom level",
     NoBulkUrl { bulk_file_path: String } = "No url found in bulk file {bulk_file_path}",
@@ -34,6 +34,28 @@ custom_error! {
     BufferToImage{source: BufferToImageError} = "{source}",
     WriteError{source: SendError<TileBufferMsg>} = "Unable to write tile {source:?}",
     PngError{source: png::EncodingError} = "PNG encoding error: {source}",
+}
+
+impl From<reqwest::Error> for ZoomError {
+    fn from(source: reqwest::Error) -> Self {
+        let message = source.to_string();
+        let mut cause = source.source();
+        while let Some(next) = cause.and_then(Error::source) {
+            cause = Some(next);
+        }
+        let root_cause = cause.map(|cause| {
+            let message = cause.to_string();
+            message
+                .split_once(" (os error ")
+                .map_or(message.as_str(), |(message, _)| message)
+                .to_string()
+        });
+        let details = match root_cause {
+            Some(root_cause) if root_cause != message => format!("{message}: {root_cause}"),
+            _ => message,
+        };
+        Self::Networking { source, details }
+    }
 }
 
 custom_error! {
