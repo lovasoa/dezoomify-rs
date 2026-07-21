@@ -95,6 +95,69 @@ pub struct ZoomableImageUrl {
 /// Result type for dezoomer operations - a vector of ZoomableImages
 pub type DezoomerResult = Vec<ZoomableImage>;
 
+/// Logical images discovered by a dezoomer.
+#[derive(Debug, Default)]
+pub struct Images(Vec<ZoomableImage>);
+
+impl Images {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, ZoomableImage> {
+        self.0.iter()
+    }
+}
+
+impl IntoIterator for Images {
+    type Item = ZoomableImage;
+    type IntoIter = std::vec::IntoIter<ZoomableImage>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl From<ZoomLevels> for Images {
+    fn from(levels: ZoomLevels) -> Self {
+        ResolvedImage::new(levels, None).into()
+    }
+}
+
+impl From<ResolvedImage> for Images {
+    fn from(image: ResolvedImage) -> Self {
+        Self(vec![ZoomableImage::Image(image)])
+    }
+}
+
+impl From<Vec<ResolvedImage>> for Images {
+    fn from(images: Vec<ResolvedImage>) -> Self {
+        Self(images.into_iter().map(ZoomableImage::Image).collect())
+    }
+}
+
+impl From<Vec<ZoomableImageUrl>> for Images {
+    fn from(urls: Vec<ZoomableImageUrl>) -> Self {
+        Self(urls.into_iter().map(ZoomableImage::ImageUrl).collect())
+    }
+}
+
+impl From<Vec<ZoomableImage>> for Images {
+    fn from(images: Vec<ZoomableImage>) -> Self {
+        Self(images)
+    }
+}
+
+impl FromIterator<ZoomableImage> for Images {
+    fn from_iter<T: IntoIterator<Item = ZoomableImage>>(iter: T) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
 /// A logical image, either resolved or represented by a URL to resolve.
 #[derive(Debug)]
 pub enum ZoomableImage {
@@ -274,6 +337,11 @@ pub trait Dezoomer {
 
     /// List of the various sizes at which an image is available
     fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError>;
+
+    /// Discover logical images without flattening their zoom levels.
+    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
+        Ok(self.zoom_levels(data)?.into())
+    }
 
     /// Extract images or image URLs from the input data
     fn dezoomer_result(&mut self, data: &DezoomerInput) -> Result<DezoomerResult, DezoomerError> {
@@ -678,6 +746,17 @@ mod tests {
         assert_eq!(image.title(), title.as_deref());
         let extracted_levels = image.into_zoom_levels();
         assert_eq!(extracted_levels.len(), 1);
+    }
+
+    #[test]
+    fn zoom_levels_convert_to_one_resolved_image() {
+        let images: Images = vec![Box::<FakeLvl>::default() as ZoomLevel].into();
+
+        assert_eq!(images.len(), 1);
+        let ZoomableImage::Image(image) = images.into_iter().next().unwrap() else {
+            panic!("expected a resolved image");
+        };
+        assert_eq!(image.into_zoom_levels().len(), 1);
     }
 
     #[test]
