@@ -16,28 +16,6 @@ use krpano_decrypt::{decrypt_xml, is_encrypted_xml};
 
 mod krpano_metadata;
 
-#[derive(Debug)]
-pub struct KrpanoZoomableImage {
-    zoom_levels: ZoomLevels,
-    title: Option<String>,
-}
-
-impl KrpanoZoomableImage {
-    pub fn new(zoom_levels: ZoomLevels, title: Option<String>) -> Self {
-        Self { zoom_levels, title }
-    }
-}
-
-impl ZoomableImageWithLevels for KrpanoZoomableImage {
-    fn into_zoom_levels(self: Box<Self>) -> Result<ZoomLevels, DezoomerError> {
-        Ok(self.zoom_levels)
-    }
-
-    fn title(&self) -> Option<String> {
-        self.title.clone()
-    }
-}
-
 /// A dezoomer for krpano images
 /// See https://krpano.com/docu/xml/#top
 #[derive(Default)]
@@ -722,7 +700,7 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, Dezoom
 fn load_images_from_properties(
     url: &str,
     contents: &[u8],
-) -> Result<Vec<Box<dyn ZoomableImageWithLevels>>, DezoomerError> {
+) -> Result<Vec<ResolvedImage>, DezoomerError> {
     let decrypted;
     let contents = if is_encrypted_xml(contents) {
         decrypted = decrypt_xml(contents, None)?;
@@ -734,7 +712,7 @@ fn load_images_from_properties(
     let base_url = Arc::from(url);
     let global_title = image_properties.get_title().unwrap_or("").to_string();
 
-    let images: Vec<Box<dyn ZoomableImageWithLevels>> = image_properties
+    let images = image_properties
         .into_image_iter()
         .map(|ImageInfo { image, name }| {
             let root_tile_size = image.tilesize.map(Vec2d::square);
@@ -808,10 +786,9 @@ fn load_images_from_properties(
                 Some(title)
             };
 
-            Box::new(KrpanoZoomableImage::new(levels, image_title))
-                as Box<dyn ZoomableImageWithLevels>
+            ResolvedImage::new(levels, image_title)
         })
-        .collect();
+        .collect::<Vec<_>>();
 
     Ok(images)
 }
@@ -1005,7 +982,7 @@ fn explicit_levels_expand_level_placeholder_in_dezoomer_result() {
     let ZoomableImage::Image(image) = result.into_iter().next().unwrap() else {
         panic!("Expected ZoomableImage::Image");
     };
-    let levels = image.into_zoom_levels().unwrap();
+    let levels = image.into_zoom_levels();
     assert_bellegambe_levels(&levels);
 }
 
@@ -1073,7 +1050,7 @@ fn test_dezoomer_result_multiple_scenes() {
     let result = dezoomer.dezoomer_result(&input).unwrap();
     assert_eq!(result.len(), 3);
 
-    let titles: Vec<Option<String>> = result
+    let titles: Vec<Option<&str>> = result
         .iter()
         .map(|zoomable_img| {
             if let ZoomableImage::Image(image) = zoomable_img {
@@ -1083,9 +1060,9 @@ fn test_dezoomer_result_multiple_scenes() {
             }
         })
         .collect();
-    assert!(titles.contains(&Some(" Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_Color".to_string())));
-    assert!(titles.contains(&Some(" Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_3D".to_string())));
-    assert!(titles.contains(&Some(" Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_3Dcolor".to_string())));
+    assert!(titles.contains(&Some(" Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_Color")));
+    assert!(titles.contains(&Some(" Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_3D")));
+    assert!(titles.contains(&Some(" Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_3Dcolor")));
 }
 
 #[test]

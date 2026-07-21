@@ -18,29 +18,6 @@ pub mod tile_info;
 #[derive(Default)]
 pub struct IIIF;
 
-/// Represents a single IIIF image with metadata from a manifest or info.json
-#[derive(Debug)]
-pub struct IIIFZoomableImage {
-    zoom_levels: ZoomLevels,
-    title: Option<String>,
-}
-
-impl IIIFZoomableImage {
-    pub fn new(zoom_levels: ZoomLevels, title: Option<String>) -> Self {
-        IIIFZoomableImage { zoom_levels, title }
-    }
-}
-
-impl ZoomableImageWithLevels for IIIFZoomableImage {
-    fn into_zoom_levels(self: Box<Self>) -> Result<ZoomLevels, DezoomerError> {
-        Ok(self.zoom_levels)
-    }
-
-    fn title(&self) -> Option<String> {
-        self.title.clone()
-    }
-}
-
 /// Determines the best title for an image from IIIF manifest metadata
 pub fn determine_title(image_info: &manifest_types::ExtractedImageInfo) -> Option<String> {
     let mut parts = Vec::new();
@@ -106,7 +83,7 @@ impl Dezoomer for IIIF {
                 "ImageService2" | "ImageService3" | "iiif:ImageProfile" => {
                     // This is clearly an Image Service info.json, try parsing it directly
                     let levels = zoom_levels(uri, contents)?;
-                    let image = IIIFZoomableImage::new(levels, None);
+                    let image = ResolvedImage::new(levels, None);
                     return Ok(dezoomer_result_from_single_image(image));
                 }
                 "Manifest" | "sc:Manifest" => {
@@ -133,7 +110,7 @@ impl Dezoomer for IIIF {
             // Likely an Image Service, try parsing as info.json first
             match zoom_levels(uri, contents) {
                 Ok(levels) => {
-                    let image = IIIFZoomableImage::new(levels, None);
+                    let image = ResolvedImage::new(levels, None);
                     return Ok(dezoomer_result_from_single_image(image));
                 }
                 Err(_) => {
@@ -152,7 +129,7 @@ impl Dezoomer for IIIF {
                 // Not a manifest or failed to parse as manifest, try as info.json
                 match zoom_levels(uri, contents) {
                     Ok(levels) => {
-                        let image = IIIFZoomableImage::new(levels, None);
+                        let image = ResolvedImage::new(levels, None);
                         Ok(dezoomer_result_from_single_image(image))
                     }
                     Err(e) => Err(e.into()),

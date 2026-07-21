@@ -64,14 +64,25 @@ pub type ZoomLevel = Box<dyn TileProvider + Send + Sync>;
 /// A collection of multiple resolutions at which an image is available
 pub type ZoomLevels = Vec<ZoomLevel>;
 
-/// Represents a single zoomable image with multiple resolution levels
-/// All the levels are already cheaply available synchronously.
-pub trait ZoomableImageWithLevels: Send + Sync + std::fmt::Debug {
-    /// Extract all available zoom levels for this image (consumes self)
-    fn into_zoom_levels(self: Box<Self>) -> Result<ZoomLevels, DezoomerError>;
+/// A single logical image whose zoom levels are already available.
+#[derive(Debug)]
+pub struct ResolvedImage {
+    zoom_levels: ZoomLevels,
+    title: Option<String>,
+}
 
-    /// Get a human-readable title for this image
-    fn title(&self) -> Option<String>;
+impl ResolvedImage {
+    pub fn new(zoom_levels: ZoomLevels, title: Option<String>) -> Self {
+        Self { zoom_levels, title }
+    }
+
+    pub fn into_zoom_levels(self) -> ZoomLevels {
+        self.zoom_levels
+    }
+
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
 }
 
 /// A URL that can be processed by dezoomers to create ZoomableImages
@@ -84,12 +95,11 @@ pub struct ZoomableImageUrl {
 /// Result type for dezoomer operations - a vector of ZoomableImages
 pub type DezoomerResult = Vec<ZoomableImage>;
 
-/// An image that can be asynchonously resolved to a ZoomableImageWithLevels
-/// It already has the title, but no zoom levels available.
+/// A logical image, either resolved or represented by a URL to resolve.
 #[derive(Debug)]
 pub enum ZoomableImage {
     /// Direct zoomable images (e.g., from IIIF manifests, krpano configs)
-    Image(Box<dyn ZoomableImageWithLevels>),
+    Image(ResolvedImage),
     /// URLs that need further processing by other dezoomers
     ImageUrl(ZoomableImageUrl),
 }
@@ -97,7 +107,7 @@ pub enum ZoomableImage {
 impl ZoomableImage {
     pub fn title(&self) -> Option<Cow<'_, str>> {
         match self {
-            ZoomableImage::Image(image) => image.title().map(Cow::Owned),
+            ZoomableImage::Image(image) => image.title().map(Cow::Borrowed),
             ZoomableImage::ImageUrl(url) => url.title.as_deref().map(Cow::Borrowed),
         }
     }
@@ -107,7 +117,7 @@ impl ZoomableImage {
         http: &reqwest::Client,
     ) -> Result<ZoomLevels, DezoomerError> {
         match self {
-            ZoomableImage::Image(image) => image.into_zoom_levels(),
+            ZoomableImage::Image(image) => Ok(image.into_zoom_levels()),
             ZoomableImage::ImageUrl(url) => {
                 // Import at the top of the function rather than globally
                 use crate::auto::{all_dezoomers, prioritize_dezoomers_for_url};
@@ -243,28 +253,6 @@ fn zoom_levels_with_title(levels: ZoomLevels, title: Option<String>) -> ZoomLeve
         .collect()
 }
 
-#[derive(Debug)]
-pub struct SimpleZoomableImage {
-    zoom_levels: ZoomLevels,
-    title: Option<String>,
-}
-
-impl SimpleZoomableImage {
-    pub fn new(zoom_levels: ZoomLevels, title: Option<String>) -> Self {
-        SimpleZoomableImage { zoom_levels, title }
-    }
-}
-
-impl ZoomableImageWithLevels for SimpleZoomableImage {
-    fn into_zoom_levels(self: Box<Self>) -> Result<ZoomLevels, DezoomerError> {
-        Ok(self.zoom_levels)
-    }
-
-    fn title(&self) -> Option<String> {
-        self.title.clone()
-    }
-}
-
 pub trait IntoZoomLevels {
     fn into_zoom_levels(self) -> ZoomLevels;
 }
@@ -290,7 +278,7 @@ pub trait Dezoomer {
     /// Extract images or image URLs from the input data
     fn dezoomer_result(&mut self, data: &DezoomerInput) -> Result<DezoomerResult, DezoomerError> {
         let levels = self.zoom_levels(data)?;
-        let image = SimpleZoomableImage::new(levels, None);
+        let image = ResolvedImage::new(levels, None);
         Ok(dezoomer_result_from_single_image(image))
     }
 
@@ -596,18 +584,14 @@ pub fn dezoomer_result_from_urls(urls: Vec<ZoomableImageUrl>) -> DezoomerResult 
     urls.into_iter().map(ZoomableImage::ImageUrl).collect()
 }
 
-/// Convert a vector of ZoomableImageWithLevels to DezoomerResult
-pub fn dezoomer_result_from_images(
-    images: Vec<Box<dyn ZoomableImageWithLevels>>,
-) -> DezoomerResult {
+/// Convert a vector of resolved images to DezoomerResult
+pub fn dezoomer_result_from_images(images: Vec<ResolvedImage>) -> DezoomerResult {
     images.into_iter().map(ZoomableImage::Image).collect()
 }
 
-/// Convert a single ZoomableImageWithLevels to DezoomerResult
-pub fn dezoomer_result_from_single_image<T: ZoomableImageWithLevels + 'static>(
-    image: T,
-) -> DezoomerResult {
-    vec![ZoomableImage::Image(Box::new(image))]
+/// Convert a single resolved image to DezoomerResult
+pub fn dezoomer_result_from_single_image(image: ResolvedImage) -> DezoomerResult {
+    vec![ZoomableImage::Image(image)]
 }
 
 /// Convert a single ZoomableImageUrl to DezoomerResult
@@ -685,21 +669,14 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_zoomable_image() {
+    fn test_resolved_image() {
         let zoom_levels: ZoomLevels = vec![Box::<FakeLvl>::default()];
         let title = Some("Test Image".to_string());
 
-        let image = SimpleZoomableImage::new(zoom_levels, title.clone());
+        let image = ResolvedImage::new(zoom_levels, title.clone());
 
-        // Test title retrieval
-        assert_eq!(image.title(), title);
-
-        // Test that the image can be used as a ZoomableImage trait object
-        let boxed_image: Box<dyn ZoomableImageWithLevels> = Box::new(image);
-        assert_eq!(boxed_image.title(), title);
-
-        // Test that into_zoom_levels works correctly
-        let extracted_levels = boxed_image.into_zoom_levels().unwrap();
+        assert_eq!(image.title(), title.as_deref());
+        let extracted_levels = image.into_zoom_levels();
         assert_eq!(extracted_levels.len(), 1);
     }
 
