@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{self, Debug};
 use std::str::FromStr;
-use std::sync::Arc;
 
 pub use crate::errors::DezoomerError;
 
@@ -83,6 +82,13 @@ impl ResolvedImage {
     pub fn title(&self) -> Option<&str> {
         self.title.as_deref()
     }
+
+    fn with_fallback_title(mut self, title: Option<String>) -> Self {
+        if self.title.as_deref().is_none_or(str::is_empty) {
+            self.title = title;
+        }
+        self
+    }
 }
 
 /// A URL that can be processed by dezoomers to create ZoomableImages
@@ -114,6 +120,29 @@ impl Images {
 
     fn into_vec(self) -> Vec<ZoomableImage> {
         self.0
+    }
+
+    fn with_fallback_title(self, title: Option<String>) -> Self {
+        let Some(title) = title.filter(|title| !title.trim().is_empty()) else {
+            return self;
+        };
+
+        Self(
+            self.0
+                .into_iter()
+                .map(|image| match image {
+                    ZoomableImage::Image(image) => {
+                        ZoomableImage::Image(image.with_fallback_title(Some(title.clone())))
+                    }
+                    ZoomableImage::ImageUrl(mut image_url) => {
+                        if image_url.title.as_deref().is_none_or(str::is_empty) {
+                            image_url.title = Some(title.clone());
+                        }
+                        ZoomableImage::ImageUrl(image_url)
+                    }
+                })
+                .collect(),
+        )
     }
 }
 
@@ -179,14 +208,10 @@ impl ZoomableImage {
         }
     }
 
-    pub async fn into_zoom_levels(
-        self,
-        http: &reqwest::Client,
-    ) -> Result<ZoomLevels, DezoomerError> {
+    pub async fn resolve(self, http: &reqwest::Client) -> Result<Images, DezoomerError> {
         match self {
-            ZoomableImage::Image(image) => Ok(image.into_zoom_levels()),
+            ZoomableImage::Image(image) => Ok(image.into()),
             ZoomableImage::ImageUrl(url) => {
-                // Import at the top of the function rather than globally
                 use crate::auto::{all_dezoomers, prioritize_dezoomers_for_url};
                 use crate::network::fetch_uri;
                 use log::debug;
@@ -202,22 +227,20 @@ impl ZoomableImage {
                 for mut dezoomer in dezoomers {
                     debug!("Trying dezoomer '{}' on URL: {}", dezoomer.name(), url);
 
-                    // Use the dezoomer's zoom_levels method to try to extract levels
                     let mut input = DezoomerInput {
                         uri: url.clone(),
                         contents: PageContents::Unknown,
                     };
 
-                    // Handle the NeedsData loop
                     loop {
-                        match dezoomer.zoom_levels(&input) {
-                            Ok(levels) => {
+                        match dezoomer.images(&input) {
+                            Ok(images) => {
                                 debug!(
-                                    "Dezoomer '{}' successfully extracted {} zoom levels",
+                                    "Dezoomer '{}' successfully extracted {} images",
                                     dezoomer.name(),
-                                    levels.len()
+                                    images.len()
                                 );
-                                return Ok(zoom_levels_with_title(levels, title));
+                                return Ok(images.with_fallback_title(title));
                             }
                             Err(DezoomerError::NeedsData { uri: needed_uri }) => {
                                 debug!(
@@ -243,81 +266,6 @@ impl ZoomableImage {
             }
         }
     }
-}
-
-#[derive(Debug)]
-struct TitledZoomLevel {
-    inner: ZoomLevel,
-    title: Arc<str>,
-}
-
-impl TileProvider for TitledZoomLevel {
-    fn next_tiles(&mut self, previous: Option<TileFetchResult>) -> Vec<TileReference> {
-        self.inner.next_tiles(previous)
-    }
-
-    fn post_process_fn(&self) -> PostProcessFn {
-        self.inner.post_process_fn()
-    }
-
-    fn fmt_name(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt_level_name(
-            f,
-            format_args!("{}", self.title),
-            self.inner.size_hint(),
-            self.inner.tile_count_hint(),
-        )
-    }
-
-    fn title(&self) -> Option<String> {
-        Some(self.title.to_string())
-    }
-
-    fn size_hint(&self) -> Option<Vec2d> {
-        self.inner.size_hint()
-    }
-
-    fn tile_count_hint(&self) -> Option<u32> {
-        self.inner.tile_count_hint()
-    }
-
-    fn tile_size_hint(&self) -> Option<Vec2d> {
-        self.inner.tile_size_hint()
-    }
-
-    fn scale_factor_hint(&self) -> Option<u32> {
-        self.inner.scale_factor_hint()
-    }
-
-    fn has_overlapping_tiles(&self) -> bool {
-        self.inner.has_overlapping_tiles()
-    }
-
-    fn http_headers(&self) -> HashMap<String, String> {
-        self.inner.http_headers()
-    }
-}
-
-fn zoom_levels_with_title(levels: ZoomLevels, title: Option<String>) -> ZoomLevels {
-    let Some(title) = title.filter(|title| !title.trim().is_empty()) else {
-        return levels;
-    };
-
-    let title: Arc<str> = Arc::from(title);
-
-    levels
-        .into_iter()
-        .map(|inner| {
-            if inner.title().is_some_and(|title| !title.trim().is_empty()) {
-                inner
-            } else {
-                Box::new(TitledZoomLevel {
-                    inner,
-                    title: title.clone(),
-                }) as ZoomLevel
-            }
-        })
-        .collect()
 }
 
 pub trait IntoZoomLevels {
@@ -768,28 +716,17 @@ mod tests {
     }
 
     #[test]
-    fn test_zoom_levels_with_title_preserves_level_details() {
-        let levels =
-            zoom_levels_with_title(vec![Box::<FakeLvl>::default()], Some("Readable".into()));
+    fn fallback_title_does_not_replace_image_title() {
+        let images = Images::from(vec![
+            ResolvedImage::new(vec![], None),
+            ResolvedImage::new(vec![], Some("Child".into())),
+        ])
+        .with_fallback_title(Some("Parent".into()));
+        let titles = images
+            .iter()
+            .map(|image| image.title().map(Cow::into_owned))
+            .collect::<Vec<_>>();
 
-        let display_name = format!("{}", &*levels[0]);
-        assert_eq!(levels[0].title(), Some("Readable".to_string()));
-        assert_eq!(levels[0].name(), display_name);
-        assert!(display_name.starts_with("Readable ("));
-        assert!(display_name.contains("pixels"));
-        assert!(display_name.contains("tiles"));
-    }
-
-    #[test]
-    fn test_zoom_levels_with_title_preserves_inner_title() {
-        let levels = zoom_levels_with_title(
-            vec![Box::new(FakeLvl {
-                title: Some("Inner Title"),
-            })],
-            Some("Outer Title".into()),
-        );
-
-        assert_eq!(levels[0].title(), Some("Inner Title".to_string()));
-        assert!(format!("{}", &*levels[0]).starts_with("FakeLvl ("));
+        assert_eq!(titles, vec![Some("Parent".into()), Some("Child".into())]);
     }
 }

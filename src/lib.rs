@@ -20,7 +20,7 @@ use output_file::get_outname;
 use tile::Tile;
 pub use vec2d::Vec2d;
 
-use crate::dezoomer::{Images, PageContents, ZoomableImage};
+use crate::dezoomer::{Images, PageContents, ResolvedImage, ZoomableImage};
 use crate::encoder::SourceLevel;
 use crate::encoder::tile_buffer::TileBuffer;
 
@@ -228,6 +228,25 @@ fn choose_image(
     }
 }
 
+async fn resolve_selected_image(
+    mut image: ZoomableImage,
+    args: &Arguments,
+    http: &Client,
+) -> Result<ResolvedImage, ZoomError> {
+    loop {
+        match image {
+            ZoomableImage::Image(image) => return Ok(image),
+            ZoomableImage::ImageUrl(image_url) => {
+                let images = ZoomableImage::ImageUrl(image_url)
+                    .resolve(http)
+                    .await
+                    .map_err(|source| ZoomError::Dezoomer { source })?;
+                image = choose_image(images.into_iter().collect(), args)?;
+            }
+        }
+    }
+}
+
 /// Prepares the output file path for saving
 fn prepare_output_path(
     outfile_arg: &Option<PathBuf>,
@@ -363,11 +382,9 @@ pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
     let images = get_images_from_uri(args, &http_client, &uri).await?;
     debug!("Found {} zoomable images", images.len());
     let selected_image = choose_image(images, args)?;
-    let title = selected_image.title().map(|title| title.into_owned());
-    let zoom_levels = selected_image
-        .into_zoom_levels(&http_client)
-        .await
-        .map_err(|e| ZoomError::Dezoomer { source: e })?;
+    let resolved_image = resolve_selected_image(selected_image, args, &http_client).await?;
+    let title = resolved_image.title().map(str::to_string);
+    let zoom_levels = resolved_image.into_zoom_levels();
 
     let base_dir = current_dir()?;
     let output_file = args.output_file();
@@ -486,15 +503,54 @@ async fn process_bulk_zoomable_images(
     stats: &mut BulkStats,
     base_dir: &Path,
 ) -> Result<(), ZoomError> {
+    use std::collections::VecDeque;
+
     use log::{debug, trace, warn};
     let bulk_outfile = args.bulk_output_file();
+    let mut pending = VecDeque::from(images);
+    let mut index = 0;
 
-    // Process each ZoomableImage individually
-    for (index, zoomable_image) in images.into_iter().enumerate() {
+    while let Some(zoomable_image) = pending.pop_front() {
         let image_title = zoomable_image
             .title()
             .unwrap_or_else(|| format!("Image_{}", index + 1).into())
             .to_string();
+
+        let resolved_image = match zoomable_image {
+            ZoomableImage::Image(image) => image,
+            image @ ZoomableImage::ImageUrl(_) => match image.resolve(http).await {
+                Ok(images) if !images.is_empty() => {
+                    let images = images.into_iter().collect::<Vec<_>>();
+                    stats.total_images += images.len() - 1;
+                    for image in images.into_iter().rev() {
+                        pending.push_front(image);
+                    }
+                    continue;
+                }
+                Ok(_) => {
+                    warn!(
+                        "No images found for image {} ('{}')",
+                        index + 1,
+                        image_title
+                    );
+                    stats.record_failure();
+                    index += 1;
+                    continue;
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to resolve image {} ('{}'): {}",
+                        index + 1,
+                        image_title,
+                        e
+                    );
+                    stats.record_failure();
+                    index += 1;
+                    continue;
+                }
+            },
+        };
+
         debug!(
             "Preparing image {}/{}: {}",
             index + 1,
@@ -502,20 +558,7 @@ async fn process_bulk_zoomable_images(
             image_title
         );
 
-        // Resolve the ZoomableImage to get zoom levels
-        let zoom_levels = match zoomable_image.into_zoom_levels(http).await {
-            Ok(levels) => levels,
-            Err(e) => {
-                warn!(
-                    "Failed to get zoom levels for image {} ('{}'): {}",
-                    index + 1,
-                    image_title,
-                    e
-                );
-                stats.record_failure();
-                continue;
-            }
-        };
+        let zoom_levels = resolved_image.into_zoom_levels();
 
         trace!(
             "Zoom levels for image {}: {} levels available",
@@ -534,6 +577,7 @@ async fn process_bulk_zoomable_images(
                     e
                 );
                 stats.record_failure();
+                index += 1;
                 continue;
             }
         };
@@ -580,6 +624,7 @@ async fn process_bulk_zoomable_images(
                 e
             );
             stats.record_failure();
+            index += 1;
             continue;
         };
 
@@ -598,6 +643,7 @@ async fn process_bulk_zoomable_images(
                     e
                 );
                 stats.record_failure();
+                index += 1;
                 continue;
             }
         };
@@ -643,6 +689,8 @@ async fn process_bulk_zoomable_images(
                 stats.record_failure();
             }
         }
+
+        index += 1;
     }
 
     Ok(())
