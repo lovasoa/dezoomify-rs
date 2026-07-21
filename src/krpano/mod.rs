@@ -17,7 +17,7 @@ use krpano_decrypt::{decrypt_xml, is_encrypted_xml};
 mod krpano_metadata;
 
 /// A dezoomer for krpano images
-/// See https://krpano.com/docu/xml/#top
+/// See <https://krpano.com/docu/xml/#top>
 #[derive(Default)]
 pub struct KrpanoDezoomer {
     /// State machine for the NeedsData resolution chain.

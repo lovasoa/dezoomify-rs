@@ -8,7 +8,7 @@ use crate::dezoomer::*;
 mod image_properties;
 
 /// Dezoomer for the zoomify image format.
-/// See: http://zoomify.com/
+/// See: <http://zoomify.com/>
 #[derive(Default)]
 pub struct ZoomifyDezoomer;
 

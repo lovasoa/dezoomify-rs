@@ -14,7 +14,7 @@ pub mod manifest_types;
 pub mod tile_info;
 
 /// Dezoomer for the International Image Interoperability Framework.
-/// See https://iiif.io/
+/// See <https://iiif.io/>
 #[derive(Default)]
 pub struct IIIF;
 

@@ -11,7 +11,7 @@ use regex::Regex;
 mod dzi_file;
 
 /// A dezoomer for Deep Zoom Images
-/// See https://docs.microsoft.com/en-us/previous-versions/windows/silverlight/dotnet-windows-silverlight/cc645043%28v%3dvs.95%29
+/// See <https://docs.microsoft.com/en-us/previous-versions/windows/silverlight/dotnet-windows-silverlight/cc645043%28v%3dvs.95%29>
 #[derive(Default)]
 pub struct DziDezoomer;
 

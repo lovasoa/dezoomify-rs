@@ -12,7 +12,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 /// A dezoomer for krpano images
-/// See https://iipimage.sourceforge.io/documentation/protocol/
+/// See <https://iipimage.sourceforge.io/documentation/protocol/>
 #[derive(Default)]
 pub struct IIPImage;
 

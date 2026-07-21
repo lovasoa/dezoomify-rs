@@ -20,7 +20,7 @@ pub struct Arguments {
 
     /// File to which the resulting image should be saved. By default the program will
     /// generate a name based on the image metadata if available. Otherwise, it will
-    /// generate a name in the format "dezoomified[_N].{jpg,png}" depending on which
+    /// generate a name in the format `dezoomified[_N].{jpg,png}` depending on which
     /// files already exist in the current directory, and whether the target image size fits
     /// in a JPEG or not.
     #[arg()]
