@@ -161,6 +161,7 @@ custom_error! {#[derive(PartialEq, Eq)] pub IIPError
 mod tests {
     use super::*;
     use crate::dezoomer::PageContents;
+    use crate::dezoomer::test_utils::expect_needs_data;
 
     #[test]
     fn test_lowercase() {
@@ -170,10 +171,7 @@ mod tests {
             uri,
             contents: PageContents::Unknown,
         };
-        match IIPImage.images(&data) {
-            Err(DezoomerError::NeedsData { uri }) => assert_eq!(uri, metadata_uri),
-            _ => panic!("Unexpected result"),
-        }
+        assert_eq!(expect_needs_data(IIPImage.images(&data)), metadata_uri);
     }
 
     #[test]

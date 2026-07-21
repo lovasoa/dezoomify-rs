@@ -551,6 +551,7 @@ fn test_qualities() {
 #[cfg(test)]
 mod manifest_parsing_tests {
     use super::*;
+    use crate::dezoomer::test_utils::{expect_single_resolved, expect_single_url};
     use crate::iiif::manifest_types::ExtractedImageInfo;
 
     fn legacy_manifest_data() -> &'static [u8] {
@@ -605,9 +606,7 @@ mod manifest_parsing_tests {
           ]
         }
         "#;
-        let result = parse_iiif_manifest_from_bytes(json_data.as_bytes(), manifest_url);
-        assert!(result.is_ok());
-        let infos = result.unwrap();
+        let infos = parse_iiif_manifest_from_bytes(json_data.as_bytes(), manifest_url).unwrap();
         assert_eq!(infos.len(), 1);
         assert_eq!(
             infos[0],
@@ -652,9 +651,7 @@ mod manifest_parsing_tests {
         }
         "#;
 
-        let result = parse_iiif_manifest_from_bytes(json_data.as_bytes(), manifest_url);
-        assert!(result.is_ok(), "Parsing failed: {:?}", result.err());
-        let infos = result.unwrap();
+        let infos = parse_iiif_manifest_from_bytes(json_data.as_bytes(), manifest_url).unwrap();
         assert_eq!(infos.len(), 3);
 
         assert_eq!(
@@ -696,12 +693,10 @@ mod manifest_parsing_tests {
     fn test_parse_invalid_json_manifest() {
         let manifest_url = "https://example.com/invalid.json";
         let json_data = r#"{ "id": "test", "type": "Manifest", items: [ -- broken json -- ] }"#;
-        let result = parse_iiif_manifest_from_bytes(json_data.as_bytes(), manifest_url);
-        assert!(result.is_err());
-        match result.err().unwrap() {
-            IIIFError::JsonError { .. } => {} // Expected
-            e => panic!("Expected JsonError, got {:?}", e),
-        }
+        assert!(matches!(
+            parse_iiif_manifest_from_bytes(json_data.as_bytes(), manifest_url),
+            Err(IIIFError::JsonError { .. })
+        ));
     }
 
     #[test]
@@ -710,13 +705,8 @@ mod manifest_parsing_tests {
         let json_data = r#"{ "id": "test", "type": "NotAManifest", "items": [] }"#;
         // This should parse fine based on struct leniency, but we log a warning.
         // The function itself should succeed if the structure is parsable into Manifest.
-        let result = parse_iiif_manifest_from_bytes(json_data.as_bytes(), manifest_url);
-        assert!(result.is_ok());
-        // The `extract_image_infos` method would then be called on this.
-        // For a more strict check, one might add an explicit error if manifest.manifest_type != "Manifest".
-        // The current implementation logs a warning and proceeds.
-        let infos = result.unwrap();
-        assert_eq!(infos.len(), 0); // No items that would yield images.
+        let infos = parse_iiif_manifest_from_bytes(json_data.as_bytes(), manifest_url).unwrap();
+        assert!(infos.is_empty());
     }
 
     #[test]
@@ -767,15 +757,9 @@ mod manifest_parsing_tests {
             contents: PageContents::Success(manifest_data.to_vec()),
         };
 
-        let result = dezoomer.images(&input).unwrap();
-        assert_eq!(result.len(), 1);
-
-        if let ZoomableImage::Url(ref url) = result[0] {
-            assert_eq!(url.url, "https://example.com/iiif/page1/info.json");
-            assert_eq!(url.title, Some("Test Book - Page 1".to_string()));
-        } else {
-            panic!("Expected ZoomableImage::Url");
-        }
+        let url = expect_single_url(dezoomer.images(&input).unwrap());
+        assert_eq!(url.url, "https://example.com/iiif/page1/info.json");
+        assert_eq!(url.title.as_deref(), Some("Test Book - Page 1"));
     }
 
     #[test]
@@ -786,15 +770,9 @@ mod manifest_parsing_tests {
             contents: PageContents::Success(legacy_manifest_data().to_vec()),
         };
 
-        let result = dezoomer.images(&input).unwrap();
-        assert_eq!(result.len(), 1);
-
-        if let ZoomableImage::Url(ref url) = result[0] {
-            assert_eq!(url.url, "https://example.com/iiif/page1/info.json");
-            assert_eq!(url.title, Some("Legacy Book - Page 1".to_string()));
-        } else {
-            panic!("Expected ZoomableImage::Url");
-        }
+        let url = expect_single_url(dezoomer.images(&input).unwrap());
+        assert_eq!(url.url, "https://example.com/iiif/page1/info.json");
+        assert_eq!(url.title.as_deref(), Some("Legacy Book - Page 1"));
     }
 
     #[test]
@@ -817,13 +795,8 @@ mod manifest_parsing_tests {
             contents: PageContents::Success(info_data.to_vec()),
         };
 
-        let result = dezoomer.images(&input).unwrap();
-        assert_eq!(result.len(), 1);
-
-        if let ZoomableImage::Resolved(ref image) = result[0] {
-            assert_eq!(image.title(), None);
-        } else {
-            panic!("Expected ZoomableImage::Resolved");
-        }
+        let image = expect_single_resolved(dezoomer.images(&input).unwrap());
+        assert_eq!(image.title(), None);
+        assert_eq!(image.levels().len(), 3);
     }
 }

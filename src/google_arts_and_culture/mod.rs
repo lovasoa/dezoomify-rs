@@ -141,17 +141,10 @@ impl std::fmt::Debug for GAPZoomLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dezoomer::test_utils::{expect_needs_data, expect_single_resolved};
     use crate::dezoomer::{DezoomerInput, PageContents};
     use std::fs;
     use std::path::Path;
-
-    fn into_levels(images: Images) -> ZoomLevels {
-        assert_eq!(images.len(), 1);
-        let ZoomableImage::Resolved(image) = images.into_iter().next().unwrap() else {
-            panic!("expected a resolved image");
-        };
-        image.into_zoom_levels()
-    }
 
     fn get_test_page_html() -> Vec<u8> {
         let test_path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -180,13 +173,9 @@ mod tests {
         };
 
         // First call should extract page info and request tile info URL
-        let result = dezoomer.images(&input);
-        assert!(matches!(result, Err(DezoomerError::NeedsData { .. })));
-
-        if let Err(DezoomerError::NeedsData { uri }) = result {
-            assert!(uri.ends_with("=g"));
-            assert!(uri.contains("lh5.ggpht.com"));
-        }
+        let uri = expect_needs_data(dezoomer.images(&input));
+        assert!(uri.ends_with("=g"));
+        assert!(uri.contains("lh5.ggpht.com"));
 
         // Dezoomer should now have page_info stored
         assert!(dezoomer.page_info.is_some());
@@ -212,10 +201,7 @@ mod tests {
         };
 
         // Second call should parse tile info and return zoom levels
-        let result = dezoomer.images(&input);
-        assert!(result.is_ok());
-
-        let levels = into_levels(result.unwrap());
+        let levels = expect_single_resolved(dezoomer.images(&input).unwrap()).into_zoom_levels();
         assert_eq!(levels.len(), 5); // Based on our test XML
 
         // Verify the largest level
@@ -234,11 +220,7 @@ mod tests {
             contents: PageContents::Success(page_html),
         };
 
-        let result1 = dezoomer.images(&input1);
-        let tile_info_uri = match result1 {
-            Err(DezoomerError::NeedsData { uri }) => uri,
-            _ => panic!("Expected NeedsData error"),
-        };
+        let tile_info_uri = expect_needs_data(dezoomer.images(&input1));
 
         // Step 2: Parse tile info
         let tile_info_xml = get_test_tile_info_xml();
@@ -247,10 +229,7 @@ mod tests {
             contents: PageContents::Success(tile_info_xml),
         };
 
-        let result2 = dezoomer.images(&input2);
-        assert!(result2.is_ok());
-
-        let levels = into_levels(result2.unwrap());
+        let levels = expect_single_resolved(dezoomer.images(&input2).unwrap()).into_zoom_levels();
         assert_eq!(levels.len(), 5);
 
         // Test that levels have the expected properties
@@ -316,8 +295,10 @@ mod tests {
             contents: PageContents::Success(invalid_xml.to_vec()),
         };
 
-        let result = dezoomer.images(&input);
-        assert!(result.is_err());
+        assert!(matches!(
+            dezoomer.images(&input),
+            Err(DezoomerError::Other { .. })
+        ));
     }
 
     #[test]

@@ -17,6 +17,9 @@ pub use super::Vec2d;
 use super::ZoomError;
 use crate::dezoomer::PageContents::Success;
 
+#[cfg(test)]
+pub(crate) mod test_utils;
+
 pub enum PageContents {
     Unknown,
     Success(Vec<u8>),
@@ -686,10 +689,7 @@ mod tests {
     fn zoom_levels_convert_to_one_resolved_image() {
         let images: Images = vec![Box::<FakeLvl>::default() as ZoomLevel].into();
 
-        assert_eq!(images.len(), 1);
-        let ZoomableImage::Resolved(image) = images.into_iter().next().unwrap() else {
-            panic!("expected a resolved image");
-        };
+        let image = test_utils::expect_single_resolved(images);
         assert_eq!(image.into_zoom_levels().len(), 1);
     }
 

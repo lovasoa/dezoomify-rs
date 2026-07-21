@@ -14,6 +14,9 @@ use crate::krpano::krpano_metadata::{ImageInfo, LevelDesc};
 use crate::network::resolve_relative;
 use krpano_decrypt::{decrypt_xml, is_encrypted_xml};
 
+#[cfg(test)]
+use crate::dezoomer::test_utils::{expect_only, expect_resolved_images, expect_single_resolved};
+
 mod krpano_metadata;
 
 /// A dezoomer for krpano images
@@ -795,7 +798,7 @@ impl std::fmt::Debug for Level {
 
 #[test]
 fn test_cube() {
-    let mut images = load_images_from_properties(
+    let image = expect_only(load_images_from_properties(
         "http://test.com",
         r#"<krpano showerrors="false" logkey="false">
         <image type="cube" multires="true" tilesize="512" progressive="false" multiresthreshold="-0.3">
@@ -804,9 +807,8 @@ fn test_cube() {
             </level>
         </image>
         </krpano>"#.as_bytes(),
-    ).unwrap();
-    assert_eq!(images.len(), 1);
-    let mut levels = images.pop().unwrap().into_zoom_levels();
+    ).unwrap());
+    let mut levels = image.into_zoom_levels();
     assert_eq!(levels.len(), 6);
     assert_eq!(levels[0].size_hint(), Some(Vec2d { x: 1000, y: 100 }));
     assert_eq!(format!("{:?}", levels[0]), "Krpano Cube forward");
@@ -827,18 +829,19 @@ fn test_cube() {
 
 #[test]
 fn test_flat_multires() {
-    let mut images = load_images_from_properties(
-        "http://test.com",
-        r#"<krpano>
+    let image = expect_only(
+        load_images_from_properties(
+            "http://test.com",
+            r#"<krpano>
         <image>
             <flat url="level=%l x=%0x y=%0y" multires="1,2x3,3x4x3"/>
         </image>
         </krpano>"#
-            .as_bytes(),
-    )
-    .unwrap();
-    assert_eq!(images.len(), 1);
-    let mut levels = images.pop().unwrap().into_zoom_levels();
+                .as_bytes(),
+        )
+        .unwrap(),
+    );
+    let mut levels = image.into_zoom_levels();
     assert_eq!(levels.len(), 2);
     assert_eq!(levels[1].size_hint(), Some(Vec2d { x: 3, y: 4 }));
     assert_eq!(format!("{:?}", levels[0]), "Krpano Flat");
@@ -899,9 +902,8 @@ fn assert_bellegambe_levels(levels: &ZoomLevels) {
 #[test]
 fn explicit_levels_expand_level_placeholder() {
     let data = std::fs::read("testdata/krpano/pba_lille_gigapixels_1515_bellegambe.xml").unwrap();
-    let mut images = load_images_from_properties(BELLEGAMBE_XML_URL, &data).unwrap();
-    assert_eq!(images.len(), 1);
-    let levels = images.pop().unwrap().into_zoom_levels();
+    let image = expect_only(load_images_from_properties(BELLEGAMBE_XML_URL, &data).unwrap());
+    let levels = image.into_zoom_levels();
     assert_bellegambe_levels(&levels);
 }
 
@@ -912,12 +914,7 @@ fn explicit_levels_expand_level_placeholder_in_image() {
         uri: BELLEGAMBE_XML_URL.to_string(),
         contents: PageContents::Success(data),
     };
-    let result = KrpanoDezoomer::default().images(&input).unwrap();
-    assert_eq!(result.len(), 1);
-
-    let ZoomableImage::Resolved(image) = result.into_iter().next().unwrap() else {
-        panic!("Expected ZoomableImage::Resolved");
-    };
+    let image = expect_single_resolved(KrpanoDezoomer::default().images(&input).unwrap());
     let levels = image.into_zoom_levels();
     assert_bellegambe_levels(&levels);
 }
@@ -937,14 +934,9 @@ fn test_single_image() {
         contents: PageContents::Success(data.to_vec()),
     };
 
-    let result = dezoomer.images(&input).unwrap();
-    assert_eq!(result.len(), 1);
-
-    if let ZoomableImage::Resolved(ref image) = result[0] {
-        assert_eq!(image.title(), None);
-    } else {
-        panic!("Expected ZoomableImage::Resolved");
-    }
+    let image = expect_single_resolved(dezoomer.images(&input).unwrap());
+    assert_eq!(image.title(), None);
+    assert_eq!(image.levels().len(), 2);
 }
 
 #[test]
@@ -963,14 +955,9 @@ fn test_cube_faces_form_one_image() {
         contents: PageContents::Success(data.to_vec()),
     };
 
-    let result = dezoomer.images(&input).unwrap();
-    assert_eq!(result.len(), 1);
-
-    if let ZoomableImage::Resolved(ref image) = result[0] {
-        assert_eq!(image.title(), None);
-    } else {
-        panic!("Expected ZoomableImage::Resolved");
-    }
+    let image = expect_single_resolved(dezoomer.images(&input).unwrap());
+    assert_eq!(image.title(), None);
+    assert_eq!(image.levels().len(), 6);
 }
 
 #[test]
@@ -983,22 +970,22 @@ fn test_multiple_scenes_remain_separate() {
         contents: PageContents::Success(data),
     };
 
-    let result = dezoomer.images(&input).unwrap();
-    assert_eq!(result.len(), 3);
-
-    let titles: Vec<Option<&str>> = result
-        .iter()
-        .map(|zoomable_img| {
-            if let ZoomableImage::Resolved(image) = zoomable_img {
-                image.title()
-            } else {
-                panic!("Expected ZoomableImage::Resolved");
-            }
-        })
-        .collect();
-    assert!(titles.contains(&Some(" Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_Color")));
-    assert!(titles.contains(&Some(" Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_3D")));
-    assert!(titles.contains(&Some(" Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_3Dcolor")));
+    let images = expect_resolved_images(dezoomer.images(&input).unwrap());
+    let titles = images.iter().map(ResolvedImage::title).collect::<Vec<_>>();
+    assert_eq!(
+        titles,
+        [
+            Some(
+                " Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_Color"
+            ),
+            Some(
+                " Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_3D"
+            ),
+            Some(
+                " Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_3Dcolor"
+            ),
+        ]
+    );
 }
 
 #[test]

@@ -517,6 +517,20 @@ async fn test_google_arts_and_culture_dezoomer_basic() {
     use dezoomify_rs::google_arts_and_culture::GAPDezoomer;
     use std::fs;
 
+    fn expect_single_resolved(
+        images: dezoomify_rs::dezoomer::Images,
+    ) -> dezoomify_rs::dezoomer::ResolvedImage {
+        assert_eq!(
+            images.len(),
+            1,
+            "expected exactly one resolved image, got {images:#?}"
+        );
+        match images.into_iter().next().unwrap() {
+            dezoomify_rs::dezoomer::ZoomableImage::Resolved(image) => image,
+            other => panic!("expected a resolved image, got {other:?}"),
+        }
+    }
+
     let workspace_root = get_workspace_root();
     let test_html_path = workspace_root.join("testdata/google_arts_and_culture/page_source.html");
     let test_xml_path = workspace_root.join("testdata/google_arts_and_culture/tile_info.xml");
@@ -553,14 +567,9 @@ async fn test_google_arts_and_culture_dezoomer_basic() {
     let result2 = dezoomer.images(&input2);
     match result2 {
         Ok(images) => {
-            assert_eq!(images.len(), 1);
-            let dezoomify_rs::dezoomer::ZoomableImage::Resolved(image) =
-                images.into_iter().next().unwrap()
-            else {
-                panic!("Expected a resolved image");
-            };
+            let image = expect_single_resolved(images);
             let levels = image.into_zoom_levels();
-            assert!(!levels.is_empty(), "Should have at least one zoom level");
+            assert_eq!(levels.len(), 5);
             println!("Successfully parsed {} zoom levels", levels.len());
         }
         Err(e) => panic!("Failed to parse tile info: {:?}", e),

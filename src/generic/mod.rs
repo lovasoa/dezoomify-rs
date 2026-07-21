@@ -136,7 +136,8 @@ impl std::fmt::Debug for ZoomLevel {
 
 #[test]
 fn test_generic_dezoomer() {
-    use crate::dezoomer::{PageContents, ZoomableImage};
+    use crate::dezoomer::PageContents;
+    use crate::dezoomer::test_utils::expect_single_resolved;
     use std::collections::HashSet;
     let uri = "{{X}},{{Y}}".to_string();
     let images = GenericDezoomer {}
@@ -145,9 +146,7 @@ fn test_generic_dezoomer() {
             contents: PageContents::Unknown,
         })
         .unwrap();
-    let ZoomableImage::Resolved(image) = images.into_iter().next().unwrap() else {
-        panic!("expected a resolved image");
-    };
+    let image = expect_single_resolved(images);
     let mut lvl = image.into_zoom_levels().into_iter().next().unwrap();
 
     let existing_tiles = ["0,0", "1,0", "2,0", "0,1", "1,1", "2,1"];

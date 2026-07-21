@@ -142,6 +142,7 @@ fn extract_title_from_url(url: &str, line_number: usize) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dezoomer::test_utils::{assert_error_contains, expect_image_urls};
 
     #[test]
     fn test_parse_empty_content() {
@@ -195,11 +196,7 @@ mod tests {
     #[test]
     fn test_parse_invalid_url() {
         let content = "not_a_valid_url";
-        let result = parse_text_urls(content);
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("line 1"));
-        assert!(error_msg.contains("not_a_valid_url"));
+        assert_error_contains(parse_text_urls(content), &["line 1", "not_a_valid_url"]);
     }
 
     #[test]
@@ -232,20 +229,14 @@ mod tests {
             contents: PageContents::Success(content.to_vec()),
         };
 
-        let result = dezoomer.images(&input).unwrap();
-        assert_eq!(result.len(), 2);
-
-        if let ZoomableImage::Url(ref url1) = result[0] {
-            assert_eq!(url1.url, "http://example.com/image1.jpg");
-        } else {
-            panic!("Expected ZoomableImage::Url");
-        }
-
-        if let ZoomableImage::Url(ref url2) = result[1] {
-            assert_eq!(url2.url, "https://example.org/manifest.json");
-        } else {
-            panic!("Expected ZoomableImage::Url");
-        }
+        let urls = expect_image_urls(dezoomer.images(&input).unwrap());
+        assert_eq!(
+            urls.iter().map(|url| url.url.as_str()).collect::<Vec<_>>(),
+            [
+                "http://example.com/image1.jpg",
+                "https://example.org/manifest.json"
+            ]
+        );
     }
 
     #[test]
@@ -258,14 +249,7 @@ mod tests {
             contents: PageContents::Success(content.to_vec()),
         };
 
-        let result = dezoomer.images(&input);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("No valid URLs found")
-        );
+        assert_error_contains(dezoomer.images(&input), &["No valid URLs found"]);
     }
 
     #[test]
@@ -278,10 +262,6 @@ mod tests {
             contents: PageContents::Success(content.to_vec()),
         };
 
-        let result = dezoomer.images(&input);
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("line 1"));
-        assert!(error_msg.contains("not_a_valid_url"));
+        assert_error_contains(dezoomer.images(&input), &["line 1", "not_a_valid_url"]);
     }
 }
