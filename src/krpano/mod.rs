@@ -51,10 +51,6 @@ impl Dezoomer for KrpanoDezoomer {
         "krpano"
     }
 
-    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
-        self.handle_input(data, load_from_properties)
-    }
-
     fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
         self.handle_input(data, |uri, contents| {
             Ok(load_images_from_properties(uri, contents)?.into())
@@ -631,71 +627,6 @@ impl From<KrpanoError> for DezoomerError {
     }
 }
 
-fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, DezoomerError> {
-    let decrypted;
-    let contents = if is_encrypted_xml(contents) {
-        decrypted = decrypt_xml(contents, None)?;
-        decrypted.as_slice()
-    } else {
-        contents
-    };
-    let image_properties = KrpanoMetadata::from_reader(contents).map_err(KrpanoError::from)?;
-    let base_url = &Arc::from(url);
-    let title: &Arc<str> = &Arc::from(image_properties.get_title().unwrap_or(""));
-    Ok(image_properties
-        .into_image_iter()
-        .flat_map(move |ImageInfo { image, name }| {
-            let root_tile_size = image.tilesize.map(Vec2d::square);
-            let base_index = image.baseindex;
-            image
-                .into_levels()
-                .enumerate()
-                .flat_map(move |(level_index, level)| {
-                    let name = Arc::clone(&name);
-                    level
-                        .level_descriptions(None, level_index)
-                        .into_iter()
-                        .flat_map(move |level_desc| {
-                            let name = Arc::clone(&name);
-                            level_desc
-                                .map_err(|err| warn!("bad krpano level: {err}"))
-                                .into_iter()
-                                .flat_map(
-                                    move |LevelDesc {
-                                              name: shape_name,
-                                              size,
-                                              tilesize,
-                                              url,
-                                              level_index,
-                                          }| {
-                                        let level = level_index + base_index as usize;
-                                        let name = Arc::clone(&name);
-                                        url.all_sides(level).flat_map(
-                                            move |(side_name, template)| {
-                                                let base_url = Arc::clone(base_url);
-                                                let title = Arc::clone(title);
-                                                let name = Arc::clone(&name);
-                                                tilesize.or(root_tile_size).map(|tile_size| Level {
-                                                    base_url,
-                                                    size,
-                                                    tile_size,
-                                                    base_index,
-                                                    template,
-                                                    shape_name,
-                                                    side_name,
-                                                    name,
-                                                    title,
-                                                })
-                                            },
-                                        )
-                                    },
-                                )
-                        })
-                })
-        })
-        .into_zoom_levels())
-}
-
 fn load_images_from_properties(
     url: &str,
     contents: &[u8],
@@ -864,7 +795,7 @@ impl std::fmt::Debug for Level {
 
 #[test]
 fn test_cube() {
-    let mut levels = load_from_properties(
+    let mut images = load_images_from_properties(
         "http://test.com",
         r#"<krpano showerrors="false" logkey="false">
         <image type="cube" multires="true" tilesize="512" progressive="false" multiresthreshold="-0.3">
@@ -874,6 +805,8 @@ fn test_cube() {
         </image>
         </krpano>"#.as_bytes(),
     ).unwrap();
+    assert_eq!(images.len(), 1);
+    let mut levels = images.pop().unwrap().into_zoom_levels();
     assert_eq!(levels.len(), 6);
     assert_eq!(levels[0].size_hint(), Some(Vec2d { x: 1000, y: 100 }));
     assert_eq!(format!("{:?}", levels[0]), "Krpano Cube forward");
@@ -894,7 +827,7 @@ fn test_cube() {
 
 #[test]
 fn test_flat_multires() {
-    let mut levels = load_from_properties(
+    let mut images = load_images_from_properties(
         "http://test.com",
         r#"<krpano>
         <image>
@@ -904,6 +837,8 @@ fn test_flat_multires() {
             .as_bytes(),
     )
     .unwrap();
+    assert_eq!(images.len(), 1);
+    let mut levels = images.pop().unwrap().into_zoom_levels();
     assert_eq!(levels.len(), 2);
     assert_eq!(levels[1].size_hint(), Some(Vec2d { x: 3, y: 4 }));
     assert_eq!(format!("{:?}", levels[0]), "Krpano Flat");
@@ -964,7 +899,9 @@ fn assert_bellegambe_levels(levels: &ZoomLevels) {
 #[test]
 fn explicit_levels_expand_level_placeholder() {
     let data = std::fs::read("testdata/krpano/pba_lille_gigapixels_1515_bellegambe.xml").unwrap();
-    let levels = load_from_properties(BELLEGAMBE_XML_URL, &data).unwrap();
+    let mut images = load_images_from_properties(BELLEGAMBE_XML_URL, &data).unwrap();
+    assert_eq!(images.len(), 1);
+    let levels = images.pop().unwrap().into_zoom_levels();
     assert_bellegambe_levels(&levels);
 }
 
@@ -975,7 +912,7 @@ fn explicit_levels_expand_level_placeholder_in_dezoomer_result() {
         uri: BELLEGAMBE_XML_URL.to_string(),
         contents: PageContents::Success(data),
     };
-    let result = KrpanoDezoomer::default().dezoomer_result(&input).unwrap();
+    let result = KrpanoDezoomer::default().images(&input).unwrap();
     assert_eq!(result.len(), 1);
 
     let ZoomableImage::Image(image) = result.into_iter().next().unwrap() else {
@@ -1000,7 +937,7 @@ fn test_dezoomer_result_single_image() {
         contents: PageContents::Success(data.to_vec()),
     };
 
-    let result = dezoomer.dezoomer_result(&input).unwrap();
+    let result = dezoomer.images(&input).unwrap();
     assert_eq!(result.len(), 1);
 
     if let ZoomableImage::Image(ref image) = result[0] {
@@ -1026,7 +963,7 @@ fn test_dezoomer_result_cube_faces() {
         contents: PageContents::Success(data.to_vec()),
     };
 
-    let result = dezoomer.dezoomer_result(&input).unwrap();
+    let result = dezoomer.images(&input).unwrap();
     assert_eq!(result.len(), 1);
 
     if let ZoomableImage::Image(ref image) = result[0] {
@@ -1046,7 +983,7 @@ fn test_dezoomer_result_multiple_scenes() {
         contents: PageContents::Success(data),
     };
 
-    let result = dezoomer.dezoomer_result(&input).unwrap();
+    let result = dezoomer.images(&input).unwrap();
     assert_eq!(result.len(), 3);
 
     let titles: Vec<Option<&str>> = result
@@ -1263,7 +1200,7 @@ fn viewer_js_is_detected_before_html_embed_markers() {
         contents: PageContents::Success(viewer_js.to_vec()),
     };
 
-    let err = dezoomer.dezoomer_result(&data).unwrap_err();
+    let err = dezoomer.images(&data).unwrap_err();
 
     assert!(matches!(
         err,
@@ -1286,7 +1223,7 @@ fn old_create_pano_viewer_js_is_detected_as_viewer_js() {
         contents: PageContents::Success(viewer_js.to_vec()),
     };
 
-    let err = dezoomer.dezoomer_result(&data).unwrap_err();
+    let err = dezoomer.images(&data).unwrap_err();
 
     assert!(matches!(
         err,

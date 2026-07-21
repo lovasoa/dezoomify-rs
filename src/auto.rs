@@ -1,6 +1,6 @@
 use log::debug;
 
-use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, Images, ZoomLevel, ZoomLevels};
+use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, Images};
 use crate::errors::DezoomerError::NeedsData;
 
 /// Reorder dezoomers to prioritize those most likely to handle the given URL
@@ -69,7 +69,6 @@ pub fn all_dezoomers(include_generic: bool) -> Vec<Box<dyn Dezoomer>> {
 pub struct AutoDezoomer {
     dezoomers: Vec<Box<dyn Dezoomer>>,
     errors: Vec<(&'static str, DezoomerError)>,
-    successes: Vec<ZoomLevel>,
     needs_uris: Vec<String>,
     prioritized_for_url: Option<String>,
 }
@@ -79,7 +78,6 @@ impl Default for AutoDezoomer {
         AutoDezoomer {
             dezoomers: all_dezoomers(false),
             errors: vec![],
-            successes: vec![],
             needs_uris: vec![],
             prioritized_for_url: None,
         }
@@ -101,55 +99,6 @@ impl AutoDezoomer {
 impl Dezoomer for AutoDezoomer {
     fn name(&self) -> &'static str {
         "auto"
-    }
-
-    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
-        // Prioritize dezoomers based on the URL pattern
-        self.prioritize_for_url_if_needed(&data.uri);
-
-        // TO DO: Use drain_filter when it is stabilized
-        let mut i = 0;
-        while i != self.dezoomers.len() {
-            let dezoomer = &mut self.dezoomers[i];
-            let keep = match dezoomer.zoom_levels(data) {
-                Ok(mut levels) => {
-                    debug!(
-                        "dezoomer '{}' found {} zoom levels",
-                        dezoomer.name(),
-                        levels.len()
-                    );
-                    self.successes.append(&mut levels);
-                    false
-                }
-                Err(DezoomerError::NeedsData { uri }) => {
-                    debug!("dezoomer '{}' requested to load {}", dezoomer.name(), uri);
-                    if !self.needs_uris.contains(&uri) {
-                        self.needs_uris.push(uri);
-                    }
-                    true
-                }
-                Err(e) => {
-                    debug!("{} cannot process this image: {}", dezoomer.name(), e);
-                    self.errors.push((dezoomer.name(), e));
-                    false
-                }
-            };
-            if keep {
-                i += 1
-            } else {
-                self.dezoomers.remove(i);
-            }
-        }
-        if let Some(uri) = self.needs_uris.pop() {
-            Err(NeedsData { uri })
-        } else if self.successes.is_empty() {
-            debug!("No dezoomer can dezoom {:?}", data.uri);
-            let errs = std::mem::take(&mut self.errors);
-            Err(DezoomerError::wrap(AutoDezoomerError(errs)))
-        } else {
-            let successes = std::mem::take(&mut self.successes);
-            Ok(successes)
-        }
     }
 
     fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {

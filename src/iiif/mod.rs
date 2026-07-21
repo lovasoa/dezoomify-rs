@@ -61,13 +61,6 @@ impl Dezoomer for IIIF {
         "iiif"
     }
 
-    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
-        let with_contents = data.with_contents()?;
-        let contents = with_contents.contents;
-        let uri = with_contents.uri;
-        Ok(zoom_levels(uri, contents)?)
-    }
-
     fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
         let with_contents = data.with_contents()?;
         let contents = with_contents.contents;
@@ -776,7 +769,7 @@ mod manifest_parsing_tests {
             contents: PageContents::Success(manifest_data.to_vec()),
         };
 
-        let result = dezoomer.dezoomer_result(&input).unwrap();
+        let result = dezoomer.images(&input).unwrap();
         assert_eq!(result.len(), 1);
 
         if let ZoomableImage::ImageUrl(ref url) = result[0] {
@@ -795,7 +788,7 @@ mod manifest_parsing_tests {
             contents: PageContents::Success(legacy_manifest_data().to_vec()),
         };
 
-        let result = dezoomer.dezoomer_result(&input).unwrap();
+        let result = dezoomer.images(&input).unwrap();
         assert_eq!(result.len(), 1);
 
         if let ZoomableImage::ImageUrl(ref url) = result[0] {
@@ -826,7 +819,7 @@ mod manifest_parsing_tests {
             contents: PageContents::Success(info_data.to_vec()),
         };
 
-        let result = dezoomer.dezoomer_result(&input).unwrap();
+        let result = dezoomer.images(&input).unwrap();
         assert_eq!(result.len(), 1);
 
         if let ZoomableImage::Image(ref image) = result[0] {

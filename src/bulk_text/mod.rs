@@ -21,14 +21,6 @@ impl Dezoomer for BulkTextDezoomer {
         "bulk_text"
     }
 
-    fn zoom_levels(&mut self, _data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
-        // BulkTextDezoomer returns URLs that need further processing, not direct zoom levels
-        // This method is only provided for backward compatibility but will always error
-        Err(DezoomerError::DownloadError {
-            msg: "BulkTextDezoomer produces URLs that need further processing by other dezoomers. Use dezoomer_result() instead.".to_string()
-        })
-    }
-
     fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
         // Only process files that are actual bulk URL lists
         // Must have appropriate file extension or "bulk"/"list" in name
@@ -240,7 +232,7 @@ mod tests {
             contents: PageContents::Success(content.to_vec()),
         };
 
-        let result = dezoomer.dezoomer_result(&input).unwrap();
+        let result = dezoomer.images(&input).unwrap();
         assert_eq!(result.len(), 2);
 
         // Check that they are ZoomableImage::ImageUrl variants
@@ -267,7 +259,7 @@ mod tests {
             contents: PageContents::Success(content.to_vec()),
         };
 
-        let result = dezoomer.dezoomer_result(&input);
+        let result = dezoomer.images(&input);
         assert!(result.is_err());
         assert!(
             result
@@ -287,7 +279,7 @@ mod tests {
             contents: PageContents::Success(content.to_vec()),
         };
 
-        let result = dezoomer.dezoomer_result(&input);
+        let result = dezoomer.images(&input);
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(error_msg.contains("line 1"));

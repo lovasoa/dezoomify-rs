@@ -145,6 +145,14 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
+    fn into_levels(images: Images) -> ZoomLevels {
+        assert_eq!(images.len(), 1);
+        let ZoomableImage::Image(image) = images.into_iter().next().unwrap() else {
+            panic!("expected a resolved image");
+        };
+        image.into_zoom_levels()
+    }
+
     fn get_test_page_html() -> Vec<u8> {
         let test_path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("testdata")
@@ -172,7 +180,7 @@ mod tests {
         };
 
         // First call should extract page info and request tile info URL
-        let result = dezoomer.zoom_levels(&input);
+        let result = dezoomer.images(&input);
         assert!(matches!(result, Err(DezoomerError::NeedsData { .. })));
 
         if let Err(DezoomerError::NeedsData { uri }) = result {
@@ -204,10 +212,10 @@ mod tests {
         };
 
         // Second call should parse tile info and return zoom levels
-        let result = dezoomer.zoom_levels(&input);
+        let result = dezoomer.images(&input);
         assert!(result.is_ok());
 
-        let levels = result.unwrap();
+        let levels = into_levels(result.unwrap());
         assert_eq!(levels.len(), 5); // Based on our test XML
 
         // Verify the largest level
@@ -226,7 +234,7 @@ mod tests {
             contents: PageContents::Success(page_html),
         };
 
-        let result1 = dezoomer.zoom_levels(&input1);
+        let result1 = dezoomer.images(&input1);
         let tile_info_uri = match result1 {
             Err(DezoomerError::NeedsData { uri }) => uri,
             _ => panic!("Expected NeedsData error"),
@@ -239,10 +247,10 @@ mod tests {
             contents: PageContents::Success(tile_info_xml),
         };
 
-        let result2 = dezoomer.zoom_levels(&input2);
+        let result2 = dezoomer.images(&input2);
         assert!(result2.is_ok());
 
-        let levels = result2.unwrap();
+        let levels = into_levels(result2.unwrap());
         assert_eq!(levels.len(), 5);
 
         // Test that levels have the expected properties
@@ -262,7 +270,7 @@ mod tests {
             contents: PageContents::Success(vec![]),
         };
         // This will fail because contents are empty, but URL validation should pass
-        let result = dezoomer.zoom_levels(&valid_input);
+        let result = dezoomer.images(&valid_input);
         assert!(matches!(
             result,
             Err(DezoomerError::DownloadError { .. }) | Err(DezoomerError::Other { .. })
@@ -273,7 +281,7 @@ mod tests {
             uri: "https://example.com/test".to_string(),
             contents: PageContents::Success(vec![]),
         };
-        let result = dezoomer.zoom_levels(&invalid_input);
+        let result = dezoomer.images(&invalid_input);
         assert!(matches!(result, Err(DezoomerError::WrongDezoomer { .. })));
 
         // Should accept tile info URLs when page_info is set
@@ -288,7 +296,7 @@ mod tests {
             contents: PageContents::Success(vec![]),
         };
         // This will fail because contents are empty, but URL validation should pass
-        let result = dezoomer.zoom_levels(&tile_info_input);
+        let result = dezoomer.images(&tile_info_input);
         assert!(!matches!(result, Err(DezoomerError::WrongDezoomer { .. })));
     }
 
@@ -308,7 +316,7 @@ mod tests {
             contents: PageContents::Success(invalid_xml.to_vec()),
         };
 
-        let result = dezoomer.zoom_levels(&input);
+        let result = dezoomer.images(&input);
         assert!(result.is_err());
     }
 

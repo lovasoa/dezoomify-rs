@@ -170,7 +170,7 @@ mod tests {
             uri,
             contents: PageContents::Unknown,
         };
-        match IIPImage.zoom_levels(&data) {
+        match IIPImage.images(&data) {
             Err(DezoomerError::NeedsData { uri }) => assert_eq!(uri, metadata_uri),
             _ => panic!("Unexpected result"),
         }

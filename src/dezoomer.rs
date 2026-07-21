@@ -79,6 +79,10 @@ impl ResolvedImage {
         self.zoom_levels
     }
 
+    pub fn levels(&self) -> &[ZoomLevel] {
+        &self.zoom_levels
+    }
+
     pub fn title(&self) -> Option<&str> {
         self.title.as_deref()
     }
@@ -98,9 +102,6 @@ pub struct ZoomableImageUrl {
     pub title: Option<String>,
 }
 
-/// Result type for dezoomer operations - a vector of ZoomableImages
-pub type DezoomerResult = Vec<ZoomableImage>;
-
 /// Logical images discovered by a dezoomer.
 #[derive(Debug, Default)]
 pub struct Images(Vec<ZoomableImage>);
@@ -116,10 +117,6 @@ impl Images {
 
     pub fn iter(&self) -> std::slice::Iter<'_, ZoomableImage> {
         self.0.iter()
-    }
-
-    fn into_vec(self) -> Vec<ZoomableImage> {
-        self.0
     }
 
     fn with_fallback_title(self, title: Option<String>) -> Self {
@@ -152,6 +149,14 @@ impl IntoIterator for Images {
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
+    }
+}
+
+impl std::ops::Index<usize> for Images {
+    type Output = ZoomableImage;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
     }
 }
 
@@ -289,22 +294,6 @@ pub trait Dezoomer {
 
     /// Discover logical images without flattening their zoom levels.
     fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError>;
-
-    /// Compatibility adapter for callers that require exactly one resolved image.
-    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
-        let mut images = self.images(data)?.into_iter();
-        match (images.next(), images.next()) {
-            (Some(ZoomableImage::Image(image)), None) => Ok(image.into_zoom_levels()),
-            _ => Err(DezoomerError::DownloadError {
-                msg: "Expected exactly one resolved image".to_string(),
-            }),
-        }
-    }
-
-    /// Extract images or image URLs from the input data
-    fn dezoomer_result(&mut self, data: &DezoomerInput) -> Result<DezoomerResult, DezoomerError> {
-        Ok(self.images(data)?.into_vec())
-    }
 
     fn assert(&self, c: bool) -> Result<(), DezoomerError> {
         if c {
@@ -599,28 +588,6 @@ impl fmt::Display for TileReference {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.url)
     }
-}
-
-/// Helper functions for creating DezoomerResult from common types
-///
-/// Convert a vector of ZoomableImageUrl to DezoomerResult
-pub fn dezoomer_result_from_urls(urls: Vec<ZoomableImageUrl>) -> DezoomerResult {
-    urls.into_iter().map(ZoomableImage::ImageUrl).collect()
-}
-
-/// Convert a vector of resolved images to DezoomerResult
-pub fn dezoomer_result_from_images(images: Vec<ResolvedImage>) -> DezoomerResult {
-    images.into_iter().map(ZoomableImage::Image).collect()
-}
-
-/// Convert a single resolved image to DezoomerResult
-pub fn dezoomer_result_from_single_image(image: ResolvedImage) -> DezoomerResult {
-    vec![ZoomableImage::Image(image)]
-}
-
-/// Convert a single ZoomableImageUrl to DezoomerResult
-pub fn dezoomer_result_from_single_url(url: ZoomableImageUrl) -> DezoomerResult {
-    vec![ZoomableImage::ImageUrl(url)]
 }
 
 #[cfg(test)]
