@@ -1,8 +1,6 @@
 use log::debug;
 
-use crate::dezoomer::{
-    Dezoomer, DezoomerError, DezoomerInput, DezoomerResult, ZoomLevel, ZoomLevels,
-};
+use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, Images, ZoomLevel, ZoomLevels};
 use crate::errors::DezoomerError::NeedsData;
 
 /// Reorder dezoomers to prioritize those most likely to handle the given URL
@@ -154,7 +152,7 @@ impl Dezoomer for AutoDezoomer {
         }
     }
 
-    fn dezoomer_result(&mut self, data: &DezoomerInput) -> Result<DezoomerResult, DezoomerError> {
+    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
         // Prioritize dezoomers based on the URL pattern
         self.prioritize_for_url_if_needed(&data.uri);
 
@@ -162,7 +160,7 @@ impl Dezoomer for AutoDezoomer {
         let mut i = 0;
         while i != self.dezoomers.len() {
             let dezoomer = &mut self.dezoomers[i];
-            let keep = match dezoomer.dezoomer_result(data) {
+            let keep = match dezoomer.images(data) {
                 Ok(result) => {
                     debug!(
                         "dezoomer '{}' successfully processed the input",

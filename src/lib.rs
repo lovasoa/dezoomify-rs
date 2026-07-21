@@ -20,7 +20,7 @@ use output_file::get_outname;
 use tile::Tile;
 pub use vec2d::Vec2d;
 
-use crate::dezoomer::{DezoomerResult, PageContents, ZoomableImage};
+use crate::dezoomer::{Images, PageContents, ZoomableImage};
 use crate::encoder::SourceLevel;
 use crate::encoder::tile_buffer::TileBuffer;
 
@@ -64,17 +64,17 @@ fn stdin_line() -> Result<String, ZoomError> {
 }
 
 /// Process a single dezoomer to get a result, handling the NeedsData loop
-async fn get_dezoomer_result(
+async fn get_images(
     dezoomer: &mut dyn Dezoomer,
     http: &Client,
     uri: &str,
-) -> Result<DezoomerResult, ZoomError> {
+) -> Result<Images, ZoomError> {
     let mut i = DezoomerInput {
         uri: String::from(uri),
         contents: PageContents::Unknown,
     };
     loop {
-        match dezoomer.dezoomer_result(&i) {
+        match dezoomer.images(&i) {
             Ok(result) => return Ok(result),
             Err(DezoomerError::NeedsData { uri }) => {
                 let contents = fetch_uri(&uri, http).await.into();
@@ -94,8 +94,10 @@ async fn get_images_from_uri(
     uri: &str,
 ) -> Result<Vec<ZoomableImage>, ZoomError> {
     let mut dezoomer = args.find_dezoomer()?;
-    let zoomable_images = get_dezoomer_result(dezoomer.as_mut(), http, uri).await?;
-    Ok(zoomable_images)
+    Ok(get_images(dezoomer.as_mut(), http, uri)
+        .await?
+        .into_iter()
+        .collect())
 }
 
 /// Validates a user input line as a level index
@@ -436,7 +438,7 @@ pub async fn process_bulk(args: &Arguments) -> Result<BulkStats, ZoomError> {
     // Get dezoomer result from the bulk source
     let http = client(std::iter::empty(), args, None)?;
     let mut dezoomer = args.find_dezoomer()?;
-    let dezoomer_result = get_dezoomer_result(dezoomer.as_mut(), &http, bulk_uri).await?;
+    let dezoomer_result = get_images(dezoomer.as_mut(), &http, bulk_uri).await?;
 
     let mut stats = BulkStats::new();
     let base_dir = current_dir()?;
@@ -455,7 +457,14 @@ pub async fn process_bulk(args: &Arguments) -> Result<BulkStats, ZoomError> {
             .collect::<Vec<_>>()
     );
 
-    process_bulk_zoomable_images(dezoomer_result, args, &http, &mut stats, &base_dir).await?;
+    process_bulk_zoomable_images(
+        dezoomer_result.into_iter().collect(),
+        args,
+        &http,
+        &mut stats,
+        &base_dir,
+    )
+    .await?;
 
     // Log final statistics
     info!("Bulk processing complete!");
