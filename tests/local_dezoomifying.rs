@@ -554,7 +554,7 @@ async fn test_google_arts_and_culture_dezoomer_basic() {
     match result2 {
         Ok(images) => {
             assert_eq!(images.len(), 1);
-            let dezoomify_rs::dezoomer::ZoomableImage::Image(image) =
+            let dezoomify_rs::dezoomer::ZoomableImage::Resolved(image) =
                 images.into_iter().next().unwrap()
             else {
                 panic!("Expected a resolved image");

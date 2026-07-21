@@ -23,7 +23,7 @@ impl Dezoomer for CustomDezoomer {
         let contents = data.with_contents()?.contents;
         let dezoomer: CustomYamlTiles =
             serde_yaml::from_slice(contents).map_err(DezoomerError::wrap)?;
-        Ok(single_level(dezoomer)?.into())
+        Ok(single_level(dezoomer).into())
     }
 }
 

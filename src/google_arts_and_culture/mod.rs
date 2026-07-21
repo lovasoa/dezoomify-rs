@@ -147,7 +147,7 @@ mod tests {
 
     fn into_levels(images: Images) -> ZoomLevels {
         assert_eq!(images.len(), 1);
-        let ZoomableImage::Image(image) = images.into_iter().next().unwrap() else {
+        let ZoomableImage::Resolved(image) = images.into_iter().next().unwrap() else {
             panic!("expected a resolved image");
         };
         image.into_zoom_levels()

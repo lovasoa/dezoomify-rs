@@ -83,7 +83,7 @@ impl Dezoomer for IIIF {
                     // This is clearly a manifest, try parsing it as such
                     match parse_iiif_manifest_from_bytes(contents, uri) {
                         Ok(image_infos) if !image_infos.is_empty() => {
-                            return Ok(dezoomer_result_from_manifest_image_infos(image_infos));
+                            return Ok(images_from_manifest_info(image_infos));
                         }
                         Ok(_) => {
                             // Empty image_infos, fall through to heuristic approach
@@ -116,7 +116,7 @@ impl Dezoomer for IIIF {
         match parse_iiif_manifest_from_bytes(contents, uri) {
             Ok(image_infos) if !image_infos.is_empty() => {
                 // Successfully parsed as manifest with images
-                Ok(dezoomer_result_from_manifest_image_infos(image_infos))
+                Ok(images_from_manifest_info(image_infos))
             }
             _ => {
                 // Not a manifest or failed to parse as manifest, try as info.json
@@ -132,14 +132,12 @@ impl Dezoomer for IIIF {
     }
 }
 
-fn dezoomer_result_from_manifest_image_infos(
-    image_infos: Vec<manifest_types::ExtractedImageInfo>,
-) -> Images {
-    let image_urls: Vec<ZoomableImageUrl> = image_infos
+fn images_from_manifest_info(image_infos: Vec<manifest_types::ExtractedImageInfo>) -> Images {
+    let image_urls: Vec<ImageUrl> = image_infos
         .into_iter()
         .map(|image_info| {
             let title = determine_title(&image_info);
-            ZoomableImageUrl {
+            ImageUrl {
                 url: image_info.image_uri,
                 title,
             }
@@ -722,7 +720,7 @@ mod manifest_parsing_tests {
     }
 
     #[test]
-    fn test_dezoomer_result_with_manifest() {
+    fn test_images_with_manifest() {
         let mut dezoomer = IIIF;
         let manifest_data = r#"
         {
@@ -772,16 +770,16 @@ mod manifest_parsing_tests {
         let result = dezoomer.images(&input).unwrap();
         assert_eq!(result.len(), 1);
 
-        if let ZoomableImage::ImageUrl(ref url) = result[0] {
+        if let ZoomableImage::Url(ref url) = result[0] {
             assert_eq!(url.url, "https://example.com/iiif/page1/info.json");
             assert_eq!(url.title, Some("Test Book - Page 1".to_string()));
         } else {
-            panic!("Expected ZoomableImage::ImageUrl");
+            panic!("Expected ZoomableImage::Url");
         }
     }
 
     #[test]
-    fn test_dezoomer_result_with_legacy_manifest() {
+    fn test_images_with_legacy_manifest() {
         let mut dezoomer = IIIF;
         let input = DezoomerInput {
             uri: "https://example.com/manifest.json".to_string(),
@@ -791,16 +789,16 @@ mod manifest_parsing_tests {
         let result = dezoomer.images(&input).unwrap();
         assert_eq!(result.len(), 1);
 
-        if let ZoomableImage::ImageUrl(ref url) = result[0] {
+        if let ZoomableImage::Url(ref url) = result[0] {
             assert_eq!(url.url, "https://example.com/iiif/page1/info.json");
             assert_eq!(url.title, Some("Legacy Book - Page 1".to_string()));
         } else {
-            panic!("Expected ZoomableImage::ImageUrl");
+            panic!("Expected ZoomableImage::Url");
         }
     }
 
     #[test]
-    fn test_dezoomer_result_with_info_json() {
+    fn test_images_with_info_json() {
         let mut dezoomer = IIIF;
         let info_data = r#"{
           "@context" : "http://iiif.io/api/image/2/context.json",
@@ -822,10 +820,10 @@ mod manifest_parsing_tests {
         let result = dezoomer.images(&input).unwrap();
         assert_eq!(result.len(), 1);
 
-        if let ZoomableImage::Image(ref image) = result[0] {
+        if let ZoomableImage::Resolved(ref image) = result[0] {
             assert_eq!(image.title(), None);
         } else {
-            panic!("Expected ZoomableImage::Image");
+            panic!("Expected ZoomableImage::Resolved");
         }
     }
 }

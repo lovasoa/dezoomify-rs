@@ -12,7 +12,7 @@ impl From<BulkTextError> for DezoomerError {
 }
 
 /// A dezoomer for text files containing lists of URLs
-/// Parses text files where each line is a URL and returns them as ZoomableImageUrl objects
+/// Parses text files where each line is a deferred image URL.
 #[derive(Default)]
 pub struct BulkTextDezoomer;
 
@@ -79,7 +79,7 @@ fn validate_url_or_path(input: &str, line_number: usize) -> Result<(), BulkTextE
 /// Each non-empty, non-comment line should start with a valid URL
 /// Optional custom title can be provided after the URL, separated by whitespace
 /// Format: URL [custom title]
-fn parse_text_urls(content: &str) -> Result<Vec<ZoomableImageUrl>, BulkTextError> {
+fn parse_text_urls(content: &str) -> Result<Vec<ImageUrl>, BulkTextError> {
     let mut urls = Vec::new();
 
     for (line_num, line) in content.lines().enumerate() {
@@ -105,7 +105,7 @@ fn parse_text_urls(content: &str) -> Result<Vec<ZoomableImageUrl>, BulkTextError
             extract_title_from_url(url_part, line_num + 1)
         };
 
-        urls.push(ZoomableImageUrl {
+        urls.push(ImageUrl {
             url: url_part.to_string(),
             title,
         });
@@ -223,7 +223,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dezoomer_result() {
+    fn test_images() {
         let mut dezoomer = BulkTextDezoomer;
         let content = "http://example.com/image1.jpg\nhttps://example.org/manifest.json".as_bytes();
 
@@ -235,22 +235,21 @@ mod tests {
         let result = dezoomer.images(&input).unwrap();
         assert_eq!(result.len(), 2);
 
-        // Check that they are ZoomableImage::ImageUrl variants
-        if let ZoomableImage::ImageUrl(ref url1) = result[0] {
+        if let ZoomableImage::Url(ref url1) = result[0] {
             assert_eq!(url1.url, "http://example.com/image1.jpg");
         } else {
-            panic!("Expected ZoomableImage::ImageUrl");
+            panic!("Expected ZoomableImage::Url");
         }
 
-        if let ZoomableImage::ImageUrl(ref url2) = result[1] {
+        if let ZoomableImage::Url(ref url2) = result[1] {
             assert_eq!(url2.url, "https://example.org/manifest.json");
         } else {
-            panic!("Expected ZoomableImage::ImageUrl");
+            panic!("Expected ZoomableImage::Url");
         }
     }
 
     #[test]
-    fn test_dezoomer_result_empty_file() {
+    fn test_images_empty_file() {
         let mut dezoomer = BulkTextDezoomer;
         let content = "# Only comments\n\n# Nothing else".as_bytes();
 
@@ -270,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dezoomer_result_invalid_url() {
+    fn test_images_invalid_url() {
         let mut dezoomer = BulkTextDezoomer;
         let content = "not_a_valid_url".as_bytes();
 

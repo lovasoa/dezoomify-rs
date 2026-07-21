@@ -906,7 +906,7 @@ fn explicit_levels_expand_level_placeholder() {
 }
 
 #[test]
-fn explicit_levels_expand_level_placeholder_in_dezoomer_result() {
+fn explicit_levels_expand_level_placeholder_in_image() {
     let data = std::fs::read("testdata/krpano/pba_lille_gigapixels_1515_bellegambe.xml").unwrap();
     let input = DezoomerInput {
         uri: BELLEGAMBE_XML_URL.to_string(),
@@ -915,15 +915,15 @@ fn explicit_levels_expand_level_placeholder_in_dezoomer_result() {
     let result = KrpanoDezoomer::default().images(&input).unwrap();
     assert_eq!(result.len(), 1);
 
-    let ZoomableImage::Image(image) = result.into_iter().next().unwrap() else {
-        panic!("Expected ZoomableImage::Image");
+    let ZoomableImage::Resolved(image) = result.into_iter().next().unwrap() else {
+        panic!("Expected ZoomableImage::Resolved");
     };
     let levels = image.into_zoom_levels();
     assert_bellegambe_levels(&levels);
 }
 
 #[test]
-fn test_dezoomer_result_single_image() {
+fn test_single_image() {
     let mut dezoomer = KrpanoDezoomer::default();
     let data = r#"<krpano>
         <image>
@@ -940,15 +940,15 @@ fn test_dezoomer_result_single_image() {
     let result = dezoomer.images(&input).unwrap();
     assert_eq!(result.len(), 1);
 
-    if let ZoomableImage::Image(ref image) = result[0] {
+    if let ZoomableImage::Resolved(ref image) = result[0] {
         assert_eq!(image.title(), None);
     } else {
-        panic!("Expected ZoomableImage::Image");
+        panic!("Expected ZoomableImage::Resolved");
     }
 }
 
 #[test]
-fn test_dezoomer_result_cube_faces() {
+fn test_cube_faces_form_one_image() {
     let mut dezoomer = KrpanoDezoomer::default();
     let data = r#"<krpano showerrors="false" logkey="false">
         <image type="cube" multires="true" tilesize="512" progressive="false" multiresthreshold="-0.3">
@@ -966,15 +966,15 @@ fn test_dezoomer_result_cube_faces() {
     let result = dezoomer.images(&input).unwrap();
     assert_eq!(result.len(), 1);
 
-    if let ZoomableImage::Image(ref image) = result[0] {
+    if let ZoomableImage::Resolved(ref image) = result[0] {
         assert_eq!(image.title(), None);
     } else {
-        panic!("Expected ZoomableImage::Image");
+        panic!("Expected ZoomableImage::Resolved");
     }
 }
 
 #[test]
-fn test_dezoomer_result_multiple_scenes() {
+fn test_multiple_scenes_remain_separate() {
     let mut dezoomer = KrpanoDezoomer::default();
     let data = std::fs::read("testdata/krpano/krpano_scenes.xml").unwrap();
 
@@ -989,10 +989,10 @@ fn test_dezoomer_result_multiple_scenes() {
     let titles: Vec<Option<&str>> = result
         .iter()
         .map(|zoomable_img| {
-            if let ZoomableImage::Image(image) = zoomable_img {
+            if let ZoomableImage::Resolved(image) = zoomable_img {
                 image.title()
             } else {
-                panic!("Expected ZoomableImage::Image");
+                panic!("Expected ZoomableImage::Resolved");
             }
         })
         .collect();

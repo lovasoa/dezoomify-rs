@@ -181,7 +181,8 @@ fn image_picker(mut images: Vec<ZoomableImage>) -> Result<ZoomableImage, ZoomErr
     for (i, image) in images.iter().enumerate() {
         let title = image
             .title()
-            .unwrap_or_else(|| format!("Image {}", i + 1).into());
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("Image {}", i + 1));
         println!("{: >2}. {}", i, title);
     }
     loop {
@@ -235,9 +236,9 @@ async fn resolve_selected_image(
 ) -> Result<ResolvedImage, ZoomError> {
     loop {
         match image {
-            ZoomableImage::Image(image) => return Ok(image),
-            ZoomableImage::ImageUrl(image_url) => {
-                let images = ZoomableImage::ImageUrl(image_url)
+            ZoomableImage::Resolved(image) => return Ok(image),
+            ZoomableImage::Url(image_url) => {
+                let images = ZoomableImage::Url(image_url)
                     .resolve(http)
                     .await
                     .map_err(|source| ZoomError::Dezoomer { source })?;
@@ -438,7 +439,7 @@ impl BulkStats {
     }
 }
 
-/// Process multiple images in bulk mode using the new unified architecture
+/// Process every image discovered from a bulk input.
 pub async fn process_bulk(args: &Arguments) -> Result<BulkStats, ZoomError> {
     use log::{debug, trace};
 
@@ -452,30 +453,26 @@ pub async fn process_bulk(args: &Arguments) -> Result<BulkStats, ZoomError> {
 
     debug!("Bulk source: {}", bulk_uri);
 
-    // Get dezoomer result from the bulk source
+    // Discover images from the bulk source.
     let http = client(std::iter::empty(), args, None)?;
     let mut dezoomer = args.find_dezoomer()?;
-    let dezoomer_result = get_images(dezoomer.as_mut(), &http, bulk_uri).await?;
+    let images = get_images(dezoomer.as_mut(), &http, bulk_uri).await?;
 
     let mut stats = BulkStats::new();
     let base_dir = current_dir()?;
 
-    // Process each ZoomableImage in bulk mode
-    stats.set_total(dezoomer_result.len());
-    info!(
-        "Found {} images to process in bulk mode",
-        dezoomer_result.len()
-    );
+    stats.set_total(images.len());
+    info!("Found {} images to process in bulk mode", images.len());
     debug!(
         "Images discovered: {:?}",
-        dezoomer_result
+        images
             .iter()
-            .map(|img| img.title().unwrap_or_else(|| "Untitled".into()))
+            .map(|img| img.title().unwrap_or("Untitled"))
             .collect::<Vec<_>>()
     );
 
     process_bulk_zoomable_images(
-        dezoomer_result.into_iter().collect(),
+        images.into_iter().collect(),
         args,
         &http,
         &mut stats,
@@ -495,7 +492,7 @@ pub async fn process_bulk(args: &Arguments) -> Result<BulkStats, ZoomError> {
     Ok(stats)
 }
 
-/// Process a list of ZoomableImage objects in bulk - resolve each one to zoom levels as needed
+/// Resolve and process images without fetching deferred metadata ahead of time.
 async fn process_bulk_zoomable_images(
     images: Vec<ZoomableImage>,
     args: &Arguments,
@@ -513,12 +510,12 @@ async fn process_bulk_zoomable_images(
     while let Some(zoomable_image) = pending.pop_front() {
         let image_title = zoomable_image
             .title()
-            .unwrap_or_else(|| format!("Image_{}", index + 1).into())
-            .to_string();
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("Image_{}", index + 1));
 
         let resolved_image = match zoomable_image {
-            ZoomableImage::Image(image) => image,
-            image @ ZoomableImage::ImageUrl(_) => match image.resolve(http).await {
+            ZoomableImage::Resolved(image) => image,
+            image @ ZoomableImage::Url(_) => match image.resolve(http).await {
                 Ok(images) if !images.is_empty() => {
                     let images = images.into_iter().collect::<Vec<_>>();
                     stats.total_images += images.len() - 1;

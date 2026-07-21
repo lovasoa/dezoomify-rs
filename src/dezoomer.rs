@@ -1,4 +1,11 @@
-use std::borrow::{Borrow, Cow};
+//! Types for discovering logical images and their tiled resolution levels.
+//!
+//! A dezoomer returns [`Images`] rather than a flat level list. Most formats
+//! contain one image and can finish their implementation with
+//! `Ok(levels.into())`. Container formats such as krpano and IIIF manifests
+//! return one [`ZoomableImage`] per scene or referenced image.
+
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{self, Debug};
@@ -95,14 +102,17 @@ impl ResolvedImage {
     }
 }
 
-/// A URL that can be processed by dezoomers to create ZoomableImages
+/// A deferred logical image that must be processed by a dezoomer.
 #[derive(Debug, Clone)]
-pub struct ZoomableImageUrl {
+pub struct ImageUrl {
     pub url: String,
     pub title: Option<String>,
 }
 
 /// Logical images discovered by a dezoomer.
+///
+/// [`ZoomLevels`] converts into a collection containing one resolved image.
+/// Vectors of [`ResolvedImage`] or [`ImageUrl`] preserve every logical image.
 #[derive(Debug, Default)]
 pub struct Images(Vec<ZoomableImage>);
 
@@ -128,14 +138,14 @@ impl Images {
             self.0
                 .into_iter()
                 .map(|image| match image {
-                    ZoomableImage::Image(image) => {
-                        ZoomableImage::Image(image.with_fallback_title(Some(title.clone())))
+                    ZoomableImage::Resolved(image) => {
+                        ZoomableImage::Resolved(image.with_fallback_title(Some(title.clone())))
                     }
-                    ZoomableImage::ImageUrl(mut image_url) => {
+                    ZoomableImage::Url(mut image_url) => {
                         if image_url.title.as_deref().is_none_or(str::is_empty) {
                             image_url.title = Some(title.clone());
                         }
-                        ZoomableImage::ImageUrl(image_url)
+                        ZoomableImage::Url(image_url)
                     }
                 })
                 .collect(),
@@ -168,19 +178,19 @@ impl From<ZoomLevels> for Images {
 
 impl From<ResolvedImage> for Images {
     fn from(image: ResolvedImage) -> Self {
-        Self(vec![ZoomableImage::Image(image)])
+        Self(vec![ZoomableImage::Resolved(image)])
     }
 }
 
 impl From<Vec<ResolvedImage>> for Images {
     fn from(images: Vec<ResolvedImage>) -> Self {
-        Self(images.into_iter().map(ZoomableImage::Image).collect())
+        Self(images.into_iter().map(ZoomableImage::Resolved).collect())
     }
 }
 
-impl From<Vec<ZoomableImageUrl>> for Images {
-    fn from(urls: Vec<ZoomableImageUrl>) -> Self {
-        Self(urls.into_iter().map(ZoomableImage::ImageUrl).collect())
+impl From<Vec<ImageUrl>> for Images {
+    fn from(urls: Vec<ImageUrl>) -> Self {
+        Self(urls.into_iter().map(ZoomableImage::Url).collect())
     }
 }
 
@@ -199,31 +209,31 @@ impl FromIterator<ZoomableImage> for Images {
 /// A logical image, either resolved or represented by a URL to resolve.
 #[derive(Debug)]
 pub enum ZoomableImage {
-    /// Direct zoomable images (e.g., from IIIF manifests, krpano configs)
-    Image(ResolvedImage),
-    /// URLs that need further processing by other dezoomers
-    ImageUrl(ZoomableImageUrl),
+    /// An image whose levels are ready to use.
+    Resolved(ResolvedImage),
+    /// A URL that needs further processing.
+    Url(ImageUrl),
 }
 
 impl ZoomableImage {
-    pub fn title(&self) -> Option<Cow<'_, str>> {
+    pub fn title(&self) -> Option<&str> {
         match self {
-            ZoomableImage::Image(image) => image.title().map(Cow::Borrowed),
-            ZoomableImage::ImageUrl(url) => url.title.as_deref().map(Cow::Borrowed),
+            ZoomableImage::Resolved(image) => image.title(),
+            ZoomableImage::Url(url) => url.title.as_deref(),
         }
     }
 
     pub async fn resolve(self, http: &reqwest::Client) -> Result<Images, DezoomerError> {
         match self {
-            ZoomableImage::Image(image) => Ok(image.into()),
-            ZoomableImage::ImageUrl(url) => {
+            ZoomableImage::Resolved(image) => Ok(image.into()),
+            ZoomableImage::Url(url) => {
                 use crate::auto::{all_dezoomers, prioritize_dezoomers_for_url};
                 use crate::network::fetch_uri;
                 use log::debug;
 
-                let ZoomableImageUrl { url, title } = url;
+                let ImageUrl { url, title } = url;
 
-                debug!("Resolving ZoomableImageUrl: {}", url);
+                debug!("Resolving image URL: {}", url);
 
                 // Try each dezoomer on this URL to find one that can process it
                 // Prioritize dezoomers based on URL patterns for better performance
@@ -287,12 +297,15 @@ where
     }
 }
 
-/// A trait that should be implemented by every zoomable image dezoomer
+/// Discovers logical zoomable images from downloaded metadata.
 pub trait Dezoomer {
     /// The name of the image format. Used for dezoomer selection
     fn name(&self) -> &'static str;
 
     /// Discover logical images without flattening their zoom levels.
+    ///
+    /// Return [`DezoomerError::NeedsData`] when another resource must be
+    /// downloaded, preserving any parser state needed for the next call.
     fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError>;
 
     fn assert(&self, c: bool) -> Result<(), DezoomerError> {
@@ -458,10 +471,8 @@ impl<'a> ZoomLevelIter<'a> {
 }
 
 /// Shortcut to return a single zoom level from a dezoomer
-pub fn single_level<T: TileProvider + Send + Sync + 'static>(
-    level: T,
-) -> Result<ZoomLevels, DezoomerError> {
-    Ok(vec![Box::new(level)])
+pub fn single_level<T: TileProvider + Send + Sync + 'static>(level: T) -> ZoomLevels {
+    vec![Box::new(level)]
 }
 
 pub trait TilesRect: Debug {
@@ -676,7 +687,7 @@ mod tests {
         let images: Images = vec![Box::<FakeLvl>::default() as ZoomLevel].into();
 
         assert_eq!(images.len(), 1);
-        let ZoomableImage::Image(image) = images.into_iter().next().unwrap() else {
+        let ZoomableImage::Resolved(image) = images.into_iter().next().unwrap() else {
             panic!("expected a resolved image");
         };
         assert_eq!(image.into_zoom_levels().len(), 1);
@@ -691,7 +702,7 @@ mod tests {
         .with_fallback_title(Some("Parent".into()));
         let titles = images
             .iter()
-            .map(|image| image.title().map(Cow::into_owned))
+            .map(|image| image.title().map(str::to_string))
             .collect::<Vec<_>>();
 
         assert_eq!(titles, vec![Some("Parent".into()), Some("Child".into())]);

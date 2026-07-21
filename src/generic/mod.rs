@@ -32,7 +32,7 @@ impl Dezoomer for GenericDezoomer {
             tile_size: None,
             image_size: None,
         };
-        Ok(single_level(dezoomer)?.into())
+        Ok(single_level(dezoomer).into())
     }
 }
 
@@ -145,7 +145,7 @@ fn test_generic_dezoomer() {
             contents: PageContents::Unknown,
         })
         .unwrap();
-    let ZoomableImage::Image(image) = images.into_iter().next().unwrap() else {
+    let ZoomableImage::Resolved(image) = images.into_iter().next().unwrap() else {
         panic!("expected a resolved image");
     };
     let mut lvl = image.into_zoom_levels().into_iter().next().unwrap();
