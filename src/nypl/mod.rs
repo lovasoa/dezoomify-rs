@@ -9,8 +9,8 @@ use serde::Deserialize;
 
 use crate::Vec2d;
 use crate::dezoomer::{
-    Dezoomer, DezoomerError, DezoomerInput, DezoomerInputWithContents, IntoZoomLevels,
-    TileReference, TilesRect, ZoomLevels,
+    Dezoomer, DezoomerError, DezoomerInput, DezoomerInputWithContents, Images, IntoZoomLevels,
+    TileReference, TilesRect,
 };
 use crate::json_utils::number_or_string;
 
@@ -40,7 +40,7 @@ impl Dezoomer for NYPLImage {
     fn name(&self) -> &'static str {
         "nypl"
     }
-    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
+    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
         if data.uri.starts_with(NYPL_IMAGE_VIEW_PREFIX) {
             let image_view_url = data.uri.as_str();
             let image_id = parse_image_id(image_view_url).ok_or_else(|| {
@@ -54,7 +54,7 @@ impl Dezoomer for NYPLImage {
             self.assert(data.uri.contains(NYPL_META_PREFIX))?;
             let DezoomerInputWithContents { uri, contents } = data.with_contents()?;
             let iter = iter_levels(uri, contents).map_err(DezoomerError::wrap)?;
-            Ok(iter.into_zoom_levels())
+            Ok(iter.into_zoom_levels().into())
         }
     }
 }

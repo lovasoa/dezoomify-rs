@@ -339,12 +339,18 @@ pub trait Dezoomer {
     /// The name of the image format. Used for dezoomer selection
     fn name(&self) -> &'static str;
 
-    /// List of the various sizes at which an image is available
-    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError>;
-
     /// Discover logical images without flattening their zoom levels.
-    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
-        Ok(self.zoom_levels(data)?.into())
+    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError>;
+
+    /// Compatibility adapter for callers that require exactly one resolved image.
+    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
+        let mut images = self.images(data)?.into_iter();
+        match (images.next(), images.next()) {
+            (Some(ZoomableImage::Image(image)), None) => Ok(image.into_zoom_levels()),
+            _ => Err(DezoomerError::DownloadError {
+                msg: "Expected exactly one resolved image".to_string(),
+            }),
+        }
     }
 
     /// Extract images or image URLs from the input data

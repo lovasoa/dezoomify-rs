@@ -1,7 +1,7 @@
 use crate::Vec2d;
 use crate::dezoomer::{
-    Dezoomer, DezoomerError, DezoomerInput, DezoomerInputWithContents, IntoZoomLevels, TilesRect,
-    ZoomLevels,
+    Dezoomer, DezoomerError, DezoomerInput, DezoomerInputWithContents, Images, IntoZoomLevels,
+    TilesRect,
 };
 use custom_error::custom_error;
 use regex::Regex;
@@ -23,11 +23,11 @@ impl Dezoomer for IIPImage {
         "IIPImage"
     }
 
-    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
+    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
         if data.uri.ends_with(META_REQUEST_PARAMS) {
             let DezoomerInputWithContents { uri, contents } = data.with_contents()?;
             let iter = iter_levels(uri, contents).map_err(DezoomerError::wrap)?;
-            Ok(iter.into_zoom_levels())
+            Ok(iter.into_zoom_levels().into())
         } else {
             let re = Regex::new("(?i)\\?FIF").unwrap();
             self.assert(re.is_match(&data.uri))?;

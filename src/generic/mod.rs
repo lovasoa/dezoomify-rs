@@ -5,8 +5,8 @@ use regex::Regex;
 
 use crate::Vec2d;
 use crate::dezoomer::{
-    Dezoomer, DezoomerError, DezoomerInput, TileFetchResult, TileProvider, TileReference,
-    ZoomLevels, single_level,
+    Dezoomer, DezoomerError, DezoomerInput, Images, TileFetchResult, TileProvider, TileReference,
+    single_level,
 };
 
 mod dichotomy_2d;
@@ -22,7 +22,7 @@ impl Dezoomer for GenericDezoomer {
         "generic"
     }
 
-    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
+    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
         self.assert(TEMPLATE_RE.is_match(&data.uri))?;
         let dezoomer = ZoomLevel {
             url_template: data.uri.clone(),
@@ -32,7 +32,7 @@ impl Dezoomer for GenericDezoomer {
             tile_size: None,
             image_size: None,
         };
-        single_level(dezoomer)
+        Ok(single_level(dezoomer)?.into())
     }
 }
 

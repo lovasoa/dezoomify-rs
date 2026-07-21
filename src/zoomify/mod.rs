@@ -17,11 +17,11 @@ impl Dezoomer for ZoomifyDezoomer {
         "zoomify"
     }
 
-    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
+    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
         self.assert(data.uri.contains("/ImageProperties.xml"))?;
         let DezoomerInputWithContents { uri, contents } = data.with_contents()?;
         let levels = load_from_properties(uri, contents)?;
-        Ok(levels)
+        Ok(levels.into())
     }
 }
 

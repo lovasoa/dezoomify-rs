@@ -21,7 +21,7 @@ impl Dezoomer for GAPDezoomer {
         "google_arts_and_culture"
     }
 
-    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
+    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
         // Allow Google Arts & Culture URLs or tile info URLs when we have page_info
         let is_valid_uri = data.uri.contains("artsandculture.google.com")
             || (self.page_info.is_some() && data.uri.ends_with("=g"));
@@ -89,7 +89,7 @@ impl Dezoomer for GAPDezoomer {
                         }
                     })
                     .into_zoom_levels();
-                Ok(levels)
+                Ok(levels.into())
             }
         }
     }

@@ -20,7 +20,7 @@ impl Dezoomer for DziDezoomer {
         "deepzoom"
     }
 
-    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
+    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
         let tile_re = Regex::new("_files/\\d+/\\d+_\\d+\\.(jpe?g|png)$").unwrap();
         if let Some(m) = tile_re.find(&data.uri) {
             let meta_uri = data.uri[..m.start()].to_string() + ".dzi";
@@ -32,7 +32,7 @@ impl Dezoomer for DziDezoomer {
         } else {
             let DezoomerInputWithContents { uri, contents } = data.with_contents()?;
             let levels = load_from_properties(uri, contents)?;
-            Ok(levels)
+            Ok(levels.into())
         }
     }
 }

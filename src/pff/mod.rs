@@ -40,7 +40,7 @@ impl Dezoomer for PFF {
         "pff"
     }
 
-    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
+    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
         let mut parts = data.uri.splitn(2, '?');
         let base_url = parts
             .next()
@@ -80,7 +80,8 @@ impl Dezoomer for PFF {
                 Ok(zoom_levels(ImageInfo {
                     header_info: header_info.clone(),
                     tiles: reply.reply_data,
-                }))
+                })
+                .into())
             }
         }
     }

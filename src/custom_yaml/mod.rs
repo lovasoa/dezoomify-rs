@@ -18,12 +18,12 @@ impl Dezoomer for CustomDezoomer {
         "custom"
     }
 
-    fn zoom_levels(&mut self, data: &DezoomerInput) -> Result<ZoomLevels, DezoomerError> {
+    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
         self.assert(data.uri.ends_with("tiles.yaml"))?;
         let contents = data.with_contents()?.contents;
         let dezoomer: CustomYamlTiles =
             serde_yaml::from_slice(contents).map_err(DezoomerError::wrap)?;
-        single_level(dezoomer)
+        Ok(single_level(dezoomer)?.into())
     }
 }
 
