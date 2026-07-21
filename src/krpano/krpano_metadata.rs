@@ -229,7 +229,11 @@ pub enum KrpanoLevel {
 }
 
 impl KrpanoLevel {
-    pub fn level_descriptions(self, size: Option<Vec2d>) -> Vec<Result<LevelDesc, &'static str>> {
+    pub fn level_descriptions(
+        self,
+        size: Option<Vec2d>,
+        level_index: usize,
+    ) -> Vec<Result<LevelDesc, &'static str>> {
         match self {
             Self::Level(LevelAttributes {
                 tiledimagewidth,
@@ -242,19 +246,19 @@ impl KrpanoLevel {
                 };
                 shape
                     .into_iter()
-                    .flat_map(|level| level.level_descriptions(Some(size)))
+                    .flat_map(|level| level.level_descriptions(Some(size), level_index))
                     .collect()
             }
-            Self::Cube(d) => shape_descriptions("Cube", d, size),
-            Self::Cylinder(d) => shape_descriptions("Cylinder", d, size),
-            Self::Flat(d) => shape_descriptions("Flat", d, size),
-            Self::Sphere(d) => shape_descriptions("Sphere", d, size),
-            Self::Left(d) => shape_descriptions("Left", d, size),
-            Self::Right(d) => shape_descriptions("Right", d, size),
-            Self::Front(d) => shape_descriptions("Front", d, size),
-            Self::Back(d) => shape_descriptions("Back", d, size),
-            Self::Up(d) => shape_descriptions("Up", d, size),
-            Self::Down(d) => shape_descriptions("Down", d, size),
+            Self::Cube(d) => shape_descriptions("Cube", d, size, level_index),
+            Self::Cylinder(d) => shape_descriptions("Cylinder", d, size, level_index),
+            Self::Flat(d) => shape_descriptions("Flat", d, size, level_index),
+            Self::Sphere(d) => shape_descriptions("Sphere", d, size, level_index),
+            Self::Left(d) => shape_descriptions("Left", d, size, level_index),
+            Self::Right(d) => shape_descriptions("Right", d, size, level_index),
+            Self::Front(d) => shape_descriptions("Front", d, size, level_index),
+            Self::Back(d) => shape_descriptions("Back", d, size, level_index),
+            Self::Up(d) => shape_descriptions("Up", d, size, level_index),
+            Self::Down(d) => shape_descriptions("Down", d, size, level_index),
             Self::Mobile(_) | Self::Tablet(_) => vec![], // Ignore
         }
     }
@@ -264,6 +268,7 @@ fn shape_descriptions(
     name: &'static str,
     desc: ShapeDesc,
     size: Option<Vec2d>,
+    level_index: usize,
 ) -> Vec<Result<LevelDesc, &'static str>> {
     let ShapeDesc { multires, url } = desc;
     if let Some(multires) = multires {
@@ -286,7 +291,7 @@ fn shape_descriptions(
             size,
             tilesize,
             url,
-            level_index: 0,
+            level_index,
         })]
     } else {
         vec![Err("missing multires attribute")]

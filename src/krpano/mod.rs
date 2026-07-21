@@ -670,46 +670,51 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, Dezoom
         .flat_map(move |ImageInfo { image, name }| {
             let root_tile_size = image.tilesize.map(Vec2d::square);
             let base_index = image.baseindex;
-            image.into_levels().flat_map(move |level| {
-                let name = Arc::clone(&name);
-                level
-                    .level_descriptions(None)
-                    .into_iter()
-                    .flat_map(move |level_desc| {
-                        let name = Arc::clone(&name);
-                        level_desc
-                            .map_err(|err| warn!("bad krpano level: {err}"))
-                            .into_iter()
-                            .flat_map(
-                                move |LevelDesc {
-                                          name: shape_name,
-                                          size,
-                                          tilesize,
-                                          url,
-                                          level_index,
-                                      }| {
-                                    let level = level_index + base_index as usize;
-                                    let name = Arc::clone(&name);
-                                    url.all_sides(level).flat_map(move |(side_name, template)| {
-                                        let base_url = Arc::clone(base_url);
-                                        let title = Arc::clone(title);
+            image
+                .into_levels()
+                .enumerate()
+                .flat_map(move |(level_index, level)| {
+                    let name = Arc::clone(&name);
+                    level
+                        .level_descriptions(None, level_index)
+                        .into_iter()
+                        .flat_map(move |level_desc| {
+                            let name = Arc::clone(&name);
+                            level_desc
+                                .map_err(|err| warn!("bad krpano level: {err}"))
+                                .into_iter()
+                                .flat_map(
+                                    move |LevelDesc {
+                                              name: shape_name,
+                                              size,
+                                              tilesize,
+                                              url,
+                                              level_index,
+                                          }| {
+                                        let level = level_index + base_index as usize;
                                         let name = Arc::clone(&name);
-                                        tilesize.or(root_tile_size).map(|tile_size| Level {
-                                            base_url,
-                                            size,
-                                            tile_size,
-                                            base_index,
-                                            template,
-                                            shape_name,
-                                            side_name,
-                                            name,
-                                            title,
-                                        })
-                                    })
-                                },
-                            )
-                    })
-            })
+                                        url.all_sides(level).flat_map(
+                                            move |(side_name, template)| {
+                                                let base_url = Arc::clone(base_url);
+                                                let title = Arc::clone(title);
+                                                let name = Arc::clone(&name);
+                                                tilesize.or(root_tile_size).map(|tile_size| Level {
+                                                    base_url,
+                                                    size,
+                                                    tile_size,
+                                                    base_index,
+                                                    template,
+                                                    shape_name,
+                                                    side_name,
+                                                    name,
+                                                    title,
+                                                })
+                                            },
+                                        )
+                                    },
+                                )
+                        })
+                })
         })
         .into_zoom_levels())
 }
@@ -740,12 +745,13 @@ fn load_images_from_properties(
 
             let levels: ZoomLevels = image
                 .into_levels()
-                .flat_map(move |level| {
+                .enumerate()
+                .flat_map(move |(level_index, level)| {
                     let name = Arc::clone(&name_for_levels);
                     let base_url = Arc::clone(&base_url);
                     let global_title = Arc::clone(&global_title_for_levels);
                     level
-                        .level_descriptions(None)
+                        .level_descriptions(None, level_index)
                         .into_iter()
                         .flat_map(move |level_desc| {
                             let name = Arc::clone(&name);
@@ -938,6 +944,69 @@ fn test_flat_multires() {
             }
         ]
     );
+}
+
+#[cfg(test)]
+const BELLEGAMBE_XML_URL: &str =
+    "https://pba.lille.fr/gigapixels/Gigapixelweb/gigapixels_1515_bellegambe/gigapixels.xml";
+
+#[cfg(test)]
+fn assert_bellegambe_levels(levels: &ZoomLevels) {
+    let expected_sizes = [
+        Vec2d { x: 512, y: 342 },
+        Vec2d { x: 768, y: 514 },
+        Vec2d { x: 1536, y: 1026 },
+        Vec2d { x: 3072, y: 2052 },
+        Vec2d { x: 5888, y: 3930 },
+        Vec2d { x: 11904, y: 7946 },
+        Vec2d { x: 23808, y: 15892 },
+        Vec2d { x: 47616, y: 31782 },
+        Vec2d { x: 94976, y: 63392 },
+    ];
+    assert_eq!(levels.len(), expected_sizes.len());
+    assert_eq!(
+        levels
+            .iter()
+            .map(|level| level.size_hint())
+            .collect::<Vec<_>>(),
+        expected_sizes.into_iter().map(Some).collect::<Vec<_>>()
+    );
+
+    let selected_level = &levels[7];
+    assert_eq!(selected_level.tile_count_hint(), Some(5859));
+    assert_eq!(
+        selected_level
+            .http_headers()
+            .get("Referer")
+            .map(String::as_str),
+        Some(
+            "https://pba.lille.fr/gigapixels/Gigapixelweb/gigapixels_1515_bellegambe/gigapixels.tiles/l8/001/l8_001_001.jpg"
+        )
+    );
+}
+
+#[test]
+fn explicit_levels_expand_level_placeholder() {
+    let data = std::fs::read("testdata/krpano/pba_lille_gigapixels_1515_bellegambe.xml").unwrap();
+    let levels = load_from_properties(BELLEGAMBE_XML_URL, &data).unwrap();
+    assert_bellegambe_levels(&levels);
+}
+
+#[test]
+fn explicit_levels_expand_level_placeholder_in_dezoomer_result() {
+    let data = std::fs::read("testdata/krpano/pba_lille_gigapixels_1515_bellegambe.xml").unwrap();
+    let input = DezoomerInput {
+        uri: BELLEGAMBE_XML_URL.to_string(),
+        contents: PageContents::Success(data),
+    };
+    let result = KrpanoDezoomer::default().dezoomer_result(&input).unwrap();
+    assert_eq!(result.len(), 1);
+
+    let ZoomableImage::Image(image) = result.into_iter().next().unwrap() else {
+        panic!("Expected ZoomableImage::Image");
+    };
+    let levels = image.into_zoom_levels().unwrap();
+    assert_bellegambe_levels(&levels);
 }
 
 #[test]

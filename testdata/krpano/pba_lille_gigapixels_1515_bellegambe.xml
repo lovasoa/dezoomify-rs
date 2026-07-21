@@ -1,0 +1,41 @@
+﻿<krpano bgcolor="0x000000">
+
+	<!-- the skin and the flat pano viewing and controlling setup -->
+	<include url="skin/defaultskin.xml" />
+	<include url="skin/flatpano_setup.xml" />
+	
+	<!-- preview pano image -->
+	<preview url="gigapixels.tiles/preview.jpg" />
+
+<!-- pano image -->
+	<image hfov="1.00" vfov="0.667456" voffset="0.00" type="CYLINDER" multires="true" progressive="true" tilesize="512">
+		
+						<level tiledimagewidth="512" tiledimageheight="342" download="view">
+						<cylinder url="gigapixels.tiles/l1/%00v/l%l_%00v_%00h.jpg"/>
+					</level>
+					<level tiledimagewidth="768" tiledimageheight="514" download="view">
+						<cylinder url="gigapixels.tiles/l2/%00v/l%l_%00v_%00h.jpg"/>
+					</level>
+					<level tiledimagewidth="1536" tiledimageheight="1026" download="view">
+						<cylinder url="gigapixels.tiles/l3/%00v/l%l_%00v_%00h.jpg"/>
+					</level>
+					<level tiledimagewidth="3072" tiledimageheight="2052" download="view">
+						<cylinder url="gigapixels.tiles/l4/%00v/l%l_%00v_%00h.jpg"/>
+					</level>
+					<level tiledimagewidth="5888" tiledimageheight="3930" download="view">
+						<cylinder url="gigapixels.tiles/l5/%00v/l%l_%00v_%00h.jpg"/>
+					</level>
+					<level tiledimagewidth="11904" tiledimageheight="7946" download="view">
+						<cylinder url="gigapixels.tiles/l6/%00v/l%l_%00v_%00h.jpg"/>
+					</level>
+					<level tiledimagewidth="23808" tiledimageheight="15892" download="view">
+						<cylinder url="gigapixels.tiles/l7/%00v/l%l_%00v_%00h.jpg"/>
+					</level>
+					<level tiledimagewidth="47616" tiledimageheight="31782" download="view">
+						<cylinder url="gigapixels.tiles/l8/%00v/l%l_%00v_%00h.jpg"/>
+					</level>
+					<level tiledimagewidth="94976" tiledimageheight="63392" download="view">
+						<cylinder url="gigapixels.tiles/l9/%00v/l%l_%00v_%00h.jpg"/>
+					</level>
+</image>
+</krpano>
