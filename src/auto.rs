@@ -1,7 +1,72 @@
+//! Automatic format detection and metadata resolution.
+//!
+//! Each candidate dezoomer is advanced independently and records the exact URI
+//! it is waiting for. Requests for the same URI are queued only once, so one
+//! fetched response is delivered to every candidate waiting for it. Candidates
+//! waiting for another URI remain paused and never see unrelated metadata.
+//!
+//! `MetadataResolver` drives the `NeedsData` state machine and caches fetched
+//! metadata by its exact URI. Repeated requests, including requests made by a
+//! later deferred-image resolution, therefore reuse the first response instead
+//! of performing another download.
+
+use std::collections::HashMap;
+
 use log::debug;
 
-use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, Images};
+use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, Images, PageContents};
 use crate::errors::DezoomerError::NeedsData;
+use crate::network::fetch_uri;
+
+pub(crate) struct MetadataResolver<'a> {
+    http: &'a reqwest::Client,
+    cache: HashMap<String, Vec<u8>>,
+}
+
+impl<'a> MetadataResolver<'a> {
+    pub(crate) fn new(http: &'a reqwest::Client) -> Self {
+        Self {
+            http,
+            cache: HashMap::new(),
+        }
+    }
+
+    pub(crate) async fn resolve(
+        &mut self,
+        dezoomer: &mut dyn Dezoomer,
+        uri: &str,
+    ) -> Result<Images, DezoomerError> {
+        let mut input = DezoomerInput {
+            uri: uri.to_string(),
+            contents: PageContents::Unknown,
+        };
+
+        loop {
+            match dezoomer.images(&input) {
+                Ok(images) => return Ok(images),
+                Err(DezoomerError::NeedsData { uri }) => {
+                    let contents = if let Some(contents) = self.cache.get(&uri) {
+                        debug!("Using cached metadata for {uri}");
+                        contents.clone()
+                    } else {
+                        let contents = fetch_uri(&uri, self.http).await.map_err(|error| {
+                            DezoomerError::DownloadError {
+                                msg: error.to_string(),
+                            }
+                        })?;
+                        self.cache.insert(uri.clone(), contents.clone());
+                        contents
+                    };
+                    input = DezoomerInput {
+                        uri,
+                        contents: PageContents::Success(contents),
+                    };
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+}
 
 /// Reorder dezoomers to prioritize those most likely to handle the given URL
 pub fn prioritize_dezoomers_for_url(
@@ -66,33 +131,66 @@ pub fn all_dezoomers(include_generic: bool) -> Vec<Box<dyn Dezoomer>> {
     dezoomers
 }
 
+struct Candidate {
+    dezoomer: Box<dyn Dezoomer>,
+    waiting_for: Option<String>,
+}
+
 pub struct AutoDezoomer {
-    dezoomers: Vec<Box<dyn Dezoomer>>,
+    candidates: Vec<Candidate>,
     errors: Vec<(&'static str, DezoomerError)>,
     needs_uris: Vec<String>,
-    prioritized_for_url: Option<String>,
+    initialized: bool,
 }
 
 impl Default for AutoDezoomer {
     fn default() -> Self {
         AutoDezoomer {
-            dezoomers: all_dezoomers(false),
+            candidates: all_dezoomers(false)
+                .into_iter()
+                .map(|dezoomer| Candidate {
+                    dezoomer,
+                    waiting_for: None,
+                })
+                .collect(),
             errors: vec![],
             needs_uris: vec![],
-            prioritized_for_url: None,
+            initialized: false,
         }
     }
 }
 
 impl AutoDezoomer {
-    /// Prioritize dezoomers for a specific URL if not already done
-    fn prioritize_for_url_if_needed(&mut self, url: &str) {
-        if self.prioritized_for_url.as_ref() != Some(&url.to_string()) {
-            debug!("Prioritizing dezoomers for URL: {}", url);
-            let dezoomers = std::mem::take(&mut self.dezoomers);
-            self.dezoomers = prioritize_dezoomers_for_url(url, dezoomers);
-            self.prioritized_for_url = Some(url.to_string());
+    fn initialize(&mut self, url: &str) {
+        if self.initialized {
+            return;
         }
+        debug!("Prioritizing dezoomers for URL: {url}");
+        let dezoomers = std::mem::take(&mut self.candidates)
+            .into_iter()
+            .map(|candidate| candidate.dezoomer)
+            .collect();
+        self.candidates = prioritize_dezoomers_for_url(url, dezoomers)
+            .into_iter()
+            .map(|dezoomer| Candidate {
+                dezoomer,
+                waiting_for: None,
+            })
+            .collect();
+        self.initialized = true;
+    }
+
+    fn next_needed_uri(&mut self) -> Option<String> {
+        while let Some(uri) = self.needs_uris.pop() {
+            if self
+                .candidates
+                .iter()
+                .any(|candidate| candidate.waiting_for.as_deref() == Some(uri.as_str()))
+            {
+                return Some(uri);
+            }
+        }
+        None
     }
 }
 
@@ -102,41 +200,56 @@ impl Dezoomer for AutoDezoomer {
     }
 
     fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
-        // Prioritize dezoomers based on the URL pattern
-        self.prioritize_for_url_if_needed(&data.uri);
+        let initial_call = !self.initialized;
+        self.initialize(&data.uri);
 
         // TO DO: Use drain_filter when it is stabilized
         let mut i = 0;
-        while i != self.dezoomers.len() {
-            let dezoomer = &mut self.dezoomers[i];
-            let keep = match dezoomer.images(data) {
+        while i != self.candidates.len() {
+            let candidate = &mut self.candidates[i];
+            if !initial_call && candidate.waiting_for.as_deref() != Some(data.uri.as_str()) {
+                i += 1;
+                continue;
+            }
+
+            candidate.waiting_for = None;
+            let keep = match candidate.dezoomer.images(data) {
                 Ok(result) => {
                     debug!(
                         "dezoomer '{}' successfully processed the input",
-                        dezoomer.name()
+                        candidate.dezoomer.name()
                     );
                     return Ok(result);
                 }
                 Err(DezoomerError::NeedsData { uri }) => {
-                    debug!("dezoomer '{}' requested to load {}", dezoomer.name(), uri);
+                    debug!(
+                        "dezoomer '{}' requested to load {}",
+                        candidate.dezoomer.name(),
+                        uri
+                    );
                     if !self.needs_uris.contains(&uri) {
-                        self.needs_uris.push(uri);
+                        self.needs_uris.push(uri.clone());
                     }
+                    candidate.waiting_for = Some(uri);
                     true
                 }
                 Err(e) => {
-                    debug!("{} cannot process this image: {}", dezoomer.name(), e);
-                    self.errors.push((dezoomer.name(), e));
+                    debug!(
+                        "{} cannot process this image: {}",
+                        candidate.dezoomer.name(),
+                        e
+                    );
+                    self.errors.push((candidate.dezoomer.name(), e));
                     false
                 }
             };
             if keep {
                 i += 1
             } else {
-                self.dezoomers.remove(i);
+                self.candidates.remove(i);
             }
         }
-        if let Some(uri) = self.needs_uris.pop() {
+        if let Some(uri) = self.next_needed_uri() {
             Err(NeedsData { uri })
         } else {
             debug!("No dezoomer can process {:?}", data.uri);
@@ -178,7 +291,84 @@ impl std::fmt::Display for AutoDezoomerError {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+    use std::rc::Rc;
+
     use super::*;
+
+    enum Step {
+        Request(&'static str),
+        Reject,
+        Succeed,
+    }
+
+    struct ScriptedDezoomer {
+        name: &'static str,
+        steps: VecDeque<Step>,
+        seen_uris: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl ScriptedDezoomer {
+        fn new(
+            name: &'static str,
+            steps: impl IntoIterator<Item = Step>,
+        ) -> (Self, Rc<RefCell<Vec<String>>>) {
+            let seen_uris = Rc::new(RefCell::new(Vec::new()));
+            (
+                Self {
+                    name,
+                    steps: steps.into_iter().collect(),
+                    seen_uris: Rc::clone(&seen_uris),
+                },
+                seen_uris,
+            )
+        }
+    }
+
+    impl Dezoomer for ScriptedDezoomer {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
+            self.seen_uris.borrow_mut().push(data.uri.clone());
+            match self.steps.pop_front().expect("unexpected dezoomer call") {
+                Step::Request(uri) => Err(DezoomerError::NeedsData { uri: uri.into() }),
+                Step::Reject => Err(self.wrong_dezoomer()),
+                Step::Succeed => Ok(Images::default()),
+            }
+        }
+    }
+
+    fn auto_with(dezoomers: Vec<Box<dyn Dezoomer>>) -> AutoDezoomer {
+        AutoDezoomer {
+            candidates: dezoomers
+                .into_iter()
+                .map(|dezoomer| Candidate {
+                    dezoomer,
+                    waiting_for: None,
+                })
+                .collect(),
+            errors: Vec::new(),
+            needs_uris: Vec::new(),
+            initialized: false,
+        }
+    }
+
+    fn input(uri: &str, contents: PageContents) -> DezoomerInput {
+        DezoomerInput {
+            uri: uri.into(),
+            contents,
+        }
+    }
+
+    fn needed_uri(result: Result<Images, DezoomerError>) -> String {
+        match result {
+            Err(DezoomerError::NeedsData { uri }) => uri,
+            other => panic!("expected NeedsData, got {other:?}"),
+        }
+    }
 
     #[test]
     fn test_prioritize_dezoomers_for_url() {
@@ -238,5 +428,109 @@ mod tests {
         let prioritized = prioritize_dezoomers_for_url(zoomify_upper, dezoomers);
         // Current implementation is case-sensitive, so uppercase won't match
         assert_eq!(prioritized[0].name(), original_first);
+    }
+
+    #[test]
+    fn shared_followup_is_delivered_to_all_waiting_candidates() {
+        let (first, first_seen) =
+            ScriptedDezoomer::new("first", [Step::Request("shared"), Step::Reject]);
+        let (second, second_seen) =
+            ScriptedDezoomer::new("second", [Step::Request("shared"), Step::Succeed]);
+        let mut auto = auto_with(vec![Box::new(first), Box::new(second)]);
+
+        assert_eq!(
+            needed_uri(auto.images(&input("root", PageContents::Unknown))),
+            "shared"
+        );
+        auto.images(&input(
+            "shared",
+            PageContents::Success(b"metadata".to_vec()),
+        ))
+        .expect("the second candidate should accept the shared response");
+
+        assert_eq!(&*first_seen.borrow(), &["root", "shared"]);
+        assert_eq!(&*second_seen.borrow(), &["root", "shared"]);
+    }
+
+    #[test]
+    fn followups_are_delivered_only_to_their_requesters() {
+        let (first, first_seen) =
+            ScriptedDezoomer::new("first", [Step::Request("first-uri"), Step::Succeed]);
+        let (second, second_seen) =
+            ScriptedDezoomer::new("second", [Step::Request("second-uri"), Step::Reject]);
+        let mut auto = auto_with(vec![Box::new(first), Box::new(second)]);
+
+        assert_eq!(
+            needed_uri(auto.images(&input("root", PageContents::Unknown))),
+            "second-uri"
+        );
+        assert_eq!(
+            needed_uri(auto.images(&input(
+                "second-uri",
+                PageContents::Success(b"second".to_vec())
+            ))),
+            "first-uri"
+        );
+        auto.images(&input(
+            "first-uri",
+            PageContents::Success(b"first".to_vec()),
+        ))
+        .expect("the first candidate should remain active");
+
+        assert_eq!(&*first_seen.borrow(), &["root", "first-uri"]);
+        assert_eq!(&*second_seen.borrow(), &["root", "second-uri"]);
+    }
+
+    struct RepeatingDezoomer {
+        metadata_uri: String,
+        calls: usize,
+    }
+
+    impl Dezoomer for RepeatingDezoomer {
+        fn name(&self) -> &'static str {
+            "repeating"
+        }
+
+        fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
+            self.calls += 1;
+            match self.calls {
+                1 => Err(DezoomerError::NeedsData {
+                    uri: self.metadata_uri.clone(),
+                }),
+                2 => {
+                    assert_eq!(data.with_contents()?.contents, b"metadata");
+                    std::fs::remove_file(&self.metadata_uri).unwrap();
+                    Err(DezoomerError::NeedsData {
+                        uri: self.metadata_uri.clone(),
+                    })
+                }
+                3 => {
+                    assert_eq!(data.with_contents()?.contents, b"metadata");
+                    Ok(Images::default())
+                }
+                _ => panic!("unexpected dezoomer call"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn metadata_resolver_fetches_each_uri_once() {
+        use std::io::Write;
+
+        let mut metadata = tempfile::NamedTempFile::new().unwrap();
+        metadata.write_all(b"metadata").unwrap();
+        let metadata_uri = metadata.path().to_string_lossy().into_owned();
+        let mut dezoomer = RepeatingDezoomer {
+            metadata_uri,
+            calls: 0,
+        };
+        let http = reqwest::Client::new();
+        let mut resolver = MetadataResolver::new(&http);
+
+        resolver
+            .resolve(&mut dezoomer, "root")
+            .await
+            .expect("the cached response should satisfy the repeated request");
+        assert_eq!(dezoomer.calls, 3);
     }
 }

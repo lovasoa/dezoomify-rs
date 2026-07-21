@@ -7,20 +7,20 @@ use std::path::{Path, PathBuf};
 use std::{fs, io};
 
 use log::{debug, error, info};
-use reqwest::Client;
 
 pub use arguments::Arguments;
 pub use binary_display::{BinaryDisplay, display_bytes};
+use dezoomer::Dezoomer;
 use dezoomer::TileReference;
-use dezoomer::{Dezoomer, DezoomerError, DezoomerInput};
 use dezoomer::{ZoomLevel, ZoomLevelIter};
 pub use errors::ZoomError;
-use network::{client, fetch_uri};
+use network::client;
 use output_file::get_outname;
 use tile::Tile;
 pub use vec2d::Vec2d;
 
-use crate::dezoomer::{Images, PageContents, ResolvedImage, ZoomableImage};
+use crate::auto::MetadataResolver;
+use crate::dezoomer::{Images, ResolvedImage, ZoomableImage};
 use crate::encoder::SourceLevel;
 use crate::encoder::tile_buffer::TileBuffer;
 
@@ -63,38 +63,23 @@ fn stdin_line() -> Result<String, ZoomError> {
     Ok(first_line?)
 }
 
-/// Process a single dezoomer to get a result, handling the NeedsData loop
+/// Resolve all metadata requested by a dezoomer.
 async fn get_images(
     dezoomer: &mut dyn Dezoomer,
-    http: &Client,
+    resolver: &mut MetadataResolver<'_>,
     uri: &str,
 ) -> Result<Images, ZoomError> {
-    let mut i = DezoomerInput {
-        uri: String::from(uri),
-        contents: PageContents::Unknown,
-    };
-    loop {
-        match dezoomer.images(&i) {
-            Ok(result) => return Ok(result),
-            Err(DezoomerError::NeedsData { uri }) => {
-                let contents = fetch_uri(&uri, http).await.into();
-                debug!("Response for metadata file '{}': {:?}", uri, contents);
-                i.uri = uri;
-                i.contents = contents;
-            }
-            Err(e) => return Err(e.into()),
-        }
-    }
+    resolver.resolve(dezoomer, uri).await.map_err(Into::into)
 }
 
 /// Process an input URI to extract zoomable images
 async fn get_images_from_uri(
     args: &Arguments,
-    http: &Client,
+    resolver: &mut MetadataResolver<'_>,
     uri: &str,
 ) -> Result<Vec<ZoomableImage>, ZoomError> {
     let mut dezoomer = args.find_dezoomer()?;
-    Ok(get_images(dezoomer.as_mut(), http, uri)
+    Ok(get_images(dezoomer.as_mut(), resolver, uri)
         .await?
         .into_iter()
         .collect())
@@ -232,14 +217,14 @@ fn choose_image(
 async fn resolve_selected_image(
     mut image: ZoomableImage,
     args: &Arguments,
-    http: &Client,
+    resolver: &mut MetadataResolver<'_>,
 ) -> Result<ResolvedImage, ZoomError> {
     loop {
         match image {
             ZoomableImage::Resolved(image) => return Ok(image),
             ZoomableImage::Url(image_url) => {
                 let images = ZoomableImage::Url(image_url)
-                    .resolve(http)
+                    .resolve_with(resolver)
                     .await
                     .map_err(|source| ZoomError::Dezoomer { source })?;
                 image = choose_image(images.into_iter().collect(), args)?;
@@ -379,11 +364,12 @@ fn level_area(size: Option<Vec2d>) -> u64 {
 pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
     let uri = args.choose_input_uri()?;
     let http_client = client(args.headers(), args, Some(&uri))?;
+    let mut resolver = MetadataResolver::new(&http_client);
     debug!("Trying to locate a zoomable image...");
-    let images = get_images_from_uri(args, &http_client, &uri).await?;
+    let images = get_images_from_uri(args, &mut resolver, &uri).await?;
     debug!("Found {} zoomable images", images.len());
     let selected_image = choose_image(images, args)?;
-    let resolved_image = resolve_selected_image(selected_image, args, &http_client).await?;
+    let resolved_image = resolve_selected_image(selected_image, args, &mut resolver).await?;
     let title = resolved_image.title().map(str::to_string);
     let zoom_levels = resolved_image.into_zoom_levels();
 
@@ -455,8 +441,9 @@ pub async fn process_bulk(args: &Arguments) -> Result<BulkStats, ZoomError> {
 
     // Discover images from the bulk source.
     let http = client(std::iter::empty(), args, None)?;
+    let mut resolver = MetadataResolver::new(&http);
     let mut dezoomer = args.find_dezoomer()?;
-    let images = get_images(dezoomer.as_mut(), &http, bulk_uri).await?;
+    let images = get_images(dezoomer.as_mut(), &mut resolver, bulk_uri).await?;
 
     let mut stats = BulkStats::new();
     let base_dir = current_dir()?;
@@ -474,7 +461,7 @@ pub async fn process_bulk(args: &Arguments) -> Result<BulkStats, ZoomError> {
     process_bulk_zoomable_images(
         images.into_iter().collect(),
         args,
-        &http,
+        &mut resolver,
         &mut stats,
         &base_dir,
     )
@@ -496,7 +483,7 @@ pub async fn process_bulk(args: &Arguments) -> Result<BulkStats, ZoomError> {
 async fn process_bulk_zoomable_images(
     images: Vec<ZoomableImage>,
     args: &Arguments,
-    http: &Client,
+    resolver: &mut MetadataResolver<'_>,
     stats: &mut BulkStats,
     base_dir: &Path,
 ) -> Result<(), ZoomError> {
@@ -515,7 +502,7 @@ async fn process_bulk_zoomable_images(
 
         let resolved_image = match zoomable_image {
             ZoomableImage::Resolved(image) => image,
-            image @ ZoomableImage::Url(_) => match image.resolve(http).await {
+            image @ ZoomableImage::Url(_) => match image.resolve_with(resolver).await {
                 Ok(images) if !images.is_empty() => {
                     let images = images.into_iter().collect::<Vec<_>>();
                     stats.total_images += images.len() - 1;

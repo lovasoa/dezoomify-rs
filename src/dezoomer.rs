@@ -227,60 +227,27 @@ impl ZoomableImage {
     }
 
     pub async fn resolve(self, http: &reqwest::Client) -> Result<Images, DezoomerError> {
+        let mut resolver = crate::auto::MetadataResolver::new(http);
+        self.resolve_with(&mut resolver).await
+    }
+
+    pub(crate) async fn resolve_with(
+        self,
+        resolver: &mut crate::auto::MetadataResolver<'_>,
+    ) -> Result<Images, DezoomerError> {
         match self {
             ZoomableImage::Resolved(image) => Ok(image.into()),
             ZoomableImage::Url(url) => {
-                use crate::auto::{all_dezoomers, prioritize_dezoomers_for_url};
-                use crate::network::fetch_uri;
+                use crate::auto::AutoDezoomer;
                 use log::debug;
 
                 let ImageUrl { url, title } = url;
 
                 debug!("Resolving image URL: {}", url);
-
-                // Try each dezoomer on this URL to find one that can process it
-                // Prioritize dezoomers based on URL patterns for better performance
-                let dezoomers = prioritize_dezoomers_for_url(&url, all_dezoomers(false));
-
-                for mut dezoomer in dezoomers {
-                    debug!("Trying dezoomer '{}' on URL: {}", dezoomer.name(), url);
-
-                    let mut input = DezoomerInput {
-                        uri: url.clone(),
-                        contents: PageContents::Unknown,
-                    };
-
-                    loop {
-                        match dezoomer.images(&input) {
-                            Ok(images) => {
-                                debug!(
-                                    "Dezoomer '{}' successfully extracted {} images",
-                                    dezoomer.name(),
-                                    images.len()
-                                );
-                                return Ok(images.with_fallback_title(title));
-                            }
-                            Err(DezoomerError::NeedsData { uri: needed_uri }) => {
-                                debug!(
-                                    "Dezoomer '{}' needs data from: {}",
-                                    dezoomer.name(),
-                                    needed_uri
-                                );
-                                let contents = fetch_uri(&needed_uri, http).await.into();
-                                input.uri = needed_uri;
-                                input.contents = contents;
-                            }
-                            Err(e) => {
-                                debug!("Dezoomer '{}' failed: {}", dezoomer.name(), e);
-                                break; // Try next dezoomer
-                            }
-                        }
-                    }
-                }
-
-                Err(DezoomerError::WrongDezoomer {
-                    name: "No dezoomer could process this URL",
-                })
+                let mut dezoomer = AutoDezoomer::default();
+                let images = resolver.resolve(&mut dezoomer, &url).await?;
+                debug!("Successfully extracted {} images", images.len());
+                Ok(images.with_fallback_title(title))
             }
         }
     }
