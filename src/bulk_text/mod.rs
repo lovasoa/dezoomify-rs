@@ -29,7 +29,7 @@ impl Dezoomer for BulkTextDezoomer {
         })
     }
 
-    fn dezoomer_result(&mut self, data: &DezoomerInput) -> Result<DezoomerResult, DezoomerError> {
+    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
         // Only process files that are actual bulk URL lists
         // Must have appropriate file extension or "bulk"/"list" in name
         // Exclude files with template variables like {{X}} or {{Y}} which are for generic dezoomer
@@ -56,7 +56,7 @@ impl Dezoomer for BulkTextDezoomer {
             });
         }
 
-        Ok(dezoomer_result_from_urls(urls))
+        Ok(urls.into())
     }
 }
 

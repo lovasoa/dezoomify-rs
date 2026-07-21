@@ -68,7 +68,7 @@ impl Dezoomer for IIIF {
         Ok(zoom_levels(uri, contents)?)
     }
 
-    fn dezoomer_result(&mut self, data: &DezoomerInput) -> Result<DezoomerResult, DezoomerError> {
+    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
         let with_contents = data.with_contents()?;
         let contents = with_contents.contents;
         let uri = with_contents.uri;
@@ -84,7 +84,7 @@ impl Dezoomer for IIIF {
                     // This is clearly an Image Service info.json, try parsing it directly
                     let levels = zoom_levels(uri, contents)?;
                     let image = ResolvedImage::new(levels, None);
-                    return Ok(dezoomer_result_from_single_image(image));
+                    return Ok(image.into());
                 }
                 "Manifest" | "sc:Manifest" => {
                     // This is clearly a manifest, try parsing it as such
@@ -111,7 +111,7 @@ impl Dezoomer for IIIF {
             match zoom_levels(uri, contents) {
                 Ok(levels) => {
                     let image = ResolvedImage::new(levels, None);
-                    return Ok(dezoomer_result_from_single_image(image));
+                    return Ok(image.into());
                 }
                 Err(_) => {
                     // Fall through to try as manifest
@@ -130,7 +130,7 @@ impl Dezoomer for IIIF {
                 match zoom_levels(uri, contents) {
                     Ok(levels) => {
                         let image = ResolvedImage::new(levels, None);
-                        Ok(dezoomer_result_from_single_image(image))
+                        Ok(image.into())
                     }
                     Err(e) => Err(e.into()),
                 }
@@ -141,7 +141,7 @@ impl Dezoomer for IIIF {
 
 fn dezoomer_result_from_manifest_image_infos(
     image_infos: Vec<manifest_types::ExtractedImageInfo>,
-) -> DezoomerResult {
+) -> Images {
     let image_urls: Vec<ZoomableImageUrl> = image_infos
         .into_iter()
         .map(|image_info| {
@@ -153,7 +153,7 @@ fn dezoomer_result_from_manifest_image_infos(
         })
         .collect();
 
-    dezoomer_result_from_urls(image_urls)
+    image_urls.into()
 }
 
 fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {

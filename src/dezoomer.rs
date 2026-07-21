@@ -111,6 +111,10 @@ impl Images {
     pub fn iter(&self) -> std::slice::Iter<'_, ZoomableImage> {
         self.0.iter()
     }
+
+    fn into_vec(self) -> Vec<ZoomableImage> {
+        self.0
+    }
 }
 
 impl IntoIterator for Images {
@@ -345,9 +349,7 @@ pub trait Dezoomer {
 
     /// Extract images or image URLs from the input data
     fn dezoomer_result(&mut self, data: &DezoomerInput) -> Result<DezoomerResult, DezoomerError> {
-        let levels = self.zoom_levels(data)?;
-        let image = ResolvedImage::new(levels, None);
-        Ok(dezoomer_result_from_single_image(image))
+        Ok(self.images(data)?.into_vec())
     }
 
     fn assert(&self, c: bool) -> Result<(), DezoomerError> {

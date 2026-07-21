@@ -55,10 +55,9 @@ impl Dezoomer for KrpanoDezoomer {
         self.handle_input(data, load_from_properties)
     }
 
-    fn dezoomer_result(&mut self, data: &DezoomerInput) -> Result<DezoomerResult, DezoomerError> {
+    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
         self.handle_input(data, |uri, contents| {
-            let images = load_images_from_properties(uri, contents)?;
-            Ok(dezoomer_result_from_images(images))
+            Ok(load_images_from_properties(uri, contents)?.into())
         })
     }
 }
