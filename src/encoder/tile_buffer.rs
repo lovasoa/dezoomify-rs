@@ -29,20 +29,18 @@ pub enum TileBuffer {
 }
 
 impl TileBuffer {
-    /// Create an encoder for an image of the given size at the path
-    /// Errors out if the encoder cannot create files with the given extension
-    /// or at the given size
-    pub async fn new(destination: PathBuf, compression: u8) -> Result<Self, ZoomError> {
-        Ok(TileBuffer::Buffering {
+    /// Create a tile buffer for an output path.
+    pub fn new(destination: PathBuf, compression: u8) -> Self {
+        TileBuffer::Buffering {
             destination,
             buffer: vec![],
             encoded_buffer: vec![],
             compression,
             prefer_encoded_tiles: false,
-        })
+        }
     }
 
-    pub async fn set_size(&mut self, size: Vec2d) -> Result<(), ZoomError> {
+    pub fn set_size(&mut self, size: Vec2d) -> Result<(), ZoomError> {
         let next_state = match self {
             TileBuffer::Buffering {
                 buffer,
@@ -61,7 +59,7 @@ impl TileBuffer {
                 for tile in encoded_buffer.drain(..) {
                     encoder.add_encoded_tile(tile)?;
                 }
-                buffer_tiles(encoder, destination, *prefer_encoded_tiles).await
+                buffer_tiles(encoder, destination, *prefer_encoded_tiles)
             }
             TileBuffer::Writing { .. } => {
                 unreachable!("The size of the image can be set only once")
@@ -100,7 +98,7 @@ impl TileBuffer {
                 ..
             } => {
                 *current_preference = prefer_encoded_tiles;
-                self.set_size(level.size).await?;
+                self.set_size(level.size)?;
                 if let TileBuffer::Writing { tile_sender, .. } = self {
                     tile_sender.send(TileBufferMsg::BeginLevel(level)).await?;
                     Ok(())
@@ -163,7 +161,7 @@ impl TileBuffer {
                 .map(|t| t.position + t.size)
                 .fold(Vec2d { x: 0, y: 0 }, Vec2d::max);
             let size = decoded_size.max(encoded_size);
-            self.set_size(size).await?;
+            self.set_size(size)?;
         }
         let (tile_sender, error_receiver) = match self {
             TileBuffer::Buffering { .. } => unreachable!("Just set the size"),
@@ -178,15 +176,16 @@ impl TileBuffer {
         let mut result = Ok(());
         // Wait for the encoder to terminate even if some tiles raised errors
         while let Some(err) = error_receiver.recv().await {
-            result = Err(err.into())
+            result = Err(err.into());
         }
         result
     }
 
     pub fn destination(&self) -> &PathBuf {
         match self {
-            TileBuffer::Buffering { destination, .. } => destination,
-            TileBuffer::Writing { destination, .. } => destination,
+            TileBuffer::Buffering { destination, .. } | TileBuffer::Writing { destination, .. } => {
+                destination
+            }
         }
     }
 }
@@ -199,7 +198,7 @@ pub enum TileBufferMsg {
     Close,
 }
 
-async fn buffer_tiles(
+fn buffer_tiles(
     mut encoder: Box<dyn Encoder>,
     destination: PathBuf,
     prefer_encoded_tiles: bool,

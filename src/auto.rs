@@ -69,6 +69,7 @@ impl<'a> MetadataResolver<'a> {
 }
 
 /// Reorder dezoomers to prioritize those most likely to handle the given URL
+#[must_use]
 pub fn prioritize_dezoomers_for_url(
     url: &str,
     mut dezoomers: Vec<Box<dyn Dezoomer>>,
@@ -95,10 +96,7 @@ pub fn prioritize_dezoomers_for_url(
         .map(|(_, dezoomer)| *dezoomer);
 
     if let Some(preferred_name) = preferred_dezoomer {
-        debug!(
-            "URL '{}' appears to match '{}' dezoomer, prioritizing it",
-            url, preferred_name
-        );
+        debug!("URL '{url}' appears to match '{preferred_name}' dezoomer, prioritizing it");
 
         // Move the preferred dezoomer to the front
         let preferred_idx = dezoomers.iter().position(|d| d.name() == preferred_name);
@@ -111,6 +109,7 @@ pub fn prioritize_dezoomers_for_url(
     dezoomers
 }
 
+#[must_use]
 pub fn all_dezoomers(include_generic: bool) -> Vec<Box<dyn Dezoomer>> {
     let mut dezoomers: Vec<Box<dyn Dezoomer>> = vec![
         Box::<crate::custom_yaml::CustomDezoomer>::default(),
@@ -126,7 +125,7 @@ pub fn all_dezoomers(include_generic: bool) -> Vec<Box<dyn Dezoomer>> {
         Box::<crate::bulk_text::BulkTextDezoomer>::default(),
     ];
     if include_generic {
-        dezoomers.push(Box::<AutoDezoomer>::default())
+        dezoomers.push(Box::<AutoDezoomer>::default());
     }
     dezoomers
 }
@@ -244,7 +243,7 @@ impl Dezoomer for AutoDezoomer {
                 }
             };
             if keep {
-                i += 1
+                i += 1;
             } else {
                 self.candidates.remove(i);
             }
@@ -273,7 +272,7 @@ impl std::fmt::Display for AutoDezoomerError {
             f,
             "Tried all of the dezoomers, none succeeded. They returned the following errors:\n"
         )?;
-        for (dezoomer_name, err) in self.0.iter() {
+        for (dezoomer_name, err) in &self.0 {
             writeln!(f, " - {dezoomer_name}: {err}")?;
         }
         writeln!(

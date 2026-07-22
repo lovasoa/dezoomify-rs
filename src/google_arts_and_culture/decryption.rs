@@ -12,7 +12,7 @@ pub fn decrypt(encrypted: Vec<u8>) -> Result<Vec<u8>, InvalidEncryptedImage> {
     let marker = read_u32_as_u64_le(&mut c)?;
     if marker != 0x0A_0A_0A_0A {
         // The file is not encrypted
-        trace!("Image is not encrypted (marker: 0x{:08x})", marker);
+        trace!("Image is not encrypted (marker: 0x{marker:08x})");
         return Ok(c.into_inner());
     }
     trace!("Found encrypted image marker");

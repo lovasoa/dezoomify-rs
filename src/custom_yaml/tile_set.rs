@@ -1,12 +1,12 @@
 use std::convert::TryInto;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 use regex::Regex;
 use serde::{Deserialize, Deserializer, de};
 
 use custom_error::custom_error;
 use evalexpr::DefaultNumericTypes;
-use lazy_static::lazy_static;
 
 use crate::{TileReference, Vec2d};
 
@@ -137,10 +137,8 @@ impl FromStr for UrlTemplate {
     type Err = UrlTemplateError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        lazy_static! {
-            static ref EXPR_RE: Regex = Regex::new(r"\{\{.*?}}").unwrap();
-            static ref ZERO_RE: Regex = Regex::new(r":0(\d+)$").unwrap();
-        }
+        static EXPR_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{.*?}}").unwrap());
+        static ZERO_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r":0(\d+)$").unwrap());
         let mut parts = vec![];
         let mut cursor = 0usize;
         for m in EXPR_RE.find_iter(s) {

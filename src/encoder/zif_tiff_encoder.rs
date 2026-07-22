@@ -129,7 +129,7 @@ impl ZifTiffEncoder {
         self.output.apply(batch).map_err(to_io_error)
     }
 
-    fn decode_or_fall_back(&mut self, tile: EncodedTile) -> io::Result<()> {
+    fn decode_or_fall_back(&mut self, tile: &EncodedTile) -> io::Result<()> {
         if self.source_pyramid {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -175,10 +175,10 @@ impl Encoder for ZifTiffEncoder {
                 ));
             }
             let fallback_destination = decoded_fallback_destination(&self.destination);
-            self.fallback = Some(
-                Canvas::<Rgba<u8>>::new_generic(fallback_destination.clone(), self.size)
-                    .map_err(|err| io::Error::other(err.to_string()))?,
-            );
+            self.fallback = Some(Canvas::<Rgba<u8>>::new_generic(
+                fallback_destination.clone(),
+                self.size,
+            ));
             self.fallback_destination = Some(fallback_destination);
         }
         self.fallback
@@ -189,15 +189,13 @@ impl Encoder for ZifTiffEncoder {
 
     fn add_encoded_tile(&mut self, tile: EncodedTile) -> io::Result<()> {
         if self.fallback.is_some() || self.force_decoded_fallback {
-            return self.decode_or_fall_back(tile);
+            return self.decode_or_fall_back(&tile);
         }
-        let codec = match codec_for_format(tile.format) {
-            Ok(codec) => codec,
-            Err(_) => return self.decode_or_fall_back(tile),
+        let Ok(codec) = codec_for_format(tile.format) else {
+            return self.decode_or_fall_back(&tile);
         };
-        let (mut color_model, channels) = match color_from_encoded_tile(&tile) {
-            Ok(color) => color,
-            Err(_) => return self.decode_or_fall_back(tile),
+        let Ok((mut color_model, channels)) = color_from_encoded_tile(&tile) else {
+            return self.decode_or_fall_back(&tile);
         };
         if codec == Codec::Jpeg {
             color_model = ColorModel::YCbCr;
@@ -206,7 +204,7 @@ impl Encoder for ZifTiffEncoder {
             match parse_jpeg_tile_info(&tile.bytes) {
                 Ok(jpeg) => Some(jpeg),
                 Err(err) if self.source_pyramid => return Err(err),
-                Err(_) => return self.decode_or_fall_back(tile),
+                Err(_) => return self.decode_or_fall_back(&tile),
             }
         } else {
             None
@@ -435,9 +433,10 @@ mod tests {
         let bytes = Arc::new(encoded);
         let dir = tempfile::tempdir().unwrap();
         let destination = dir.path().join("passthrough.tiff");
-        let mut encoder = ZifTiffEncoder::new(destination.clone(), Vec2d { x: 16, y: 16 }).unwrap();
+        let mut output_encoder =
+            ZifTiffEncoder::new(destination.clone(), Vec2d { x: 16, y: 16 }).unwrap();
 
-        encoder
+        output_encoder
             .add_encoded_tile(EncodedTile {
                 position: Vec2d { x: 0, y: 0 },
                 bytes: Arc::clone(&bytes),
@@ -446,7 +445,7 @@ mod tests {
                 color_type: ColorType::Rgb8,
             })
             .unwrap();
-        encoder.finalize().unwrap();
+        output_encoder.finalize().unwrap();
 
         let mut reader = RangeReader::open(&destination).unwrap();
         let image = reader.read_zif().unwrap();

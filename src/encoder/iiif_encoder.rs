@@ -27,7 +27,7 @@ pub struct IiifEncoder {
 impl IiifEncoder {
     pub fn new(destination: PathBuf, size: Vec2d, quality: u8) -> Result<Self, ZoomError> {
         let _ = std::fs::remove_file(&destination);
-        debug!("Creating IIIF  directory at {:?}", destination);
+        debug!("Creating IIIF directory at {}", destination.display());
         std::fs::create_dir(&destination)?;
         let tile_saver = Arc::new(IIIFTileSaver {
             root_path: destination.clone(),
@@ -54,7 +54,7 @@ impl Encoder for IiifEncoder {
     fn add_tile(&mut self, tile: Tile) -> io::Result<()> {
         if let Some(level) = self.current_level {
             self.direct_tile_saver
-                .save_tile_at_scale(level.scale_factor, tile)
+                .save_tile_at_scale(level.scale_factor, &tile)
         } else {
             self.retiler.add_tile(&tile)
         }
@@ -99,7 +99,7 @@ impl Encoder for IiifEncoder {
         let info_json_str = serde_json::to_string(&image_info)?;
         let info_json_path = self.root_path.join("info.json");
         let viewer_path = self.root_path.join("viewer.html");
-        debug!("Writing iiif metadata to {info_json_path:?}");
+        debug!("Writing iiif metadata to {}", info_json_path.display());
         OpenOptions::new()
             .write(true)
             .create(true)
@@ -107,7 +107,7 @@ impl Encoder for IiifEncoder {
             .open(info_json_path)?
             .write_all(info_json_str.as_bytes())?;
 
-        debug!("Writing viewer page to {viewer_path:?}");
+        debug!("Writing viewer page to {}", viewer_path.display());
         let viewer_buf = include_str!("./viewer_files/viewer.html")
             .replace(
                 "/*DEZOOMIFY_SEADRAGON*/",
@@ -134,7 +134,7 @@ struct IIIFTileSaver {
 }
 
 impl IIIFTileSaver {
-    fn save_tile_at_scale(&self, scale_factor: u32, tile: Tile) -> io::Result<()> {
+    fn save_tile_at_scale(&self, scale_factor: u32, tile: &Tile) -> io::Result<()> {
         self.save_tile_region(
             tile.position * scale_factor,
             tile.size() * scale_factor,
@@ -148,7 +148,7 @@ impl IIIFTileSaver {
         full_position: Vec2d,
         full_size: Vec2d,
         tile_size: Vec2d,
-        tile: Tile,
+        tile: &Tile,
     ) -> io::Result<()> {
         let region = format!(
             "{},{},{},{}",
@@ -162,7 +162,7 @@ impl IIIFTileSaver {
         image_dir_path.push(tile_size_str);
         image_dir_path.push(rotation);
         let image_path = image_dir_path.join(filename);
-        debug!("Writing tile to {image_path:?}");
+        debug!("Writing tile to {}", image_path.display());
         std::fs::create_dir_all(&image_dir_path)?;
         let file = &mut BufWriter::new(File::create(&image_path)?);
         let jpeg_writer = JpegEncoder::new_with_quality(file, self.quality);
@@ -174,6 +174,6 @@ impl IIIFTileSaver {
 
 impl TileSaver for IIIFTileSaver {
     fn save_tile(&self, size: Vec2d, tile: Tile) -> io::Result<()> {
-        self.save_tile_region(tile.position, size, tile.size(), tile)
+        self.save_tile_region(tile.position, size, tile.size(), &tile)
     }
 }

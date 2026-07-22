@@ -136,7 +136,7 @@ impl<T: TileSaver> Retiler<T> {
                         Received pixels for tile at {} on level {}, but this tile has already been written.\
                         Ignoring them (source tiles overlap).",
                     cur_pos, self.scale_factor
-                )
+                );
             }
         }
 
@@ -148,7 +148,7 @@ impl<T: TileSaver> Retiler<T> {
 
     /// Add all partially downloaded tiles to the final image
     pub fn finalize(&mut self) {
-        for (position, tile_opt) in std::mem::take(&mut self.tiles).into_iter() {
+        for (position, tile_opt) in std::mem::take(&mut self.tiles) {
             if let Some(tile) = tile_opt {
                 let cur_tile_size = max_size_in_rect(position, self.tile_size, self.original_size);
                 warn!(
@@ -168,12 +168,12 @@ impl<T: TileSaver> Retiler<T> {
                     warn!(
                         "Additionally, the following error occurred \
                 when trying to add the partial tile to the final image: {e}"
-                    )
+                    );
                 }
             }
         }
         if let Some(next_level) = &mut self.next_level {
-            next_level.finalize()
+            next_level.finalize();
         }
     }
 
@@ -188,11 +188,7 @@ impl<T: TileSaver> Retiler<T> {
     }
 
     pub fn level_count(&self) -> u32 {
-        1 + self
-            .next_level
-            .as_ref()
-            .map(|l| l.level_count())
-            .unwrap_or(0)
+        1 + self.next_level.as_ref().map_or(0, |l| l.level_count())
     }
 }
 
@@ -235,8 +231,8 @@ impl TmpTile {
 
         let tmp_tile_path = Self::path(self_position, scale_factor);
         debug!(
-            "Opening partial tile of size {} at {:?} in order to paste pixels from {} to {}",
-            scaled_size, tmp_tile_path, top_left, bottom_right
+            "Opening partial tile of size {scaled_size} at {} in order to paste pixels from {top_left} to {bottom_right}",
+            tmp_tile_path.display()
         );
         let mut tile_img = image::open(&tmp_tile_path)
             .unwrap_or_else(|_| image::DynamicImage::new_rgb8(scaled_size.x, scaled_size.y));
@@ -252,8 +248,8 @@ impl TmpTile {
         if self.missing_pixels() == 0 {
             // The tile has been fully covered by pixels
             debug!(
-                "Removing completed tile of level {} at position {}: {:?}",
-                level_size, self_position, tmp_tile_path
+                "Removing completed tile of level {level_size} at position {self_position}: {}",
+                tmp_tile_path.display()
             );
             let _ = std::fs::remove_file(&tmp_tile_path);
             Ok(Some(tile_img))

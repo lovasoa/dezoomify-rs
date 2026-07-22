@@ -7,9 +7,11 @@ pub struct Vec2d {
 }
 
 impl Vec2d {
+    #[must_use]
     pub fn square(size: u32) -> Vec2d {
         Vec2d { x: size, y: size }
     }
+    #[must_use]
     pub fn max<T: Into<Vec2d>>(self, other: T) -> Vec2d {
         let other = other.into();
         Vec2d {
@@ -17,6 +19,7 @@ impl Vec2d {
             y: self.y.max(other.y),
         }
     }
+    #[must_use]
     pub fn min<T: Into<Vec2d>>(self, other: T) -> Vec2d {
         let other = other.into();
         Vec2d {
@@ -24,17 +27,20 @@ impl Vec2d {
             y: self.y.min(other.y),
         }
     }
+    #[must_use]
     pub fn ceil_div<T: Into<Vec2d>>(self, other: T) -> Vec2d {
         let other = other.into();
-        let x: u32 = self.x / other.x + !self.x.is_multiple_of(other.x) as u32;
-        let y: u32 = self.y / other.y + !self.y.is_multiple_of(other.y) as u32;
+        let x: u32 = self.x / other.x + u32::from(!self.x.is_multiple_of(other.x));
+        let y: u32 = self.y / other.y + u32::from(!self.y.is_multiple_of(other.y));
         Vec2d { x, y }
     }
 
+    #[must_use]
     pub fn area(self) -> u64 {
         u64::from(self.x) * u64::from(self.y)
     }
 
+    #[must_use]
     pub fn fits_inside(self, other: Vec2d) -> bool {
         self.x <= other.x && self.y <= other.y
     }

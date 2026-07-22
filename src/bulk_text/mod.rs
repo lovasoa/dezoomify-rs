@@ -1,4 +1,6 @@
-use crate::dezoomer::*;
+use crate::dezoomer::{
+    Dezoomer, DezoomerError, DezoomerInput, DezoomerInputWithContents, ImageUrl, Images,
+};
 use custom_error::custom_error;
 
 custom_error! {pub BulkTextError
@@ -25,9 +27,10 @@ impl Dezoomer for BulkTextDezoomer {
         // Only process files that are actual bulk URL lists
         // Must have appropriate file extension or "bulk"/"list" in name
         // Exclude files with template variables like {{X}} or {{Y}} which are for generic dezoomer
-        let is_bulk_file = (data.uri.ends_with(".txt")
-            || data.uri.ends_with(".urls")
-            || data.uri.contains("bulk")
+        let extension = data.uri.rsplit('.').next();
+        let is_bulk_file = (extension.is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("txt") || ext.eq_ignore_ascii_case("urls")
+        }) || data.uri.contains("bulk")
             || data.uri.contains("list"))
             && !data.uri.contains("{{")
             && !data.uri.contains("}}");
@@ -37,7 +40,7 @@ impl Dezoomer for BulkTextDezoomer {
 
         // Parse the text content to extract URLs
         let content = std::str::from_utf8(contents).map_err(|e| DezoomerError::DownloadError {
-            msg: format!("Failed to parse text file as UTF-8: {}", e),
+            msg: format!("Failed to parse text file as UTF-8: {e}"),
         })?;
 
         let urls = parse_text_urls(content)?;
@@ -99,11 +102,10 @@ fn parse_text_urls(content: &str) -> Result<Vec<ImageUrl>, BulkTextError> {
         validate_url_or_path(url_part, line_num + 1)?;
 
         // Use custom title if provided, otherwise extract from URL
-        let title = if let Some(custom_title) = custom_title {
-            Some(custom_title.to_string())
-        } else {
-            extract_title_from_url(url_part, line_num + 1)
-        };
+        let title = Some(custom_title.map_or_else(
+            || extract_title_from_url(url_part, line_num + 1),
+            str::to_string,
+        ));
 
         urls.push(ImageUrl {
             url: url_part.to_string(),
@@ -115,7 +117,7 @@ fn parse_text_urls(content: &str) -> Result<Vec<ImageUrl>, BulkTextError> {
 }
 
 /// Extract a title from a URL for better identification
-fn extract_title_from_url(url: &str, line_number: usize) -> Option<String> {
+fn extract_title_from_url(url: &str, line_number: usize) -> String {
     // Try to extract filename from URL
     if let Ok(parsed_url) = url::Url::parse(url)
         && let Some(segments) = parsed_url.path_segments()
@@ -130,19 +132,22 @@ fn extract_title_from_url(url: &str, line_number: usize) -> Option<String> {
             };
 
             if !title.is_empty() {
-                return Some(title.to_string());
+                return title.to_string();
             }
         }
     }
 
     // Fallback to line number if we can't extract a good title
-    Some(format!("URL_{}", line_number))
+    format!("URL_{line_number}")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dezoomer::test_utils::{assert_error_contains, expect_image_urls};
+    use crate::dezoomer::{
+        PageContents,
+        test_utils::{assert_error_contains, expect_image_urls},
+    };
 
     #[test]
     fn test_parse_empty_content() {
@@ -203,20 +208,14 @@ mod tests {
     fn test_extract_title_from_url() {
         assert_eq!(
             extract_title_from_url("http://example.com/image.jpg", 1),
-            Some("image".to_string())
+            "image"
         );
         assert_eq!(
             extract_title_from_url("https://example.org/path/manifest.json", 2),
-            Some("manifest".to_string())
+            "manifest"
         );
-        assert_eq!(
-            extract_title_from_url("http://example.com/", 3),
-            Some("URL_3".to_string())
-        );
-        assert_eq!(
-            extract_title_from_url("not_a_url", 4),
-            Some("URL_4".to_string())
-        );
+        assert_eq!(extract_title_from_url("http://example.com/", 3), "URL_3");
+        assert_eq!(extract_title_from_url("not_a_url", 4), "URL_4");
     }
 
     #[test]

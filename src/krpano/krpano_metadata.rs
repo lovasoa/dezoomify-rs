@@ -67,17 +67,17 @@ impl KrpanoMetadata {
             .from_reader(reader)
     }
 
-    fn into_image_iter_with_name(self, name: Arc<str>) -> Box<dyn Iterator<Item = ImageInfo>> {
-        let name: Arc<str> = if name.is_empty() {
+    fn into_image_iter_with_name(self, parent_name: &str) -> Box<dyn Iterator<Item = ImageInfo>> {
+        let name: Arc<str> = if parent_name.is_empty() {
             Arc::from(self.name)
         } else {
-            let s = [name.as_ref(), &self.name].join(" ");
+            let s = [parent_name, &self.name].join(" ");
             Arc::from(s)
         };
         let images = self
             .image
             .into_iter()
-            .filter(|image| image.has_tile_levels())
+            .filter(KrpanoImage::has_tile_levels)
             .map({
                 let name = Arc::clone(&name);
                 move |image| ImageInfo {
@@ -88,12 +88,12 @@ impl KrpanoMetadata {
         let scene_images = self
             .scene
             .into_iter()
-            .flat_map(move |s| s.into_image_iter_with_name(Arc::clone(&name)));
+            .flat_map(move |s| s.into_image_iter_with_name(&name));
         Box::new(images.chain(scene_images))
     }
 
     pub fn into_image_iter(self) -> impl Iterator<Item = ImageInfo> {
-        self.into_image_iter_with_name(Arc::from(""))
+        self.into_image_iter_with_name("")
     }
 
     pub fn get_title(&self) -> Option<&str> {
@@ -298,7 +298,7 @@ fn shape_descriptions(
     }
 }
 
-/// Parse a multires string into a vector of (image size, tile_size)
+/// Parse a multires string into a vector of (image size, `tile_size`)
 fn parse_multires(s: &str) -> impl Iterator<Item = Result<(Vec2d, Vec2d), &'static str>> + '_ {
     let mut parts = s.split(',');
     let tilesize_x: Result<u32, _> = parts
@@ -342,8 +342,8 @@ impl FromStr for TemplateString<TemplateVariable> {
     type Err = String;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        use TemplateStringPart::*;
-        use TemplateVariable::*;
+        use TemplateStringPart::{Literal, Variable};
+        use TemplateVariable::{LevelIndex, Side, X, Y};
         use itertools::Itertools;
         let mut chars = input.chars();
         let mut parts = vec![];
@@ -357,11 +357,11 @@ impl FromStr for TemplateString<TemplateVariable> {
             }
             let padding = 1 + chars.take_while_ref(|&c| c == '0').count();
             parts.push(match chars.next() {
-                Some('h') | Some('x') | Some('u') | Some('c') => Variable {
+                Some('h' | 'x' | 'u' | 'c') => Variable {
                     padding,
                     variable: X,
                 },
-                Some('v') | Some('y') | Some('r') => Variable {
+                Some('v' | 'y' | 'r') => Variable {
                     padding,
                     variable: Y,
                 },
@@ -389,7 +389,7 @@ impl TemplateString<TemplateVariable> {
     ) -> impl Iterator<Item = (&'static str, TemplateString<XY>)> + 'static {
         let has_side = self.0.iter().any(|x| match x {
             TemplateStringPart::Variable { variable, .. } => *variable == TemplateVariable::Side,
-            _ => false,
+            TemplateStringPart::Literal(_) => false,
         });
         let sides = if has_side {
             &["forward", "back", "left", "right", "up", "down"][..]
@@ -418,8 +418,8 @@ pub enum TemplateStringPart<T> {
 
 impl TemplateStringPart<TemplateVariable> {
     fn with_side(&self, side: &'static str, level: usize) -> TemplateStringPart<XY> {
-        use TemplateStringPart::*;
-        use TemplateVariable::*;
+        use TemplateStringPart::{Literal, Variable};
+        use TemplateVariable::{LevelIndex, Side, X, Y};
         match self {
             Literal(s) => Literal(Arc::clone(s)),
             Variable { padding, variable } => {
@@ -591,7 +591,7 @@ mod test {
                     multires: None,
                 })],
             })]
-        )
+        );
     }
 
     #[test]
@@ -613,7 +613,7 @@ mod test {
                 url: TemplateString(vec![str("https://example.com/"),]),
                 multires: Some("512,768x554,1664x1202,3200x2310,6400x4618,12800x9234".to_string()),
             })]
-        )
+        );
     }
 
     #[test]
@@ -640,7 +640,7 @@ mod test {
                 url: TemplateString(vec![str("test.jpg")]),
                 multires: None,
             })])]
-        )
+        );
     }
 
     #[test]
@@ -678,7 +678,7 @@ mod test {
                     multires: None,
                 })],
             })]
-        )
+        );
     }
 
     #[test]
@@ -727,7 +727,7 @@ mod test {
             .iter()
             .map(|i| String::from(i.name.as_ref()))
             .collect();
-        assert_eq!(names, ["scene_Color", "scene_3D", "scene_3Dcolor"])
+        assert_eq!(names, ["scene_Color", "scene_3D", "scene_3Dcolor"]);
     }
 
     #[test]
@@ -759,7 +759,7 @@ mod test {
         assert_eq!(
             expected,
             parse_multires("3,6x7,8x8,9x1x4").collect::<Vec<_>>()
-        )
+        );
     }
 
     #[test]

@@ -5,7 +5,10 @@ use log::debug;
 
 use dzi_file::DziFile;
 
-use crate::dezoomer::*;
+use crate::dezoomer::{
+    Dezoomer, DezoomerError, DezoomerInput, DezoomerInputWithContents, Images, IntoZoomLevels,
+    TileProvider, TileReference, TilesRect, Vec2d, ZoomLevel, ZoomLevels,
+};
 use crate::json_utils::all_json;
 use regex::Regex;
 mod dzi_file;
@@ -52,10 +55,10 @@ impl From<DziError> for DezoomerError {
 fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, DziError> {
     serde_xml_rs::from_reader::<'_, DziFile, _>(contents)
         .map_err(DziError::from)
-        .and_then(|dzi| load_from_dzi(url, dzi))
+        .and_then(|dzi| load_from_dzi(url, &dzi))
         .or_else(|e| {
             let levels: Vec<ZoomLevel> = all_json::<DziFile>(contents)
-                .flat_map(|dzi| load_from_dzi(url, dzi))
+                .flat_map(|dzi| load_from_dzi(url, &dzi))
                 .flatten()
                 .collect();
             if levels.is_empty() {
@@ -66,7 +69,7 @@ fn load_from_properties(url: &str, contents: &[u8]) -> Result<ZoomLevels, DziErr
         })
 }
 
-fn load_from_dzi(url: &str, image_properties: DziFile) -> Result<ZoomLevels, DziError> {
+fn load_from_dzi(url: &str, image_properties: &DziFile) -> Result<ZoomLevels, DziError> {
     debug!("Found dzi meta-information: {image_properties:?}");
 
     if image_properties.tile_size == 0 {
@@ -75,7 +78,7 @@ fn load_from_dzi(url: &str, image_properties: DziFile) -> Result<ZoomLevels, Dzi
 
     let base_url = &Arc::from(image_properties.base_url(url));
 
-    let size = image_properties.get_size()?;
+    let size = image_properties.get_size();
     let max_level = image_properties.max_level();
     let levels = std::iter::successors(Some(size), |&size| {
         if size.x > 1 || size.y > 1 {
@@ -84,14 +87,14 @@ fn load_from_dzi(url: &str, image_properties: DziFile) -> Result<ZoomLevels, Dzi
             None
         }
     })
-    .enumerate()
-    .map(|(level_num, size)| DziLevel {
+    .zip((0..=max_level).rev())
+    .map(|(size, level)| DziLevel {
         base_url: Arc::clone(base_url),
         size,
         tile_size: image_properties.get_tile_size(),
         format: image_properties.format.clone(),
         overlap: image_properties.overlap,
-        level: max_level - level_num as u32,
+        level,
     })
     .into_zoom_levels();
     Ok(levels)

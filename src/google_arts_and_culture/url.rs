@@ -18,7 +18,7 @@ pub fn compute_url(page: &PageInfo, x: u32, y: u32, z: usize) -> String {
     sign_path.extend_from_slice(page.token.as_bytes());
 
     let digest = mac_digest(&sign_path);
-    url.push_str(&custom_base64(digest.deref()));
+    url.push_str(&custom_base64(&digest));
     url
 }
 
@@ -42,7 +42,7 @@ fn test_compute_url() {
             &PageInfo {
                 base_url: path,
                 token,
-                name: "".into()
+                name: String::new()
             },
             0,
             0,
@@ -63,7 +63,7 @@ fn test_compute_url_flowers() {
             &PageInfo {
                 base_url: path,
                 token,
-                name: "".into()
+                name: String::new()
             },
             0,
             0,

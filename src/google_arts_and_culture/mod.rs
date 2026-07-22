@@ -3,7 +3,10 @@ use std::sync::Arc;
 
 use tile_info::{PageInfo, TileInfo};
 
-use crate::dezoomer::*;
+use crate::dezoomer::{
+    Dezoomer, DezoomerError, DezoomerInput, Images, IntoZoomLevels, PostProcessFn, TileReference,
+    TilesRect, Vec2d, ZoomLevels,
+};
 
 mod decryption;
 mod tile_info;
@@ -46,7 +49,7 @@ impl Dezoomer for GAPDezoomer {
                 } else {
                     String::from_utf8_lossy(contents)
                 };
-                log::debug!("Tile info response preview: {}", response_preview);
+                log::debug!("Tile info response preview: {response_preview}");
 
                 let TileInfo {
                     tile_width,
@@ -252,7 +255,7 @@ mod tests {
         let result = dezoomer.images(&valid_input);
         assert!(matches!(
             result,
-            Err(DezoomerError::DownloadError { .. }) | Err(DezoomerError::Other { .. })
+            Err(DezoomerError::DownloadError { .. } | DezoomerError::Other { .. })
         ));
 
         // Should reject non-Google Arts URLs when no page_info is set
@@ -345,7 +348,7 @@ mod tests {
             page_info: Arc::clone(&page_info),
         };
 
-        let debug_str = format!("{:?}", level);
+        let debug_str = format!("{level:?}");
         assert_eq!(debug_str, "Test Image Name");
     }
 }

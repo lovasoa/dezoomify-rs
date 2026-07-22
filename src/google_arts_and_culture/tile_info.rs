@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::default::Default;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 use regex::Regex;
 use serde::Deserialize;
@@ -51,34 +52,32 @@ impl PageInfo {
 
 fn decode_html_entities(text: &str) -> String {
     // Create a static HashMap for common HTML entities
-    lazy_static::lazy_static! {
-        static ref HTML_ENTITIES: HashMap<&'static str, &'static str> = {
-            let mut m = HashMap::new();
-            m.insert("amp", "&");
-            m.insert("lt", "<");
-            m.insert("gt", ">");
-            m.insert("quot", "\"");
-            m.insert("apos", "'");
-            m.insert("nbsp", "\u{00A0}");
-            m.insert("iexcl", "¡");
-            m.insert("cent", "¢");
-            m.insert("pound", "£");
-            m.insert("curren", "¤");
-            m.insert("yen", "¥");
-            m.insert("brvbar", "¦");
-            m.insert("sect", "§");
-            m.insert("uml", "¨");
-            m.insert("copy", "©");
-            m.insert("ordf", "ª");
-            m.insert("laquo", "«");
-            m.insert("not", "¬");
-            m.insert("shy", "\u{00AD}");
-            m.insert("reg", "®");
-            m.insert("macr", "¯");
-            m.insert("deg", "°");
-            m
-        };
-    }
+    static HTML_ENTITIES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
+        let mut m = HashMap::new();
+        m.insert("amp", "&");
+        m.insert("lt", "<");
+        m.insert("gt", ">");
+        m.insert("quot", "\"");
+        m.insert("apos", "'");
+        m.insert("nbsp", "\u{00A0}");
+        m.insert("iexcl", "¡");
+        m.insert("cent", "¢");
+        m.insert("pound", "£");
+        m.insert("curren", "¤");
+        m.insert("yen", "¥");
+        m.insert("brvbar", "¦");
+        m.insert("sect", "§");
+        m.insert("uml", "¨");
+        m.insert("copy", "©");
+        m.insert("ordf", "ª");
+        m.insert("laquo", "«");
+        m.insert("not", "¬");
+        m.insert("shy", "\u{00AD}");
+        m.insert("reg", "®");
+        m.insert("macr", "¯");
+        m.insert("deg", "°");
+        m
+    });
 
     let entity_regex = Regex::new(r"&([a-zA-Z][a-zA-Z0-9]*|#[0-9]+|#x[0-9a-fA-F]+);").unwrap();
 
@@ -111,7 +110,7 @@ fn decode_html_entities(text: &str) -> String {
             }
 
             // If we can't decode it, return the original entity
-            format!("&{};", entity)
+            format!("&{entity};")
         })
         .to_string()
 }
@@ -133,8 +132,10 @@ fn get_name_from_gap_html(html: &str) -> String {
     let fallback_name = Regex::new(r#""name":"([^"]+)"#)
         .unwrap()
         .captures(html)
-        .map(|c| c[1].replace("\\u0026", "&").replace("&quot;", "\""))
-        .unwrap_or_else(|| "Google Arts and Culture Image".into());
+        .map_or_else(
+            || "Google Arts and Culture Image".into(),
+            |c| c[1].replace("\\u0026", "&").replace("&quot;", "\""),
+        );
 
     decode_html_entities(&fallback_name)
 }
@@ -198,7 +199,7 @@ mod tests {
         let test_html = fs::read_to_string(test_source_path).unwrap();
         match test_html.parse() {
             Ok(info) => info,
-            Err(err) => panic!("Unable to parse '{}'. Error: {}", test_html, err),
+            Err(err) => panic!("Unable to parse '{test_html}'. Error: {err}"),
         }
     }
 

@@ -1,4 +1,8 @@
-#![allow(clippy::upper_case_acronyms)]
+#![deny(clippy::cognitive_complexity)]
+#![deny(clippy::too_many_lines)]
+#![deny(clippy::missing_errors_doc)]
+#![deny(clippy::missing_panics_doc)]
+#![deny(clippy::pedantic)]
 
 use std::env::current_dir;
 
@@ -139,11 +143,10 @@ fn choose_level(mut levels: Vec<ZoomLevel>, args: &Arguments) -> Result<ZoomLeve
             if let Some(requested_level) = args.zoom_level {
                 let actual_level = resolve_level_index(requested_level, levels.len());
                 if actual_level == requested_level {
-                    info!("Selected zoom level {} as requested", requested_level);
+                    info!("Selected zoom level {requested_level} as requested");
                 } else {
                     info!(
-                        "Requested zoom level {} not available. Using last one ({})",
-                        requested_level, actual_level
+                        "Requested zoom level {requested_level} not available. Using last one ({actual_level})"
                     );
                 }
                 return Ok(levels.swap_remove(actual_level));
@@ -166,9 +169,8 @@ fn image_picker(mut images: Vec<ZoomableImage>) -> Result<ZoomableImage, ZoomErr
     for (i, image) in images.iter().enumerate() {
         let title = image
             .title()
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("Image {}", i + 1));
-        println!("{: >2}. {}", i, title);
+            .map_or_else(|| format!("Image {}", i + 1), str::to_string);
+        println!("{i: >2}. {title}");
     }
     loop {
         println!("Which image do you want to download? ");
@@ -192,11 +194,10 @@ fn choose_image(
             if let Some(requested_index) = args.image_index {
                 let actual_index = resolve_image_index(requested_index, images.len());
                 if actual_index == requested_index {
-                    info!("Selected image {} as requested", requested_index);
+                    info!("Selected image {requested_index} as requested");
                 } else {
                     info!(
-                        "Requested image index {} not available. Using last one ({})",
-                        requested_index, actual_index
+                        "Requested image index {requested_index} not available. Using last one ({actual_index})"
                     );
                 }
                 return Ok(images.swap_remove(actual_index));
@@ -235,8 +236,8 @@ async fn resolve_selected_image(
 
 /// Prepares the output file path for saving
 fn prepare_output_path(
-    outfile_arg: &Option<PathBuf>,
-    title: &Option<String>,
+    outfile_arg: Option<&Path>,
+    title: Option<&str>,
     base_dir: &Path,
     size_hint: Option<Vec2d>,
 ) -> Result<PathBuf, ZoomError> {
@@ -247,8 +248,8 @@ fn prepare_output_path(
 }
 
 /// Creates a tile buffer for the given output path
-async fn create_tile_buffer(save_as: PathBuf, compression: u8) -> Result<TileBuffer, ZoomError> {
-    TileBuffer::new(save_as, compression).await
+fn create_tile_buffer(save_as: PathBuf, compression: u8) -> TileBuffer {
+    TileBuffer::new(save_as, compression)
 }
 
 fn output_prefers_source_pyramid(path: &Path, args: &Arguments) -> bool {
@@ -357,10 +358,15 @@ fn largest_level_size(levels: &[ZoomLevel]) -> Option<Vec2d> {
 }
 
 fn level_area(size: Option<Vec2d>) -> u64 {
-    size.map(|size| u64::from(size.x) * u64::from(size.y))
-        .unwrap_or(0)
+    size.map_or(0, |size| u64::from(size.x) * u64::from(size.y))
 }
 
+/// Downloads the image selected by `args` and returns its output path.
+///
+/// # Errors
+///
+/// Returns an error if the input cannot be resolved, no suitable level can be selected,
+/// output setup fails, or the image cannot be downloaded and encoded.
 pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
     let uri = args.choose_input_uri()?;
     let http_client = client(args.headers(), args, Some(&uri))?;
@@ -376,18 +382,33 @@ pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
     let base_dir = current_dir()?;
     let output_file = args.output_file();
     let largest_size = largest_level_size(&zoom_levels);
-    let source_pyramid_path = get_outname(&output_file, &title, &base_dir, largest_size);
+    let source_pyramid_path = get_outname(
+        output_file.as_deref(),
+        title.as_deref(),
+        &base_dir,
+        largest_size,
+    );
 
     if can_dezoomify_source_pyramid(&source_pyramid_path, args, &zoom_levels) {
-        let save_as = prepare_output_path(&output_file, &title, &base_dir, largest_size)?;
-        let tile_buffer = create_tile_buffer(save_as.clone(), args.compression).await?;
+        let save_as = prepare_output_path(
+            output_file.as_deref(),
+            title.as_deref(),
+            &base_dir,
+            largest_size,
+        )?;
+        let tile_buffer = create_tile_buffer(save_as.clone(), args.compression);
         info!("Dezooming source pyramid with {} levels", zoom_levels.len());
         dezoomify_source_pyramid(args, zoom_levels, tile_buffer).await?;
         Ok(save_as)
     } else {
         let zoom_level = choose_level(zoom_levels, args)?;
-        let save_as = prepare_output_path(&output_file, &title, &base_dir, zoom_level.size_hint())?;
-        let tile_buffer = create_tile_buffer(save_as.clone(), args.compression).await?;
+        let save_as = prepare_output_path(
+            output_file.as_deref(),
+            title.as_deref(),
+            &base_dir,
+            zoom_level.size_hint(),
+        )?;
+        let tile_buffer = create_tile_buffer(save_as.clone(), args.compression);
         info!("Dezooming {}", zoom_level.name());
         dezoomify_level(args, zoom_level, tile_buffer).await?;
         Ok(save_as)
@@ -426,18 +447,23 @@ impl BulkStats {
 }
 
 /// Process every image discovered from a bulk input.
+///
+/// # Errors
+///
+/// Returns an error if the bulk source cannot be resolved or shared processing setup fails.
+/// Failures for individual images are recorded in the returned statistics.
 pub async fn process_bulk(args: &Arguments) -> Result<BulkStats, ZoomError> {
     use log::{debug, trace};
 
     debug!("Starting bulk processing mode");
-    trace!("Bulk processing arguments: {:?}", args);
+    trace!("Bulk processing arguments: {args:?}");
 
     // Get the bulk file/URI from arguments
     let bulk_uri = args.bulk.as_ref().ok_or_else(|| ZoomError::NoBulkUrl {
         bulk_file_path: "No bulk source specified".to_string(),
     })?;
 
-    debug!("Bulk source: {}", bulk_uri);
+    debug!("Bulk source: {bulk_uri}");
 
     // Discover images from the bulk source.
     let http = client(std::iter::empty(), args, None)?;
@@ -474,7 +500,7 @@ pub async fn process_bulk(args: &Arguments) -> Result<BulkStats, ZoomError> {
     info!("Partial downloads: {}", stats.partial_downloads);
     info!("Failed downloads: {}", stats.failed_images);
 
-    debug!("Final bulk processing stats: {:?}", stats);
+    debug!("Final bulk processing stats: {stats:?}");
 
     Ok(stats)
 }
@@ -489,7 +515,6 @@ async fn process_bulk_zoomable_images(
 ) -> Result<(), ZoomError> {
     use std::collections::VecDeque;
 
-    use log::{debug, trace, warn};
     let bulk_outfile = args.bulk_output_file();
     let mut pending = VecDeque::from(images);
     let mut index = 0;
@@ -497,8 +522,7 @@ async fn process_bulk_zoomable_images(
     while let Some(zoomable_image) = pending.pop_front() {
         let image_title = zoomable_image
             .title()
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("Image_{}", index + 1));
+            .map_or_else(|| format!("Image_{}", index + 1), str::to_string);
 
         let resolved_image = match zoomable_image {
             ZoomableImage::Resolved(image) => image,
@@ -512,7 +536,7 @@ async fn process_bulk_zoomable_images(
                     continue;
                 }
                 Ok(_) => {
-                    warn!(
+                    log::warn!(
                         "No images found for image {} ('{}')",
                         index + 1,
                         image_title
@@ -522,7 +546,7 @@ async fn process_bulk_zoomable_images(
                     continue;
                 }
                 Err(e) => {
-                    warn!(
+                    log::warn!(
                         "Failed to resolve image {} ('{}'): {}",
                         index + 1,
                         image_title,
@@ -535,149 +559,120 @@ async fn process_bulk_zoomable_images(
             },
         };
 
-        debug!(
-            "Preparing image {}/{}: {}",
-            index + 1,
-            stats.total_images,
-            image_title
-        );
-
-        let zoom_levels = resolved_image.into_zoom_levels();
-
-        trace!(
-            "Zoom levels for image {}: {} levels available",
-            index + 1,
-            zoom_levels.len()
-        );
-
-        // Choose the appropriate zoom level using existing logic
-        let zoom_level = match choose_level(zoom_levels, args) {
-            Ok(level) => level,
-            Err(e) => {
-                warn!(
-                    "Failed to choose zoom level for image {} ('{}'): {}",
-                    index + 1,
-                    image_title,
-                    e
-                );
-                stats.record_failure();
-                index += 1;
-                continue;
-            }
-        };
-
-        debug!(
-            "Selected zoom level for image {}: {} ({}x{})",
-            index + 1,
-            zoom_level.name(),
-            zoom_level.size_hint().map(|s| s.x).unwrap_or(0),
-            zoom_level.size_hint().map(|s| s.y).unwrap_or(0)
-        );
-
-        // Use get_outname to handle file collision properly, without args.outfile override
-        let save_as = if let Some(ref base_outfile) = bulk_outfile {
-            // In bulk mode with specified outfile, use index-based naming with collision handling
-            let base_path = generate_bulk_output_name(base_outfile, index);
-            get_outname(
-                &Some(base_path),
-                &zoom_level.title().or_else(|| Some(image_title.clone())),
-                base_dir,
-                zoom_level.size_hint(),
-            )
-        } else {
-            // Use the zoom level title if present, fallback to image title
-            get_outname(
-                &None,
-                &zoom_level.title().or_else(|| Some(image_title.clone())),
-                base_dir,
-                zoom_level.size_hint(),
-            )
-        };
-
-        // Reserve the output file to avoid collisions
-        if let Err(e) = reserve_output_file(&save_as) {
-            let file_name = save_as
-                .file_name()
-                .map(|n| n.to_string_lossy())
-                .unwrap_or_else(|| "unknown".into());
-            warn!(
-                "Failed to prepare output file '{}' for image {} ('{}'): {}",
-                file_name,
-                index + 1,
-                image_title,
-                e
-            );
-            stats.record_failure();
-            index += 1;
-            continue;
-        };
-
-        let tile_buffer = match create_tile_buffer(save_as.clone(), args.compression).await {
-            Ok(buffer) => buffer,
-            Err(e) => {
-                let file_name = save_as
-                    .file_name()
-                    .map(|n| n.to_string_lossy())
-                    .unwrap_or_else(|| "unknown".into());
-                warn!(
-                    "Failed to create tile buffer for file '{}' (image {} '{}'): {}",
-                    file_name,
-                    index + 1,
-                    image_title,
-                    e
-                );
-                stats.record_failure();
-                index += 1;
-                continue;
-            }
-        };
-
-        // Now show processing message since we're about to start downloading
-        info!(
-            "Processing image {}/{}: {} -> {}",
-            index + 1,
-            stats.total_images,
-            image_title,
-            save_as.file_name().unwrap_or_default().to_string_lossy()
-        );
-
-        match dezoomify_level(args, zoom_level, tile_buffer).await {
-            Ok(()) => {
-                info!(
-                    "Successfully saved image {} to {}",
-                    index + 1,
-                    save_as.display()
-                );
-                stats.record_success();
-            }
-            Err(ZoomError::PartialDownload {
-                successful_tiles,
-                total_tiles,
-                ..
-            }) => {
-                warn!(
-                    "Image {} completed with partial download: {}/{} tiles",
-                    index + 1,
-                    successful_tiles,
-                    total_tiles
-                );
-                stats.record_partial();
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to process image {} ('{}'): {}",
-                    index + 1,
-                    image_title,
-                    e
-                );
-                stats.record_failure();
-            }
-        }
-
+        process_bulk_image(
+            resolved_image,
+            &image_title,
+            index,
+            args,
+            stats,
+            base_dir,
+            bulk_outfile.as_deref(),
+        )
+        .await;
         index += 1;
     }
 
     Ok(())
+}
+
+async fn process_bulk_image(
+    image: ResolvedImage,
+    image_title: &str,
+    index: usize,
+    args: &Arguments,
+    stats: &mut BulkStats,
+    base_dir: &Path,
+    bulk_outfile: Option<&Path>,
+) {
+    use log::{debug, trace, warn};
+
+    debug!(
+        "Preparing image {}/{}: {image_title}",
+        index + 1,
+        stats.total_images
+    );
+    let zoom_levels = image.into_zoom_levels();
+    trace!(
+        "Zoom levels for image {}: {} levels available",
+        index + 1,
+        zoom_levels.len()
+    );
+
+    let zoom_level = match choose_level(zoom_levels, args) {
+        Ok(zoom_level) => zoom_level,
+        Err(error) => {
+            warn!(
+                "Failed to choose a zoom level for image {} ('{image_title}'): {error}",
+                index + 1
+            );
+            stats.record_failure();
+            return;
+        }
+    };
+    debug!(
+        "Selected zoom level for image {}: {} ({}x{})",
+        index + 1,
+        zoom_level.name(),
+        zoom_level.size_hint().map_or(0, |s| s.x),
+        zoom_level.size_hint().map_or(0, |s| s.y)
+    );
+
+    let level_title = zoom_level.title().unwrap_or_else(|| image_title.to_owned());
+    let indexed_outfile = bulk_outfile.map(|path| generate_bulk_output_name(path, index));
+    let save_as = get_outname(
+        indexed_outfile.as_deref(),
+        Some(&level_title),
+        base_dir,
+        zoom_level.size_hint(),
+    );
+    if let Err(error) = reserve_output_file(&save_as) {
+        let file_name = save_as
+            .file_name()
+            .map_or_else(|| "unknown".into(), |name| name.to_string_lossy());
+        warn!(
+            "Failed to prepare output file '{file_name}' for image {} ('{image_title}'): {error}",
+            index + 1
+        );
+        stats.record_failure();
+        return;
+    }
+
+    info!(
+        "Processing image {}/{}: {} -> {}",
+        index + 1,
+        stats.total_images,
+        image_title,
+        save_as.file_name().unwrap_or_default().to_string_lossy()
+    );
+    let tile_buffer = create_tile_buffer(save_as.clone(), args.compression);
+    match dezoomify_level(args, zoom_level, tile_buffer).await {
+        Ok(()) => {
+            info!(
+                "Successfully saved image {} to {}",
+                index + 1,
+                save_as.display()
+            );
+            stats.record_success();
+        }
+        Err(ZoomError::PartialDownload {
+            successful_tiles,
+            total_tiles,
+            ..
+        }) => {
+            warn!(
+                "Image {} completed with partial download: {successful_tiles}/{total_tiles} tiles",
+                index + 1
+            );
+            stats.record_partial();
+        }
+        Err(error) => {
+            warn!(
+                "Failed to process image {} ('{image_title}'): {error}",
+                index + 1
+            );
+            stats.record_failure();
+        }
+    }
 }
 
 /// Generate a unique output filename for bulk processing
@@ -707,10 +702,10 @@ fn generate_bulk_output_name(base_outfile: &Path, index: usize) -> PathBuf {
 /// Validates the download success based on the final state.
 /// Validates that enough tiles were downloaded to proceed
 fn validate_download_success(state: &download_state::DownloadState) -> Result<(), ZoomError> {
-    if !state.is_successful() {
-        Err(ZoomError::NoTile)
-    } else {
+    if state.is_successful() {
         Ok(())
+    } else {
+        Err(ZoomError::NoTile)
     }
 }
 
@@ -730,6 +725,12 @@ fn determine_final_result(
     }
 }
 
+/// Downloads and encodes one zoom level into `tile_buffer`.
+///
+/// # Errors
+///
+/// Returns an error if tile downloading or output encoding fails, if no tile succeeds,
+/// or if only part of the image can be downloaded.
 pub async fn dezoomify_level(
     args: &Arguments,
     zoom_level: ZoomLevel,
@@ -778,6 +779,7 @@ async fn finalize_canvas(canvas: &mut TileBuffer) -> Result<(), ZoomError> {
 }
 
 /// Returns the maximal size a tile can have in order to fit in a canvas of the given size
+#[must_use]
 pub fn max_size_in_rect(position: Vec2d, tile_size: Vec2d, canvas_size: Vec2d) -> Vec2d {
     (position + tile_size).min(canvas_size) - position
 }
@@ -1227,7 +1229,7 @@ mod iiif_title_tests {
         };
 
         let result = determine_title(&image_info);
-        let expected = format!("{} - {}", long_manifest, long_canvas);
+        let expected = format!("{long_manifest} - {long_canvas}");
         assert_eq!(result, Some(expected));
     }
 

@@ -98,7 +98,7 @@ impl ProgressManager {
         self.progress.inc(1);
     }
 
-    pub(crate) fn update_for_tile(&self, tile: &Option<Tile>, success: bool) {
+    pub(crate) fn update_for_tile(&self, tile: Option<&Tile>, success: bool) {
         if success {
             if let Some(tile) = tile {
                 self.progress
@@ -110,7 +110,7 @@ impl ProgressManager {
         }
     }
 
-    pub(crate) fn update_for_encoded_tile(&self, tile: &Option<EncodedTile>, success: bool) {
+    pub(crate) fn update_for_encoded_tile(&self, tile: Option<&EncodedTile>, success: bool) {
         if success {
             if let Some(tile) = tile {
                 self.progress
@@ -170,7 +170,7 @@ impl<'a> TileDownloadCoordinator<'a> {
         progress.set_total_tiles(state.total_tiles); // Update progress bar length with cumulative total
         progress.set_requesting_tiles();
 
-        prepare_canvas_size(canvas, zoom_level_iter).await?;
+        prepare_canvas_size(canvas, zoom_level_iter)?;
 
         if canvas.prefers_encoded_tiles() {
             self.download_encoded_batch(tile_refs, canvas, state, progress)
@@ -202,7 +202,7 @@ impl<'a> TileDownloadCoordinator<'a> {
             .buffer_unordered(self.args.parallelism);
 
         while let Some(tile_result) = stream.next().await {
-            debug!("Received tile result: {:?}", tile_result);
+            debug!("Received tile result: {tile_result:?}");
             progress.increment();
 
             let (tile, success) = process_decoded_tile_result(
@@ -211,7 +211,7 @@ impl<'a> TileDownloadCoordinator<'a> {
                 zoom_level_iter.size_hint(),
             );
 
-            progress.update_for_tile(&tile, success);
+            progress.update_for_tile(tile.as_ref(), success);
 
             if success {
                 state.record_success();
@@ -249,12 +249,12 @@ impl<'a> TileDownloadCoordinator<'a> {
             .buffer_unordered(self.args.parallelism);
 
         while let Some(tile_result) = stream.next().await {
-            debug!("Received encoded tile result: {:?}", tile_result);
+            debug!("Received encoded tile result: {tile_result:?}");
             progress.increment();
 
-            let (tile, success) = process_encoded_tile_result(tile_result).await?;
+            let (tile, success) = process_encoded_tile_result(tile_result);
 
-            progress.update_for_encoded_tile(&tile, success);
+            progress.update_for_encoded_tile(tile.as_ref(), success);
 
             if success {
                 state.record_success();
@@ -288,14 +288,14 @@ fn create_tile_downloader(
 }
 
 // Helper function, private to this module
-async fn prepare_canvas_size(
+fn prepare_canvas_size(
     canvas: &mut TileBuffer,
     zoom_level_iter: &ZoomLevelIter<'_>,
 ) -> Result<(), ZoomError> {
     if !canvas.has_size()
         && let Some(size) = zoom_level_iter.size_hint()
     {
-        canvas.set_size(size).await?;
+        canvas.set_size(size)?;
     }
     Ok(())
 }
@@ -332,12 +332,12 @@ fn empty_tile_for(
     }
 }
 
-async fn process_encoded_tile_result(
+fn process_encoded_tile_result(
     tile_result: Result<EncodedTile, errors::TileDownloadError>,
-) -> Result<(Option<EncodedTile>, bool), ZoomError> {
+) -> (Option<EncodedTile>, bool) {
     match tile_result {
-        Ok(tile) => Ok((Some(tile), true)),
-        Err(_) => Ok((None, false)),
+        Ok(tile) => (Some(tile), true),
+        Err(_) => (None, false),
     }
 }
 

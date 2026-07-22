@@ -17,10 +17,10 @@ pub enum IiifLabel {
 impl IiifLabel {
     /// Returns the English label if present, otherwise the first label found for any language,
     /// or the string itself if it's a simple string label. Returns None if the label is empty or explicitly None.
+    #[must_use]
     pub fn get_english_or_first(&self) -> Option<String> {
         match self {
-            IiifLabel::String(s) if !s.is_empty() => Some(s.clone()),
-            IiifLabel::String(_) => None, // Empty string
+            IiifLabel::String(s) => (!s.is_empty()).then(|| s.clone()),
             IiifLabel::Map(map) => {
                 if let Some(en_labels) = map.get("en")
                     && let Some(first_en) = en_labels.first().filter(|s| !s.is_empty())
@@ -46,6 +46,7 @@ pub struct MetadataEntry {
 
 impl MetadataEntry {
     /// Get the metadata title if this entry is a title field
+    #[must_use]
     pub fn get_title(&self) -> Option<String> {
         if let Some(label) = self.label.get_english_or_first()
             && label.to_lowercase() == "title"
@@ -256,20 +257,22 @@ fn choose_image_service_uri(services: &[ImageService], manifest_url: &str) -> Op
 
 impl Manifest {
     /// Get the title from metadata if available
+    #[must_use]
     pub fn get_metadata_title(&self) -> Option<String> {
         self.metadata
             .as_ref()?
             .iter()
-            .find_map(|entry| entry.get_title())
+            .find_map(MetadataEntry::get_title)
     }
 
     /// Extracts all relevant image URIs (info.json or direct image links) from the manifest.
     ///
-    /// It traverses Canvases, AnnotationPages, and Annotations to find "painting"
+    /// It traverses Canvases, `AnnotationPages`, and Annotations to find "painting"
     /// motivations where the body is an Image. It prioritizes Image Services
-    /// (ImageService2 or ImageService3) and constructs `info.json` URIs.
+    /// (`ImageService2` or `ImageService3`) and constructs `info.json` URIs.
     /// If no service is found, it uses the direct image `id` from the annotation body.
     /// All extracted URIs are resolved relative to `manifest_url`.
+    #[must_use]
     pub fn extract_image_infos(&self, manifest_url: &str) -> Vec<ExtractedImageInfo> {
         let mut infos = Vec::new();
         let manifest_label = self.label.get_english_or_first();
@@ -322,14 +325,16 @@ impl Manifest {
 
 impl LegacyManifest {
     /// Get the title from metadata if available
+    #[must_use]
     pub fn get_metadata_title(&self) -> Option<String> {
         self.metadata
             .as_ref()?
             .iter()
-            .find_map(|entry| entry.get_title())
+            .find_map(MetadataEntry::get_title)
     }
 
     /// Extracts image URIs from IIIF Presentation v1/v2 manifests.
+    #[must_use]
     pub fn extract_image_infos(&self, manifest_url: &str) -> Vec<ExtractedImageInfo> {
         let mut infos = Vec::new();
         let manifest_label = self.label.get_english_or_first();
@@ -384,7 +389,7 @@ mod tests {
         let label_str = IiifLabel::String("Hello".to_string());
         assert_eq!(label_str.get_english_or_first(), Some("Hello".to_string()));
 
-        let label_empty_str = IiifLabel::String("".to_string());
+        let label_empty_str = IiifLabel::String(String::new());
         assert_eq!(label_empty_str.get_english_or_first(), None);
 
         let mut map_en = HashMap::new();
@@ -397,7 +402,7 @@ mod tests {
         );
 
         let mut map_en_empty_val = HashMap::new();
-        map_en_empty_val.insert("en".to_string(), vec!["".to_string()]);
+        map_en_empty_val.insert("en".to_string(), vec![String::new()]);
         map_en_empty_val.insert("fr".to_string(), vec!["Monde".to_string()]);
         let label_map_en_empty = IiifLabel::Map(map_en_empty_val);
         assert_eq!(

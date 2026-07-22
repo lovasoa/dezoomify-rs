@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use serde::Deserialize;
 
 use crate::TileReference;
-use crate::dezoomer::*;
+use crate::dezoomer::{
+    Dezoomer, DezoomerError, DezoomerInput, Images, TileFetchResult, TileProvider, Vec2d,
+    single_level,
+};
 use crate::network::default_headers;
 
 mod tile_set;

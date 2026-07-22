@@ -3,7 +3,10 @@ use std::sync::Arc;
 use custom_error::custom_error;
 use image_properties::{ImageProperties, ZoomLevelInfo};
 
-use crate::dezoomer::*;
+use crate::dezoomer::{
+    Dezoomer, DezoomerError, DezoomerInput, DezoomerInputWithContents, Images, IntoZoomLevels,
+    TilesRect, Vec2d, ZoomLevels,
+};
 
 mod image_properties;
 

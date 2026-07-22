@@ -86,7 +86,7 @@ impl TileDownloader {
         let idx: f64 = ((tile_reference.position.x + tile_reference.position.y) % n).into();
         let tile_reference = Arc::new(tile_reference);
         let mut wait_time = self.retry_delay
-            + Duration::from_secs_f64(idx * self.retry_delay.as_secs_f64() / n as f64);
+            + Duration::from_secs_f64(idx * self.retry_delay.as_secs_f64() / f64::from(n));
         let mut failures: usize = 0;
         loop {
             let result = match self.load_tile_bytes(Arc::clone(&tile_reference)).await {
@@ -150,8 +150,11 @@ impl TileDownloader {
     async fn write_to_tile_cache(&self, uri: &str, contents: &[u8]) {
         if let Some(root) = &self.tile_storage_folder {
             match tokio::fs::write(root.join(sanitize(uri)), contents).await {
-                Ok(_) => debug!("Wrote {} to tile cache ({} bytes)", uri, contents.len()),
-                Err(e) => warn!("Unable to write {uri} to the tile cache {root:?}: {e}"),
+                Ok(()) => debug!("Wrote {} to tile cache ({} bytes)", uri, contents.len()),
+                Err(e) => warn!(
+                    "Unable to write {uri} to the tile cache {}: {e}",
+                    root.display()
+                ),
             }
         }
     }
@@ -163,7 +166,10 @@ impl TileDownloader {
                     debug!("{uri} read from tile cache");
                     return Some(d);
                 }
-                Err(e) => debug!("Unable to open {uri} from tile cache {root:?}: {e}"),
+                Err(e) => debug!(
+                    "Unable to open {uri} from tile cache {}: {e}",
+                    root.display()
+                ),
             }
         }
         None
@@ -228,7 +234,7 @@ pub fn resolve_relative(base: &str, path: &str) -> String {
     if dir.is_empty() {
         path.to_string()
     } else {
-        format!("{}/{}", dir, path)
+        format!("{dir}/{path}")
     }
 }
 

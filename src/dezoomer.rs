@@ -28,7 +28,7 @@ pub enum PageContents {
 
 impl From<Result<Vec<u8>, ZoomError>> for PageContents {
     fn from(res: Result<Vec<u8>, ZoomError>) -> Self {
-        res.map(Self::Success).unwrap_or_else(Self::Error)
+        res.map_or_else(Self::Error, Self::Success)
     }
 }
 
@@ -53,6 +53,12 @@ pub struct DezoomerInputWithContents<'a> {
 }
 
 impl DezoomerInput {
+    /// Returns the downloaded contents or an error describing why they are unavailable.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DezoomerError::NeedsData`] when the resource has not been fetched, or
+    /// [`DezoomerError::DownloadError`] when fetching failed.
     pub fn with_contents(&self) -> Result<DezoomerInputWithContents<'_>, DezoomerError> {
         match &self.contents {
             PageContents::Unknown => Err(DezoomerError::NeedsData {
@@ -81,18 +87,22 @@ pub struct ResolvedImage {
 }
 
 impl ResolvedImage {
+    #[must_use]
     pub fn new(zoom_levels: ZoomLevels, title: Option<String>) -> Self {
         Self { zoom_levels, title }
     }
 
+    #[must_use]
     pub fn into_zoom_levels(self) -> ZoomLevels {
         self.zoom_levels
     }
 
+    #[must_use]
     pub fn levels(&self) -> &[ZoomLevel] {
         &self.zoom_levels
     }
 
+    #[must_use]
     pub fn title(&self) -> Option<&str> {
         self.title.as_deref()
     }
@@ -120,10 +130,12 @@ pub struct ImageUrl {
 pub struct Images(Vec<ZoomableImage>);
 
 impl Images {
+    #[must_use]
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -162,6 +174,15 @@ impl IntoIterator for Images {
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a Images {
+    type Item = &'a ZoomableImage;
+    type IntoIter = std::slice::Iter<'a, ZoomableImage>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 
@@ -219,6 +240,7 @@ pub enum ZoomableImage {
 }
 
 impl ZoomableImage {
+    #[must_use]
     pub fn title(&self) -> Option<&str> {
         match self {
             ZoomableImage::Resolved(image) => image.title(),
@@ -226,6 +248,11 @@ impl ZoomableImage {
         }
     }
 
+    /// Resolves a deferred image URL, if necessary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if metadata cannot be downloaded or interpreted by any dezoomer.
     pub async fn resolve(self, http: &reqwest::Client) -> Result<Images, DezoomerError> {
         let mut resolver = crate::auto::MetadataResolver::new(http);
         self.resolve_with(&mut resolver).await
@@ -243,7 +270,7 @@ impl ZoomableImage {
 
                 let ImageUrl { url, title } = url;
 
-                debug!("Resolving image URL: {}", url);
+                debug!("Resolving image URL: {url}");
                 let mut dezoomer = AutoDezoomer::default();
                 let images = resolver.resolve(&mut dezoomer, &url).await?;
                 debug!("Successfully extracted {} images", images.len());
@@ -276,8 +303,18 @@ pub trait Dezoomer {
     ///
     /// Return [`DezoomerError::NeedsData`] when another resource must be
     /// downloaded, preserving any parser state needed for the next call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the input is unavailable, belongs to another format,
+    /// requires another resource, or contains invalid metadata.
     fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError>;
 
+    /// Verifies a format-specific condition.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DezoomerError::WrongDezoomer`] when `c` is false.
     fn assert(&self, c: bool) -> Result<(), DezoomerError> {
         if c {
             Ok(())
@@ -298,10 +335,11 @@ pub struct TileFetchResult {
 }
 
 impl TileFetchResult {
+    #[must_use]
     pub fn is_success(&self) -> bool {
         self.tile_size
-            .filter(|&Vec2d { x, y }| x > 0 && y > 0)
-            .is_some()
+            .as_ref()
+            .is_some_and(|&Vec2d { x, y }| x > 0 && y > 0)
             && self.successes > 0
     }
 }
@@ -332,6 +370,10 @@ pub trait TileProvider: Debug {
     }
 
     /// Format this provider for zoom-level pickers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the formatter fails.
     fn fmt_name(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{self:?}")
     }
@@ -415,26 +457,40 @@ impl<'a> ZoomLevelIter<'a> {
             waiting_results: false,
         }
     }
+    /// Returns the next batch of tile references.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the previous batch has not been followed by [`Self::set_fetch_result`].
     pub fn next_tile_references(&mut self) -> Option<Vec<TileReference>> {
         assert!(!self.waiting_results);
         self.waiting_results = true;
         let tiles = self.zoom_level.next_tiles(self.previous);
         if tiles.is_empty() { None } else { Some(tiles) }
     }
+    /// Records the result of fetching the previous batch.
+    ///
+    /// # Panics
+    ///
+    /// Panics if [`Self::next_tile_references`] has not produced a pending batch.
     pub fn set_fetch_result(&mut self, result: TileFetchResult) {
         assert!(self.waiting_results);
         self.waiting_results = false;
-        self.previous = Some(result)
+        self.previous = Some(result);
     }
+    #[must_use]
     pub fn size_hint(&self) -> Option<Vec2d> {
         self.zoom_level.size_hint()
     }
+    #[must_use]
     pub fn tile_size_hint(&self) -> Option<Vec2d> {
         self.zoom_level.tile_size_hint()
     }
+    #[must_use]
     pub fn scale_factor_hint(&self) -> Option<u32> {
         self.zoom_level.scale_factor_hint()
     }
+    #[must_use]
     pub fn has_overlapping_tiles(&self) -> bool {
         self.zoom_level.has_overlapping_tiles()
     }

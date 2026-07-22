@@ -87,8 +87,8 @@ fn test_iterjson() {
         f(r#"{"k":{"k":"v"}}"#),
         vec![r#"{"k":"v"}"#, r#"{"k":{"k":"v"}}"#]
     );
-    assert_eq!(f(r#"xxx}}xx{{xxx{a}"#), vec!["{a}"]);
-    let only_open = String::from_utf8(vec![b'{'; 1000000]).unwrap();
+    assert_eq!(f(r"xxx}}xx{{xxx{a}"), vec!["{a}"]);
+    let only_open = String::from_utf8(vec![b'{'; 1_000_000]).unwrap();
     assert_eq!(f(&only_open), Vec::<String>::new());
 }
 

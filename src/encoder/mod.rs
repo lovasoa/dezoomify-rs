@@ -80,7 +80,7 @@ fn encoder_for_name(
             destination,
             size,
             quality,
-        )?))
+        )))
     } else {
         debug!(
             "Using the generic canvas implementation {}",
@@ -89,7 +89,7 @@ fn encoder_for_name(
         Ok(Box::new(canvas::Canvas::<Rgba<u8>>::new_generic(
             destination,
             size,
-        )?))
+        )))
     }
 }
 

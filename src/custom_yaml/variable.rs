@@ -1,10 +1,11 @@
+use std::sync::LazyLock;
+
 use evalexpr::{ContextWithMutableVariables, DefaultNumericTypes, HashMapContext};
 use itertools::Itertools;
 use regex::Regex;
 use serde::Deserialize;
 
 use custom_error::custom_error;
-use lazy_static::lazy_static;
 
 use self::VarOrConst::Var;
 
@@ -23,9 +24,7 @@ fn default_step() -> i64 {
 
 impl Variable {
     fn check(&self) -> Result<(), BadVariableError> {
-        lazy_static! {
-            static ref RE: Regex = Regex::new(r"^\w+$").unwrap();
-        }
+        static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\w+$").unwrap());
         if !RE.is_match(&self.name) {
             return Err(BadVariableError::BadName {
                 name: self.name.clone(),
@@ -213,7 +212,7 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("invalid variable name")
-        )
+        );
     }
 
     #[test]

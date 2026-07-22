@@ -6,7 +6,7 @@ use std::fmt;
 /// and non-printable characters shown as escape sequences like \x00, \x01, etc.
 pub struct BinaryDisplay<'a>(pub &'a [u8]);
 
-impl<'a> fmt::Display for BinaryDisplay<'a> {
+impl fmt::Display for BinaryDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "b'")?;
 
@@ -15,7 +15,7 @@ impl<'a> fmt::Display for BinaryDisplay<'a> {
                 // Printable ASCII characters (space to tilde)
                 0x20..=0x7e => write!(f, "{}", byte as char)?,
                 // Non-printable characters as hex escape sequences
-                _ => write!(f, "\\x{:02x}", byte)?,
+                _ => write!(f, "\\x{byte:02x}")?,
             }
         }
 
@@ -23,13 +23,13 @@ impl<'a> fmt::Display for BinaryDisplay<'a> {
     }
 }
 
-impl<'a> fmt::Debug for BinaryDisplay<'a> {
+impl fmt::Debug for BinaryDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
     }
 }
 
-/// Convenience function to create a BinaryDisplay wrapper
+/// Convenience function to create a `BinaryDisplay` wrapper
 pub fn display_bytes<T: AsRef<[u8]> + ?Sized>(bytes: &T) -> BinaryDisplay<'_> {
     BinaryDisplay(bytes.as_ref())
 }

@@ -82,23 +82,18 @@ fn iter_levels(
         .ok_or(NYPLError::NoMetadata)?;
 
     let level_count: u32 = meta.level_count();
-    let levels =
-        (0..=level_count)
-            .zip(arcs(base))
-            .zip(arcs(meta))
-            .map(|((level, base), metadata)| Level {
-                metadata,
-                base,
-                level,
-            });
+    let levels = (0..=level_count)
+        .zip(arcs(base))
+        .zip(arcs(meta))
+        .map(|((index, base), info)| Level { info, base, index });
     Ok(levels)
 }
 
 #[derive(PartialEq, Eq)]
 struct Level {
-    metadata: Arc<Metadata>,
+    info: Arc<Metadata>,
     base: Arc<str>,
-    level: u32,
+    index: u32,
 }
 
 impl Debug for Level {
@@ -109,29 +104,29 @@ impl Debug for Level {
 
 impl TilesRect for Level {
     fn size(&self) -> Vec2d {
-        let reverse_level = self.metadata.level_count() - self.level;
-        Vec2d::from(self.metadata.size) / 2_u32.pow(reverse_level)
+        let reverse_level = self.info.level_count() - self.index;
+        Vec2d::from(self.info.size) / 2_u32.pow(reverse_level)
     }
 
     fn tile_size(&self) -> Vec2d {
-        Vec2d::square(self.metadata.tile_size)
+        Vec2d::square(self.info.tile_size)
     }
 
     fn tile_url(&self, Vec2d { x, y }: Vec2d) -> String {
         format!(
             "https://access.nypl.org/image.php/{id}/tiles/0/{level}/{x}_{y}.{format}",
             id = self.base,
-            level = self.level,
+            level = self.index,
             x = x,
             y = y,
-            format = self.metadata.format,
+            format = self.info.format,
         )
     }
 
     fn tile_ref(&self, pos: Vec2d) -> TileReference {
         let delta = Vec2d {
-            x: if pos.x == 0 { 0 } else { self.metadata.overlap },
-            y: if pos.y == 0 { 0 } else { self.metadata.overlap },
+            x: if pos.x == 0 { 0 } else { self.info.overlap },
+            y: if pos.y == 0 { 0 } else { self.info.overlap },
         };
         TileReference {
             url: self.tile_url(pos),
@@ -140,7 +135,7 @@ impl TilesRect for Level {
     }
 
     fn has_overlapping_tiles(&self) -> bool {
-        self.metadata.overlap > 0
+        self.info.overlap > 0
     }
 }
 
@@ -246,7 +241,7 @@ mod tests {
         let base: Arc<String> = Arc::new("a28d6e6b-b317-f008-e040-e00a1806635d".into());
         let level: Level = iter_levels(&base, contents).unwrap().last().unwrap();
         assert_eq!(
-            level.metadata,
+            level.info,
             Arc::new(Metadata {
                 size: MetadataSize {
                     width: 2422,
@@ -266,6 +261,6 @@ mod tests {
                 "https://digitalcollections.nypl.org/items/a14f3200-fac1-012f-f7a4-58d385a7bbd0#item-data"
             ).unwrap(),
             "a14f3200-fac1-012f-f7a4-58d385a7bbd0",
-        )
+        );
     }
 }

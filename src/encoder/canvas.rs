@@ -7,7 +7,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::Vec2d;
-use crate::ZoomError;
 use crate::encoder::Encoder;
 use crate::tile::Tile;
 use std::fs::File;
@@ -23,26 +22,22 @@ pub struct Canvas<Pix: Pixel = Rgba<u8>> {
 }
 
 impl<Pix: Pixel> Canvas<Pix> {
-    pub fn new_generic(destination: PathBuf, size: Vec2d) -> Result<Self, ZoomError> {
-        Ok(Canvas {
+    pub fn new_generic(destination: PathBuf, size: Vec2d) -> Self {
+        Canvas {
             image: ImageBuffer::new(size.x, size.y),
             destination,
             image_writer: ImageWriter::Generic,
             icc_profile: None,
-        })
+        }
     }
 
-    pub fn new_jpeg(
-        destination: PathBuf,
-        size: Vec2d,
-        quality: u8,
-    ) -> Result<Canvas<Rgb<u8>>, ZoomError> {
-        Ok(Canvas::<Rgb<u8>> {
+    pub fn new_jpeg(destination: PathBuf, size: Vec2d, quality: u8) -> Canvas<Rgb<u8>> {
+        Canvas::<Rgb<u8>> {
             image: ImageBuffer::new(size.x, size.y),
             destination,
             image_writer: ImageWriter::Jpeg { quality },
             icc_profile: None,
-        })
+        }
     }
 }
 
@@ -71,7 +66,7 @@ impl<Pix: Pixel<Subpixel = u8> + PixelWithColorType + Send + FromRgba + 'static>
 
         // Capture ICC profile from the first tile that has one
         if self.icc_profile.is_none() && tile.icc_profile.is_some() {
-            self.icc_profile = tile.icc_profile.clone();
+            self.icc_profile.clone_from(&tile.icc_profile);
             debug!(
                 "Captured ICC profile from tile (size: {} bytes)",
                 self.icc_profile.as_ref().unwrap().len()
@@ -101,7 +96,7 @@ impl<Pix: Pixel<Subpixel = u8> + PixelWithColorType + Send + FromRgba + 'static>
 
     fn finalize(&mut self) -> io::Result<()> {
         self.image_writer
-            .write(&self.image, &self.destination, &self.icc_profile)
+            .write(&self.image, &self.destination, self.icc_profile.as_deref())
             .map_err(|e| match e {
                 image::ImageError::IoError(e) => e,
                 other => io::Error::other(other),
@@ -124,7 +119,7 @@ impl ImageWriter {
         &self,
         image: &CanvasBuffer<Pix>,
         destination: &Path,
-        icc_profile: &Option<Vec<u8>>,
+        icc_profile: Option<&[u8]>,
     ) -> ImageResult<()> {
         match *self {
             ImageWriter::Jpeg { quality } => {
@@ -134,8 +129,8 @@ impl ImageWriter {
 
                 // Set ICC profile if available
                 if let Some(profile) = icc_profile {
-                    if let Err(e) = encoder.set_icc_profile(profile.clone()) {
-                        debug!("Failed to set ICC profile for JPEG: {}", e);
+                    if let Err(e) = encoder.set_icc_profile(profile.to_vec()) {
+                        debug!("Failed to set ICC profile for JPEG: {e}");
                     } else {
                         debug!("Applied ICC profile to JPEG output");
                     }
@@ -151,17 +146,16 @@ impl ImageWriter {
             ImageWriter::Generic => {
                 // For generic format, we need to handle ICC profiles based on the file extension
                 if let Some(profile) = icc_profile {
-                    self.write_with_icc_profile(image, destination, profile)?;
+                    Self::write_with_icc_profile(image, destination, profile)?;
                 } else {
                     image.save(destination)?;
                 }
             }
-        };
+        }
         Ok(())
     }
 
     fn write_with_icc_profile<Pix: Pixel<Subpixel = u8> + PixelWithColorType>(
-        &self,
         image: &CanvasBuffer<Pix>,
         destination: &Path,
         icc_profile: &[u8],
@@ -203,7 +197,7 @@ impl ImageWriter {
             ),
             _ => {
                 // For other formats, fall back to the standard save method
-                debug!("ICC profile not supported for format: {}", extension);
+                debug!("ICC profile not supported for format: {extension}");
                 image.save(destination)
             }
         }
@@ -225,9 +219,9 @@ impl ImageWriter {
         let mut encoder = encoder_factory(fout);
 
         if let Err(e) = encoder.set_icc_profile(icc_profile.to_owned()) {
-            debug!("Failed to set ICC profile for {}: {}", format_name, e);
+            debug!("Failed to set ICC profile for {format_name}: {e}");
         } else {
-            debug!("Applied ICC profile to {} output", format_name);
+            debug!("Applied ICC profile to {format_name} output");
         }
 
         encoder.write_image(
@@ -249,7 +243,7 @@ mod tests {
     fn test_canvas_captures_icc_profile() {
         let destination = temp_dir().join("test_icc_canvas.png");
         let size = Vec2d { x: 2, y: 2 };
-        let mut canvas = Canvas::<Rgba<u8>>::new_generic(destination, size).unwrap();
+        let mut canvas = Canvas::<Rgba<u8>>::new_generic(destination, size);
 
         // Verify canvas starts with no ICC profile
         assert!(canvas.icc_profile.is_none());
@@ -274,7 +268,7 @@ mod tests {
     fn test_canvas_ignores_later_icc_profiles() {
         let destination = temp_dir().join("test_icc_priority.png");
         let size = Vec2d { x: 2, y: 2 };
-        let mut canvas = Canvas::<Rgba<u8>>::new_generic(destination, size).unwrap();
+        let mut canvas = Canvas::<Rgba<u8>>::new_generic(destination, size);
 
         // Add first tile with ICC profile
         let first_tile = Tile::builder()

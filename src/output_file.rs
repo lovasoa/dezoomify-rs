@@ -14,8 +14,8 @@ pub fn reserve_output_file(path: &Path) -> Result<(), ZoomError> {
 }
 
 pub fn get_outname(
-    outfile: &Option<PathBuf>,
-    zoom_name: &Option<String>,
+    outfile: Option<&Path>,
+    zoom_name: Option<&str>,
     base_dir: &Path,
     size: Option<Vec2d>,
 ) -> PathBuf {
@@ -31,7 +31,7 @@ pub fn get_outname(
             if fits_in_jpg == Some(false)
                 && (forced_extension == "jpg" || forced_extension == "jpeg")
             {
-                log::error!("This file is too large to be saved as JPEG")
+                log::error!("This file is too large to be saved as JPEG");
             }
             path.into()
         } else {
@@ -39,8 +39,7 @@ pub fn get_outname(
         }
     } else {
         let base = zoom_name
-            .as_ref()
-            .map(|s| sanitize(s))
+            .map(sanitize)
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "dezoomified".into());
         let mut path = base_dir.to_path_buf();
@@ -57,8 +56,8 @@ pub fn get_outname(
                 break;
             }
             debug!(
-                "File {:?} already exists. Trying another file name...",
-                path
+                "File {} already exists. Trying another file name...",
+                path.display()
             );
             let mut name = OsString::from(&filename);
             name.push(format!("_{i:04}."));
@@ -76,25 +75,23 @@ mod tests {
     use std::error::Error;
     use std::fs::{File, remove_file};
     use std::path::Path;
-    use std::sync::Mutex;
+    use std::sync::{LazyLock, Mutex};
 
     use tempfile::Builder as TempDirBuilder;
 
     use super::*;
 
     fn in_tmp_dir<T, F: Fn(&Path) -> T>(f: F) -> T {
-        lazy_static::lazy_static! {
-            static ref CWD_MUTEX: Mutex<()> = Mutex::new(());
-        }
+        static CWD_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
         let tmp = TempDirBuilder::new()
             .prefix("dezoomify-rs-tests")
             .tempdir()
             .expect("Unable to create a temporary directory to run the tests in");
         let lock = CWD_MUTEX.lock().unwrap(); // prevents multiple threads from changing cwd at once
         let cwd = current_dir().expect("Unable to getcwd");
-        set_current_dir(&tmp).expect(&format!("Unable to cd into {:?}", tmp));
+        set_current_dir(&tmp).expect(&format!("Unable to cd into {tmp:?}"));
         let res = f(tmp.as_ref());
-        set_current_dir(&cwd).expect(&format!("Unable to cd into {:?}", cwd));
+        set_current_dir(&cwd).expect(&format!("Unable to cd into {cwd:?}"));
         drop(lock);
         res
     }
@@ -103,15 +100,13 @@ mod tests {
         let base_dir = TempDirBuilder::new()
             .prefix("dezoomify-rs-test-filename")
             .tempdir()?;
-        let outname = get_outname(&None, &Some(filename.to_string()), base_dir.as_ref(), None);
+        let outname = get_outname(None, Some(filename), base_dir.as_ref(), None);
         assert!(
             !outname.exists(),
-            "get_outname cannot overwrite {:?}",
-            outname
+            "get_outname cannot overwrite {outname:?}"
         );
         File::create(&outname).expect(&format!(
-            "Could not to create a file named {:?} for input {:?}",
-            outname, filename
+            "Could not to create a file named {outname:?} for input {filename:?}"
         ));
         remove_file(&outname)?;
         Ok(())
@@ -127,7 +122,7 @@ mod tests {
             "", // test empty name
         ];
         for filename in filenames {
-            assert_filename_ok(filename).expect(&format!("Invalid filename {}", filename))
+            assert_filename_ok(filename).expect(&format!("Invalid filename {filename}"));
         }
     }
 
@@ -136,8 +131,8 @@ mod tests {
         in_tmp_dir(|cwd| {
             let name = cwd.join("xxx");
             File::create(&name).expect("cannot create file");
-            assert_filename_ok(&name.to_string_lossy()).expect("Invalid file name")
-        })
+            assert_filename_ok(&name.to_string_lossy()).expect("Invalid file name");
+        });
     }
 
     #[test]
@@ -165,14 +160,19 @@ mod tests {
                 base("dezoomified.jpg"),
             ),
             (
-                Some("test.tiff".into()),
+                Some(PathBuf::from("test.tiff")),
                 Some("hello".to_string()),
                 Some(Vec2d { x: 1000, y: 1000 }),
                 "test.tiff".into(),
             ),
         ];
-        for (outfile, zoom_name, size, expected_result) in tests.into_iter() {
-            let outname = get_outname(&outfile, &zoom_name, base_dir.as_ref(), size);
+        for (outfile, zoom_name, size, expected_result) in tests {
+            let outname = get_outname(
+                outfile.as_deref(),
+                zoom_name.as_deref(),
+                base_dir.as_ref(),
+                size,
+            );
             assert_eq!(outname, expected_result);
         }
     }

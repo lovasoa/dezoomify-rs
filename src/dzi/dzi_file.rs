@@ -7,8 +7,6 @@ use crate::json_utils::number_or_string;
 use crate::network::resolve_relative;
 use url::Url;
 
-use super::DziError;
-
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct DziFile {
     #[serde(
@@ -33,17 +31,17 @@ pub struct DziFile {
 }
 
 impl DziFile {
-    pub fn get_size(&self) -> Result<Vec2d, DziError> {
-        Ok(Vec2d {
+    pub fn get_size(&self) -> Vec2d {
+        Vec2d {
             x: self.size.width,
             y: self.size.height,
-        })
+        }
     }
     pub fn get_tile_size(&self) -> Vec2d {
         Vec2d::square(self.tile_size)
     }
     pub fn max_level(&self) -> u32 {
-        let size = self.get_size().unwrap();
+        let size = self.get_size();
         log2(size.x.max(size.y))
     }
     pub fn base_url(&self, resource_url: &str) -> String {
@@ -114,7 +112,7 @@ fn test_dzi() {
         </Image>"#,
     )
     .unwrap();
-    assert_eq!(dzi.get_size().unwrap(), Vec2d { x: 5393, y: 3852 });
+    assert_eq!(dzi.get_size(), Vec2d { x: 5393, y: 3852 });
     assert_eq!(dzi.get_tile_size(), Vec2d { x: 256, y: 256 });
     assert_eq!(dzi.max_level(), 13);
 }
@@ -133,7 +131,7 @@ fn test_dzi_json() {
 	    }"#,
     )
     .unwrap();
-    assert_eq!(dzi.get_size().unwrap(), Vec2d { y: 4409, x: 7793 });
+    assert_eq!(dzi.get_size(), Vec2d { y: 4409, x: 7793 });
     assert_eq!(dzi.get_tile_size(), Vec2d { x: 254, y: 254 });
     assert_eq!(dzi.max_level(), 13);
 }
@@ -145,7 +143,7 @@ fn test_base_url_without_extension_ignores_host_dots() {
         tile_size: 256,
         format: "jpg".to_string(),
         size: Size {
-            width: 482096,
+            width: 482_096,
             height: 5550,
         },
         base_url: None,

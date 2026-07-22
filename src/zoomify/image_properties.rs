@@ -33,25 +33,27 @@ impl ImageProperties {
     pub fn levels(&self) -> Vec<ZoomLevelInfo> {
         // Reimplementation of the algorithm of zoomify.js
         let tile_size = self.tile_size();
-        let mut width = self.width as f64;
-        let mut height = self.height as f64;
+        let mut level_divisor = 1_u64;
         let mut level_tiles = Vec::new();
         let mut tiles_before = Vec::new();
-        let tile_width = tile_size.x as f64;
-        let tile_height = tile_size.y as f64;
-        while width > tile_width || height > tile_height {
-            let tiles = (width / tile_width).ceil() * (height / tile_height).ceil();
-            tiles_before.push(tiles as u32);
+        while u64::from(self.width) > u64::from(tile_size.x) * level_divisor
+            || u64::from(self.height) > u64::from(tile_size.y) * level_divisor
+        {
+            let tiles_x = u64::from(self.width).div_ceil(u64::from(tile_size.x) * level_divisor);
+            let tiles_y = u64::from(self.height).div_ceil(u64::from(tile_size.y) * level_divisor);
+            let tiles = tiles_x * tiles_y;
+            tiles_before.push(u32::try_from(tiles).unwrap_or(u32::MAX));
             level_tiles.push(ZoomLevelInfo {
                 size: Vec2d {
-                    x: width as u32,
-                    y: height as u32,
+                    x: u32::try_from(u64::from(self.width) / level_divisor)
+                        .expect("a divided u32 always fits in a u32"),
+                    y: u32::try_from(u64::from(self.height) / level_divisor)
+                        .expect("a divided u32 always fits in a u32"),
                 },
                 tile_size,
                 tiles_before: 0, // Will be replaced in the end
             });
-            width /= 2.;
-            height /= 2.;
+            level_divisor *= 2;
         }
         let computed_tile_count = tiles_before.iter().sum::<u32>();
         if computed_tile_count != self.num_tiles {
@@ -78,10 +80,10 @@ impl ImageProperties {
                 }
                 size = self.size() / level_size_ratio;
                 if !size.x.is_multiple_of(2) {
-                    size.x += 1
+                    size.x += 1;
                 }
                 if !size.y.is_multiple_of(2) {
-                    size.y += 1
+                    size.y += 1;
                 }
                 level_size_ratio = level_size_ratio * Vec2d { x: 2, y: 2 };
             }
@@ -101,7 +103,7 @@ impl ImageProperties {
         let levels_before = level_tiles.iter_mut().zip(tiles_before.iter().rev());
         for (level, &before) in levels_before {
             level.tiles_before = total_tiles_before;
-            total_tiles_before += before
+            total_tiles_before += before;
         }
         level_tiles
     }
@@ -164,6 +166,33 @@ fn test_real_num_tiles() {
                 size: Vec2d { x: 10, y: 5 },
                 tile_size,
                 tiles_before: 3
+            },
+        ]
+    );
+}
+
+#[test]
+fn fractional_dimensions_keep_the_next_level() {
+    let tile_size = Vec2d::square(256);
+    let props = ImageProperties {
+        width: 200,
+        height: 513,
+        tile_size: 256,
+        num_tiles: 5,
+    };
+
+    assert_eq!(
+        props.levels(),
+        vec![
+            ZoomLevelInfo {
+                size: Vec2d { x: 100, y: 256 },
+                tile_size,
+                tiles_before: 0,
+            },
+            ZoomLevelInfo {
+                size: Vec2d { x: 200, y: 513 },
+                tile_size,
+                tiles_before: 2,
             },
         ]
     );

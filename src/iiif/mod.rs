@@ -5,7 +5,10 @@ use log::{debug, warn};
 
 use tile_info::ImageInfo;
 
-use crate::dezoomer::*;
+use crate::dezoomer::{
+    Dezoomer, DezoomerError, DezoomerInput, ImageUrl, Images, IntoZoomLevels, ResolvedImage,
+    TilesRect, Vec2d, ZoomLevel, ZoomLevels,
+};
 use crate::iiif::tile_info::TileSizeFormat;
 use crate::json_utils::all_json;
 use crate::max_size_in_rect;
@@ -19,6 +22,7 @@ pub mod tile_info;
 pub struct IIIF;
 
 /// Determines the best title for an image from IIIF manifest metadata
+#[must_use]
 pub fn determine_title(image_info: &manifest_types::ExtractedImageInfo) -> Option<String> {
     let mut parts = Vec::new();
 
@@ -101,15 +105,11 @@ impl Dezoomer for IIIF {
         // Check if URL suggests it's an info.json file
         if uri.ends_with("/info.json") {
             // Likely an Image Service, try parsing as info.json first
-            match zoom_levels(uri, contents) {
-                Ok(levels) => {
-                    let image = ResolvedImage::new(levels, None);
-                    return Ok(image.into());
-                }
-                Err(_) => {
-                    // Fall through to try as manifest
-                }
+            if let Ok(levels) = zoom_levels(uri, contents) {
+                let image = ResolvedImage::new(levels, None);
+                return Ok(image.into());
             }
+            // Fall through to try as manifest
         }
 
         // Try to parse as IIIF manifest
@@ -160,9 +160,9 @@ fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
                     if keep {
                         debug!(
                             "keeping image info {info:?} because it has distinctive IIIF properties"
-                        )
+                        );
                     } else {
-                        debug!("dropping level {info:?}")
+                        debug!("dropping level {info:?}");
                     }
                     keep
                 })
@@ -312,6 +312,10 @@ impl std::fmt::Debug for IIIFZoomLevel {
 /// # Returns
 /// A `Result` containing a vector of `ExtractedImageInfo` if successful,
 /// or an `IIIFError` if parsing fails or the content is not a valid manifest.
+///
+/// # Errors
+///
+/// Returns an error when the input is not valid JSON or cannot be parsed as a supported manifest.
 pub fn parse_iiif_manifest_from_bytes(
     bytes: &[u8],
     manifest_url: &str,
@@ -454,7 +458,7 @@ fn test_tiles() {
             "http://www.asmilano.it/fast/iipsrv.fcgi?IIIF=/opt/divenire/files/./tifs/05/36/536765.tif/0,0,15001,32768/234,512/0/default.jpg",
             "http://www.asmilano.it/fast/iipsrv.fcgi?IIIF=/opt/divenire/files/./tifs/05/36/536765.tif/0,32768,15001,15234/234,238/0/default.jpg",
         ]
-    )
+    );
 }
 
 #[test]
@@ -481,7 +485,7 @@ fn test_tiles_max_area_filter() {
             "http://ophir.dev/0,512,512,512/512,512/0/default.jpg",
             "http://ophir.dev/512,512,512,512/512,512/0/default.jpg",
         ]
-    )
+    );
 }
 
 #[test]
@@ -502,7 +506,7 @@ fn test_missing_id() {
             "http://test.com/0,0,512,350/512,350/0/default.jpg",
             "http://test.com/512,0,88,350/88,350/0/default.jpg"
         ]
-    )
+    );
 }
 
 #[test]
@@ -545,13 +549,16 @@ fn test_qualities() {
         vec![
             "https://images.britishart.yale.edu/iiif/fd470c3e-ead0-4878-ac97-d63295753f82/0,0,5156,3816/515,381/0/native.png", // tile_width and tile_height are not used from profile here but from image_info.tile_w/h
         ]
-    )
+    );
 }
 
 #[cfg(test)]
 mod manifest_parsing_tests {
     use super::*;
-    use crate::dezoomer::test_utils::{expect_single_resolved, expect_single_url};
+    use crate::dezoomer::{
+        PageContents,
+        test_utils::{expect_single_resolved, expect_single_url},
+    };
     use crate::iiif::manifest_types::ExtractedImageInfo;
 
     fn legacy_manifest_data() -> &'static [u8] {

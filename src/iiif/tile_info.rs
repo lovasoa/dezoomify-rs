@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
+use std::sync::LazyLock;
 
-use lazy_static::lazy_static;
 use log::debug;
 use log::info;
 use log::warn;
@@ -53,6 +53,9 @@ static QUALITY_ORDER: [&str; 5] = ["bitonal", "gray", "color", "native", "defaul
 // webp is the least favorite because of this bug: https://github.com/image-rs/image/issues/939
 static FORMAT_ORDER: [&str; 7] = ["webp", "gif", "bmp", "tif", "jpg", "jpeg", "png"];
 
+static TEST_ID_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^https?://((www\.)?example\.|localhost)").unwrap());
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TileSizeFormat {
     WidthHeight,
@@ -60,6 +63,7 @@ pub enum TileSizeFormat {
 }
 
 impl ImageInfo {
+    #[must_use]
     pub fn size(&self) -> Vec2d {
         Vec2d {
             x: self.width,
@@ -74,6 +78,7 @@ impl ImageInfo {
             .unwrap_or_default()
     }
 
+    #[must_use]
     pub fn best_quality(&self) -> String {
         let pinfo = self.profile_info();
         self.qualities
@@ -88,6 +93,7 @@ impl ImageInfo {
             })
     }
 
+    #[must_use]
     pub fn best_format(&self) -> String {
         let pinfo = self.profile_info();
         self.formats
@@ -102,13 +108,14 @@ impl ImageInfo {
             })
     }
 
+    #[must_use]
     pub fn preferred_size_format(&self) -> TileSizeFormat {
         let pinfo = self.profile_info();
         let s: HashSet<&str> = pinfo
             .supports
             .iter()
             .flat_map(|x| x.iter())
-            .map(|s| s.as_str())
+            .map(std::string::String::as_str)
             .collect();
         if s.contains("sizeByW") && !s.contains("sizeByWh") {
             TileSizeFormat::Width
@@ -117,6 +124,7 @@ impl ImageInfo {
         }
     }
 
+    #[must_use]
     pub fn tiles(&self) -> Vec<TileInfo> {
         let profile_info = self.profile_info();
         let mut tiles: Vec<_> = self
@@ -124,7 +132,7 @@ impl ImageInfo {
             .as_ref()
             .map(|v| {
                 v.iter()
-                    .flat_map(|info| {
+                    .filter_map(|info| {
                         if profile_info.tile_size_fits(info.size()) {
                             Some(info.clone())
                         } else {
@@ -138,24 +146,25 @@ impl ImageInfo {
         if !tiles.iter().any(|t| t.scale_factors.contains(&1)) {
             let mut info = TileInfo::default();
             if let Some(width) = self.tile_width {
-                info.width = width
+                info.width = width;
             }
             if let Some(height) = self.tile_height {
-                info.height = Some(height)
+                info.height = Some(height);
             }
             let cropped_size = profile_info.crop_tile_size(info.size());
             info.width = cropped_size.x;
             info.height = Some(cropped_size.y);
             if let Some(scale_factors) = &self.scale_factors {
-                info.scale_factors.clone_from(scale_factors)
+                info.scale_factors.clone_from(scale_factors);
             }
-            tiles.push(info)
+            tiles.push(info);
         }
         tiles
     }
 
     /// Because our parser is so tolerant, we need to evaluate the probability
     /// that this is not in fact a valid IIIF image
+    #[must_use]
     pub fn has_distinctive_iiif_properties(&self) -> bool {
         self.id.is_some()
             || self.protocol.is_some()
@@ -165,17 +174,15 @@ impl ImageInfo {
             || self
                 .iiif_type
                 .as_ref()
-                .filter(|&s| s == "iiif:ImageProfile" || s == "ImageService3")
-                .is_some()
+                .as_ref()
+                .is_some_and(|&s| s == "iiif:ImageProfile" || s == "ImageService3")
     }
 
     /// Some info.json files contain a an invalid value for "@id",
     /// such as "localhost" or "example.com"
     pub fn remove_test_id(&mut self) {
         if let Some(id) = &self.id
-            && Regex::new(r"^https?://((www\.)?example\.|localhost)")
-                .unwrap()
-                .is_match(id)
+            && TEST_ID_RE.is_match(id)
         {
             info!("Removing probably invalid IIIF id '{id}'");
             self.id = None;
@@ -184,7 +191,7 @@ impl ImageInfo {
 
     pub fn resolve_relative_urls(&mut self, base: &str) {
         if let Some(id) = &self.id {
-            self.id = Some(resolve_relative(base, id))
+            self.id = Some(resolve_relative(base, id));
         }
     }
 }
@@ -199,6 +206,7 @@ pub struct TileInfo {
 }
 
 impl TileInfo {
+    #[must_use]
     pub fn size(&self) -> Vec2d {
         Vec2d {
             x: self.width,
@@ -235,7 +243,7 @@ pub struct ProfileInfo {
 }
 
 impl ProfileInfo {
-    /// Takes a proposed tile_size as input and returns a potentially smaller tile size
+    /// Takes a proposed `tile_size` as input and returns a potentially smaller tile size
     /// that fits the tile size limits defined in the profile information
     fn crop_tile_size(&self, mut size: Vec2d) -> Vec2d {
         if let Some(max_width) = self.max_width {
@@ -246,7 +254,8 @@ impl ProfileInfo {
         if let Some(max_area) = self.max_area
             && size.area() > max_area
         {
-            let sqrt = ((max_area as f64).sqrt()) as u32;
+            let sqrt = u32::try_from(max_area.isqrt())
+                .expect("the square root of a u64 always fits in a u32");
             size.y = sqrt.min(size.y);
             size.x = sqrt.min(size.x);
         }
@@ -258,25 +267,32 @@ impl ProfileInfo {
     }
 }
 
-lazy_static! {
-    static ref PROFILE_REFERENCES: std::collections::HashMap<String, ProfileInfo> = {
+static PROFILE_REFERENCES: LazyLock<std::collections::HashMap<String, ProfileInfo>> =
+    LazyLock::new(|| {
         let json_str = include_str!("./levels.json");
         serde_json::from_str(json_str).unwrap()
-    };
+    });
+
+fn update_max<T: Ord + Copy>(target: &mut Option<T>, new: Option<T>) {
+    if let Some(new) = new {
+        *target = Some(if let Some(old) = target {
+            new.min(*old)
+        } else {
+            new
+        });
+    }
 }
 
 impl Profile {
     fn profile_info(&self) -> Cow<'_, ProfileInfo> {
         match self {
-            Profile::Reference(s) => {
-                PROFILE_REFERENCES
-                    .get(s)
-                    .map(Cow::Borrowed)
-                    .unwrap_or_else(|| {
-                        warn!("Unknown IIIF profile reference: {s}");
-                        Cow::Owned(ProfileInfo::default())
-                    })
-            }
+            Profile::Reference(s) => PROFILE_REFERENCES.get(s).map_or_else(
+                || {
+                    warn!("Unknown IIIF profile reference: {s}");
+                    Cow::Owned(ProfileInfo::default())
+                },
+                Cow::Borrowed,
+            ),
             Profile::Info(info) => Cow::Borrowed(info),
             Profile::Multiple(profiles) => {
                 let mut formats = vec![];
@@ -285,25 +301,16 @@ impl Profile {
                 let mut max_width = None;
                 let mut max_height = None;
                 let mut max_area = None;
-                fn update_max<T: Ord + Copy>(target: &mut Option<T>, new: Option<T>) {
-                    if let Some(new) = new {
-                        *target = Some(if let Some(old) = target {
-                            new.min(*old)
-                        } else {
-                            new
-                        })
-                    }
-                }
                 for profile in profiles.iter().flat_map(|x| x.iter()) {
                     let p = profile.profile_info();
                     if let Some(x) = &p.formats {
-                        formats.extend_from_slice(x)
+                        formats.extend_from_slice(x);
                     }
                     if let Some(x) = &p.qualities {
-                        qualities.extend_from_slice(x)
+                        qualities.extend_from_slice(x);
                     }
                     if let Some(x) = &p.supports {
-                        supports.extend_from_slice(x)
+                        supports.extend_from_slice(x);
                     }
                     update_max(&mut max_width, p.max_width);
                     update_max(&mut max_height, p.max_height);
@@ -383,7 +390,7 @@ fn test_profile_info() {
             max_height: Some(94),
             ..Default::default()
         }
-    )
+    );
 }
 
 #[test]
@@ -410,7 +417,7 @@ fn test_best_quality() {
             "default",
         ),
     ];
-    for (qualities, expected_best_quality) in pairs.into_iter() {
+    for (qualities, expected_best_quality) in pairs {
         let info = ImageInfo {
             qualities,
             ..ImageInfo::default()

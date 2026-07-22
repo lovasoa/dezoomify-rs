@@ -164,7 +164,7 @@ impl Default for Arguments {
             headers: vec![],
             max_idle_per_host: 32,
             accept_invalid_certs: false,
-            min_interval: Default::default(),
+            min_interval: Duration::default(),
             timeout: Duration::from_secs(30),
             connect_timeout: Duration::from_secs(6),
             logging: "info".to_string(),
@@ -175,28 +175,36 @@ impl Default for Arguments {
 }
 
 impl Arguments {
+    /// Returns the configured input URI, or reads one from standard input.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no URI was configured and standard input cannot be read.
     pub fn choose_input_uri(&self) -> Result<String, ZoomError> {
-        match &self.input_uri {
-            Some(uri) => Ok(uri.clone()),
-            None => {
-                println!("Enter an URL or a path to a tiles.yaml file: ");
-                stdin_line()
-            }
+        if let Some(uri) = &self.input_uri {
+            Ok(uri.clone())
+        } else {
+            println!("Enter an URL or a path to a tiles.yaml file: ");
+            stdin_line()
         }
     }
 
+    #[must_use]
     pub fn is_bulk_mode(&self) -> bool {
         self.bulk.is_some()
     }
 
+    #[must_use]
     pub fn output_file(&self) -> Option<PathBuf> {
         self.outfile_option.clone().or_else(|| self.outfile.clone())
     }
 
+    #[must_use]
     pub fn bulk_output_file(&self) -> Option<PathBuf> {
         self.output_file()
     }
 
+    #[must_use]
     pub fn request_referer(&self) -> Option<&str> {
         let candidate = if self.is_bulk_mode() {
             self.bulk.as_deref()
@@ -206,6 +214,7 @@ impl Arguments {
         candidate.filter(|uri| uri.starts_with("http://") || uri.starts_with("https://"))
     }
 
+    #[must_use]
     pub fn should_use_largest(&self) -> bool {
         self.largest
             || (self.is_bulk_mode()
@@ -214,9 +223,15 @@ impl Arguments {
                 && self.zoom_level.is_none())
     }
 
+    #[must_use]
     pub fn has_level_specifying_args(&self) -> bool {
         self.max_width.is_some() || self.max_height.is_some() || self.zoom_level.is_some()
     }
+    /// Finds the dezoomer selected by the command-line arguments.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ZoomError::NoSuchDezoomer`] if the configured name is unknown.
     pub fn find_dezoomer(&self) -> Result<Box<dyn Dezoomer>, ZoomError> {
         auto::all_dezoomers(true)
             .into_iter()
@@ -231,8 +246,8 @@ impl Arguments {
         } else if self.max_width.is_some() || self.max_height.is_some() {
             sizes
                 .filter(|s| {
-                    self.max_width.map(|w| s.x <= w).unwrap_or(true)
-                        && self.max_height.map(|h| s.y <= h).unwrap_or(true)
+                    self.max_width.is_none_or(|w| s.x <= w)
+                        && self.max_height.is_none_or(|h| s.y <= h)
                 })
                 .max_by_key(|s| s.area())
         } else {
@@ -301,7 +316,7 @@ fn test_headers_and_input() {
 fn test_parse_duration() {
     assert_eq!(parse_duration("2s"), Ok(Duration::from_secs(2)));
     assert_eq!(parse_duration("29 s"), Ok(Duration::from_secs(29)));
-    assert_eq!(parse_duration("2min"), Ok(Duration::from_secs(120)));
+    assert_eq!(parse_duration("2min"), Ok(Duration::from_mins(2)));
     assert_eq!(parse_duration("1000 ms"), Ok(Duration::from_secs(1)));
     assert!(parse_duration("1 2 ms").is_err());
     assert!(parse_duration("1 s s").is_err());

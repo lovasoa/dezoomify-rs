@@ -23,17 +23,21 @@ pub struct Tile {
 }
 
 impl Tile {
+    #[must_use]
     pub fn size(&self) -> Vec2d {
         self.image.dimensions().into()
     }
+    #[must_use]
     pub fn bottom_right(&self) -> Vec2d {
         self.size() + self.position
     }
 
+    #[must_use]
     pub fn builder() -> TileBuilder {
         TileBuilder::default()
     }
 
+    #[must_use]
     pub fn empty(position: Vec2d, size: Vec2d) -> Tile {
         Tile {
             image: DynamicImage::new_rgba8(size.x, size.y),
@@ -42,6 +46,7 @@ impl Tile {
             exif_metadata: None,
         }
     }
+    #[must_use]
     pub fn position(&self) -> Vec2d {
         self.position
     }
@@ -56,40 +61,53 @@ pub struct TileBuilder {
 }
 
 impl TileBuilder {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn with_image(mut self, image: image::DynamicImage) -> Self {
         self.image = Some(image);
         self
     }
 
+    #[must_use]
     pub fn at_position(mut self, position: Vec2d) -> Self {
         self.position = Some(position);
         self
     }
 
+    #[must_use]
     pub fn with_icc_profile(mut self, profile: Vec<u8>) -> Self {
         self.icc_profile = Some(profile);
         self
     }
 
+    #[must_use]
     pub fn with_optional_icc_profile(mut self, profile: Option<Vec<u8>>) -> Self {
         self.icc_profile = profile;
         self
     }
 
+    #[must_use]
     pub fn with_exif_metadata(mut self, metadata: Vec<u8>) -> Self {
         self.exif_metadata = Some(metadata);
         self
     }
 
+    #[must_use]
     pub fn with_optional_exif_metadata(mut self, metadata: Option<Vec<u8>>) -> Self {
         self.exif_metadata = metadata;
         self
     }
 
+    #[must_use]
+    /// Builds the tile.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no image was supplied with [`Self::with_image`].
     pub fn build(self) -> Tile {
         Tile {
             image: self.image.expect("Image is required"),
@@ -114,6 +132,11 @@ pub struct ImageWithMetadata {
 
 type MetadataResult<T> = Result<T, image::ImageError>;
 
+/// Reads image metadata without decoding the pixel data.
+///
+/// # Errors
+///
+/// Returns an error if the image format cannot be detected or its metadata cannot be decoded.
 pub fn load_encoded_tile(position: Vec2d, bytes: Arc<Vec<u8>>) -> MetadataResult<EncodedTile> {
     let reader = ImageReader::new(Cursor::new(bytes.as_slice())).with_guessed_format()?;
     let format = reader.format().ok_or_else(unknown_format_error)?;
@@ -138,6 +161,11 @@ fn unknown_format_error() -> image::ImageError {
     ))
 }
 
+/// Decodes a positioned tile and preserves its available metadata.
+///
+/// # Errors
+///
+/// Returns an error if the image format or pixel data cannot be decoded.
 pub fn load_tile_with_metadata(position: Vec2d, bytes: &[u8]) -> MetadataResult<Tile> {
     let image_with_metadata = load_image_with_metadata(bytes)?;
     Ok(Tile::builder()
@@ -148,6 +176,11 @@ pub fn load_tile_with_metadata(position: Vec2d, bytes: &[u8]) -> MetadataResult<
         .build())
 }
 
+/// Decodes an image and extracts its available ICC and EXIF metadata.
+///
+/// # Errors
+///
+/// Returns an error if the image format or pixel data cannot be decoded.
 pub fn load_image_with_metadata(bytes: &[u8]) -> MetadataResult<ImageWithMetadata> {
     let reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
     let format = reader.format().ok_or_else(unknown_format_error)?;
