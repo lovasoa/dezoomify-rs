@@ -272,12 +272,16 @@ fn parse_header(s: &str) -> Result<(String, String), &'static str> {
 fn parse_duration(s: &str) -> Result<Duration, &'static str> {
     let err_msg = "Invalid duration. \
                         A duration is a number followed by a unit, such as '10ms' or '5s'";
-    let re = Regex::new(r"^(\d+)\s*(min|s|ms|ns)$").unwrap();
+    let re = Regex::new(r"^(\d+)\s*(min|ms|ns|h|m|s)$").unwrap();
     let caps = re.captures(s).ok_or(err_msg)?;
     let val: u64 = caps[1].parse().map_err(|_| err_msg)?;
+
     match &caps[2] {
-        "h" => Ok(Duration::from_secs(3600 * val)),
-        "min" | "m" => Ok(Duration::from_secs(60 * val)),
+        "h" => val
+            .checked_mul(3600)
+            .map(Duration::from_secs)
+            .ok_or(err_msg),
+        "min" | "m" => val.checked_mul(60).map(Duration::from_secs).ok_or(err_msg),
         "s" => Ok(Duration::from_secs(val)),
         "ms" => Ok(Duration::from_millis(val)),
         "ns" => Ok(Duration::from_nanos(val)),
