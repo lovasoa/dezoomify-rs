@@ -1,0 +1,30 @@
+name: Live compatibility
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+  pull_request:
+    paths:
+      - tests/live_dezoomers.rs
+      - .github/workflows/live-compat.yml
+
+jobs:
+  live-dezoomers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: live-${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Exercise every network dezoomer
+        continue-on-error: true
+        run: cargo test --locked --test live_dezoomers -- --nocapture --test-threads=1
+        env:
+          DEZOOMIFY_LIVE_TESTS: 1
+          RUST_BACKTRACE: 1

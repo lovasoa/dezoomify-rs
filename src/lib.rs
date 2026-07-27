@@ -53,7 +53,6 @@ pub mod iipimage;
 mod json_utils;
 pub mod krpano;
 pub mod nypl;
-pub mod pff;
 mod throttler;
 pub mod zoomify;
 
