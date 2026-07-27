@@ -136,6 +136,13 @@ fn level_picker(mut levels: Vec<ZoomLevel>) -> Result<ZoomLevel, ZoomError> {
 }
 
 fn choose_level(mut levels: Vec<ZoomLevel>, args: &Arguments) -> Result<ZoomLevel, ZoomError> {
+    if levels.iter().all(|level| level.size_hint().is_some()) {
+        levels.sort_by_key(|level| {
+            let size = level.size_hint().expect("all level sizes were checked");
+            u64::from(size.x) * u64::from(size.y)
+        });
+    }
+
     match levels.len() {
         0 => Err(ZoomError::NoLevels),
         1 => Ok(levels.swap_remove(0)),
@@ -789,6 +796,29 @@ mod tests {
     use super::*;
     use clap::Parser;
 
+    #[derive(Debug)]
+    struct TestLevel(Vec2d);
+
+    impl dezoomer::TileProvider for TestLevel {
+        fn next_tiles(
+            &mut self,
+            _previous: Option<dezoomer::TileFetchResult>,
+        ) -> Vec<TileReference> {
+            Vec::new()
+        }
+
+        fn size_hint(&self) -> Option<Vec2d> {
+            Some(self.0)
+        }
+    }
+
+    fn test_levels(sizes: &[u32]) -> Vec<ZoomLevel> {
+        sizes
+            .iter()
+            .map(|&size| Box::new(TestLevel(Vec2d { x: size, y: size })) as ZoomLevel)
+            .collect()
+    }
+
     #[test]
     fn test_parse_level_index() {
         assert_eq!(parse_level_index("0", 5), Some(0));
@@ -806,6 +836,22 @@ mod tests {
         assert_eq!(resolve_level_index(4, 5), 4); // Last valid index
         assert_eq!(resolve_level_index(10, 5), 4); // Out of bounds, use last
         assert_eq!(resolve_level_index(100, 3), 2); // Way out of bounds
+    }
+
+    #[test]
+    fn choose_level_indexes_levels_from_smallest_to_largest() {
+        let mut args = Arguments::default();
+        args.zoom_level = Some(0);
+        let selected = choose_level(test_levels(&[400, 100, 200]), &args).unwrap();
+        assert_eq!(selected.size_hint(), Some(Vec2d { x: 100, y: 100 }));
+
+        args.zoom_level = Some(1);
+        let selected = choose_level(test_levels(&[400, 100, 200]), &args).unwrap();
+        assert_eq!(selected.size_hint(), Some(Vec2d { x: 200, y: 200 }));
+
+        args.zoom_level = Some(10);
+        let selected = choose_level(test_levels(&[400, 100, 200]), &args).unwrap();
+        assert_eq!(selected.size_hint(), Some(Vec2d { x: 400, y: 400 }));
     }
 
     #[test]
