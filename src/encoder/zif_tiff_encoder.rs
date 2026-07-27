@@ -455,6 +455,55 @@ mod tests {
     }
 
     #[test]
+    fn writes_multiple_source_levels() {
+        let mut encoded = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut encoded, 95)
+            .write_image(
+                &vec![128; 16 * 16 * 3],
+                16,
+                16,
+                image::ExtendedColorType::Rgb8,
+            )
+            .unwrap();
+        let bytes = Arc::new(encoded);
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("pyramid.tiff");
+        let size = Vec2d { x: 32, y: 32 };
+        let tile_size = Vec2d { x: 16, y: 16 };
+        let mut output_encoder = ZifTiffEncoder::new(destination.clone(), size).unwrap();
+
+        for (index, scale_factor) in [1, 2].into_iter().enumerate() {
+            output_encoder
+                .begin_level(SourceLevel {
+                    index,
+                    size,
+                    scale_factor,
+                    tile_size: Some(tile_size),
+                    has_overlapping_tiles: false,
+                })
+                .unwrap();
+            output_encoder
+                .add_encoded_tile(EncodedTile {
+                    position: Vec2d::default(),
+                    bytes: Arc::clone(&bytes),
+                    format: ImageFormat::Jpeg,
+                    size: tile_size,
+                    color_type: ColorType::Rgb8,
+                })
+                .unwrap();
+        }
+        output_encoder.finalize().unwrap();
+
+        let mut reader = RangeReader::open(&destination).unwrap();
+        let image = reader.read_zif().unwrap();
+        for level in 0..2 {
+            let tile = image.level_tiles(level).unwrap().next().unwrap();
+            let stored = reader.fetch(tile.range()).unwrap();
+            assert_eq!(stored.bytes(), bytes.as_slice());
+        }
+    }
+
+    #[test]
     fn parses_jpeg_subsampling_from_baseline_frame() {
         let jpeg = minimal_jpeg_with_sof(0xc0, 0x11);
         assert_eq!(
