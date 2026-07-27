@@ -177,3 +177,56 @@ impl TileSaver for IIIFTileSaver {
         self.save_tile_region(tile.position, size, tile.size(), &tile)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writes_direct_source_pyramid_levels() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let destination = temp_dir.path().join("image.iiif");
+        let full_size = Vec2d { x: 4, y: 4 };
+        let tile_size = Vec2d { x: 2, y: 2 };
+        let mut encoder = IiifEncoder::new(destination.clone(), full_size, 90).unwrap();
+
+        encoder
+            .begin_level(SourceLevel {
+                index: 0,
+                size: full_size,
+                scale_factor: 1,
+                tile_size: Some(tile_size),
+                has_overlapping_tiles: false,
+            })
+            .unwrap();
+        encoder
+            .add_tile(Tile::empty(Vec2d::default(), tile_size))
+            .unwrap();
+
+        encoder
+            .begin_level(SourceLevel {
+                index: 1,
+                size: full_size,
+                scale_factor: 2,
+                tile_size: Some(tile_size),
+                has_overlapping_tiles: false,
+            })
+            .unwrap();
+        encoder
+            .add_tile(Tile::empty(Vec2d::default(), tile_size))
+            .unwrap();
+        encoder.finalize().unwrap();
+
+        assert!(destination.join("0,0,2,2/2,2/0/default.jpg").is_file());
+        assert!(destination.join("0,0,4,4/2,2/0/default.jpg").is_file());
+        assert!(destination.join("viewer.html").is_file());
+
+        let info: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(destination.join("info.json")).unwrap()).unwrap();
+        assert_eq!(info["width"], 4);
+        assert_eq!(info["height"], 4);
+        assert_eq!(info["tiles"][0]["width"], 2);
+        assert_eq!(info["tiles"][0]["height"], 2);
+        assert_eq!(info["tiles"][0]["scaleFactors"], serde_json::json!([1, 2]));
+    }
+}
