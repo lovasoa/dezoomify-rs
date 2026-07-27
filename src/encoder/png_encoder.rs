@@ -250,20 +250,14 @@ mod tests {
         encoder.finalize().unwrap();
         assert!(destination.exists());
 
-        // NOTE: EXIF metadata test is currently skipped due to limitations in the PNG crate.
-        // The PNG crate version 0.17 appears to have issues with properly persisting EXIF metadata
-        // to PNG files, even though the API accepts it. This is a known limitation and may be
-        // resolved in future versions of the crate.
-
-        // TODO: Re-enable this test when PNG crate properly supports EXIF metadata persistence
-        // let file = std::fs::File::open(&destination).unwrap();
-        // let decoder = png::Decoder::new(file);
-        // let reader = decoder.read_info().unwrap();
-        // let info = reader.info();
-        // assert!(info.exif_metadata.is_some());
-        // if let Some(embedded_exif) = &info.exif_metadata {
-        //     assert_eq!(embedded_exif.as_ref(), &exif_metadata);
-        // }
+        let file = std::fs::File::open(&destination).unwrap();
+        let decoder = png::Decoder::new(std::io::BufReader::new(file));
+        let reader = decoder.read_info().unwrap();
+        let info = reader.info();
+        assert_eq!(
+            info.exif_metadata.as_deref(),
+            Some(exif_metadata.as_slice())
+        );
     }
 
     #[test]
@@ -291,7 +285,7 @@ mod tests {
         encoder.finalize().unwrap();
         assert!(destination.exists());
 
-        // Verify metadata was written (ICC profile works, EXIF has known issues)
+        // Verify both metadata blocks were written.
         let file = std::fs::File::open(&destination).unwrap();
         let decoder = png::Decoder::new(std::io::BufReader::new(file));
         let reader = decoder.read_info().unwrap();
@@ -303,12 +297,9 @@ mod tests {
             assert_eq!(embedded_profile.as_ref(), icc_profile.as_slice());
         }
 
-        // NOTE: EXIF metadata test is currently skipped due to limitations in the PNG crate.
-        // See test_png_create_with_exif_metadata for details.
-        // TODO: Re-enable when PNG crate properly supports EXIF metadata persistence
-        // assert!(info.exif_metadata.is_some());
-        // if let Some(embedded_exif) = &info.exif_metadata {
-        //     assert_eq!(embedded_exif.as_ref(), &exif_metadata);
-        // }
+        assert_eq!(
+            info.exif_metadata.as_deref(),
+            Some(exif_metadata.as_slice())
+        );
     }
 }
