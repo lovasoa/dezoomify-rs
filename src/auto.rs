@@ -118,7 +118,6 @@ pub fn all_dezoomers(include_generic: bool) -> Vec<Box<dyn Dezoomer>> {
         Box::<crate::iiif::IIIF>::default(),
         Box::<crate::dzi::DziDezoomer>::default(),
         Box::<crate::generic::GenericDezoomer>::default(),
-        Box::<crate::pff::PFF>::default(),
         Box::<crate::krpano::KrpanoDezoomer>::default(),
         Box::<crate::iipimage::IIPImage>::default(),
         Box::<crate::nypl::NYPLImage>::default(),

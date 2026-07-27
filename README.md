@@ -29,7 +29,6 @@ The following dezoomers are currently available:
  - [**deepzoom**](#DeepZoom) supports Microsoft's *DZI* format (Deep Zoom Image),
  that is often used with the seadragon viewer.
  - [**IIIF**](#IIIF) supports the widely used International Image Interoperability Framework format.
- - [**Zoomify PFF**](#zoomify-pff) supports the old zoomify single-file image format.
  - [**Krpano**](#krpano) supports the [krpano](https://krpano.com/home/) panorama viewer
  - [**IIPImage**](#iipimage) supports the [iipimage](https://iipimage.sourceforge.io/) image format
  - [**NYPLImage**](#nyplimage) supports the [nypl](https://digitalcollections.nypl.org) image format
@@ -137,13 +136,6 @@ If the image tile URLs have the form
 `http://test.com/y/xy_files/1/2_3.jpg`,
 then the URL to enter is
 `http://test.com/y/xy.dzi`.
-
-### Zoomify PFF
-
-[PFF](https://github.com/lovasoa/pff-extract/wiki/Zoomify-PFF-file-format-documentation)
-is an old zoomable image file format format developed by zoomify.
-You can give a pff meta-information URL (one that contains `requestType=1`)
-to dezoomify-rs and it will download it. 
 
 ### Krpano
 
