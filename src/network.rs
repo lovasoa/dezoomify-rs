@@ -197,6 +197,7 @@ pub fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
         .referer(false)
         .pool_max_idle_per_host(args.max_idle_per_host)
         .danger_accept_invalid_certs(args.accept_invalid_certs)
+        .connect_timeout(args.connect_timeout)
         .timeout(args.timeout)
         .build()?;
     Ok(client)

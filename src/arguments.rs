@@ -326,6 +326,17 @@ fn test_parse_duration() {
 }
 
 #[test]
+fn test_connect_timeout_option() {
+    let args = Arguments::parse_from([
+        "dezoomify-rs",
+        "--connect-timeout",
+        "123ms",
+        "https://example.com/info.json",
+    ]);
+    assert_eq!(args.connect_timeout, Duration::from_millis(123));
+}
+
+#[test]
 fn test_bulk_url_reading() {
     // Test bulk mode detection
     let mut args = Arguments {
