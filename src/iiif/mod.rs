@@ -417,20 +417,6 @@ fn parse_unknown_manifest(
 #[test]
 fn test_tiles() {
     let data = br#"{
-            .split('/')
-            .next_back()
-            .and_then(|s: &str| {
-                let s = s.trim();
-                if s.is_empty() { None } else { Some(s) }
-            })
-            .unwrap_or("IIIF Image");
-        write!(f, "{name}")
-    }
-}
-
-#[test]
-fn test_tiles() {
-    let data = br#"{
       "@context" : "http://iiif.io/api/image/2/context.json",
       "@id" : "http://www.asmilano.it/fast/iipsrv.fcgi?IIIF=/opt/divenire/files/./tifs/05/36/536765.tif",
       "protocol" : "http://iiif.io/api/image",
