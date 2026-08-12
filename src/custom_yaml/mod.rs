@@ -4,9 +4,11 @@ use serde::Deserialize;
 
 use crate::TileReference;
 use crate::dezoomer::{
-    Dezoomer, DezoomerError, DezoomerInput, Images, TileFetchResult, TileProvider, Vec2d,
-    single_level,
+    Dezoomer, DezoomerError, DezoomerInput, Images, ResolvedImage, TileFetchResult, TileProvider,
+    Vec2d, single_level,
 };
+#[cfg(test)]
+use crate::dezoomer::{PageContents, test_utils::expect_single_resolved};
 use crate::network::default_headers;
 
 mod tile_set;
@@ -26,7 +28,8 @@ impl Dezoomer for CustomDezoomer {
         let contents = data.with_contents()?.contents;
         let dezoomer: CustomYamlTiles =
             serde_yaml::from_slice(contents).map_err(DezoomerError::wrap)?;
-        Ok(single_level(dezoomer).into())
+        let title = dezoomer.title.clone();
+        Ok(ResolvedImage::new(single_level(dezoomer), title).into())
     }
 }
 
@@ -90,6 +93,19 @@ fn test_can_parse_example() {
         conf.http_headers().contains_key("Referer"),
         "There should be a referer in the example"
     );
+}
+
+#[test]
+fn test_dezoomer_title_reaches_resolved_image() {
+    // regression test: title used to get dropped on the way to ResolvedImage
+    let mut dezoomer = CustomDezoomer;
+    let yaml_path = format!("{}/tiles.yaml", env!("CARGO_MANIFEST_DIR"));
+    let input = DezoomerInput {
+        uri: "http://example.com/tiles.yaml".to_string(),
+        contents: PageContents::Success(std::fs::read(yaml_path).unwrap()),
+    };
+    let image = expect_single_resolved(dezoomer.images(&input).unwrap());
+    assert_eq!(image.title(), Some("A Palace"));
 }
 
 #[test]

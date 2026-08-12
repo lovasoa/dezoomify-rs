@@ -7,8 +7,10 @@ use dzi_file::DziFile;
 
 use crate::dezoomer::{
     Dezoomer, DezoomerError, DezoomerInput, DezoomerInputWithContents, Images, IntoZoomLevels,
-    TileProvider, TileReference, TilesRect, Vec2d, ZoomLevel, ZoomLevels,
+    ResolvedImage, TileProvider, TileReference, TilesRect, Vec2d, ZoomLevel, ZoomLevels,
 };
+#[cfg(test)]
+use crate::dezoomer::{PageContents, test_utils::expect_single_resolved};
 use crate::json_utils::all_json;
 use regex::Regex;
 mod dzi_file;
@@ -35,7 +37,8 @@ impl Dezoomer for DziDezoomer {
         } else {
             let DezoomerInputWithContents { uri, contents } = data.with_contents()?;
             let levels = load_from_properties(uri, contents)?;
-            Ok(levels.into())
+            let title = levels.first().and_then(|level| level.title());
+            Ok(ResolvedImage::new(levels, title).into())
         }
     }
 }
@@ -184,6 +187,29 @@ fn test_panorama() {
             "http://x.fr/y/test_files/9/1_0.jpg"
         ]
     );
+}
+
+#[test]
+fn test_dezoomer_title_reaches_resolved_image() {
+    // regression test: title used to get dropped on the way to ResolvedImage
+    let mut dezoomer = DziDezoomer;
+    let input = DezoomerInput {
+        uri: "http://x.fr/y/test.dzi".to_string(),
+        contents: PageContents::Success(
+            br#"
+        <Image
+          TileSize="256"
+          Overlap="2"
+          Format="jpg"
+          >
+          <Size Width="600" Height="300"/>
+          <DisplayRects></DisplayRects>
+        </Image>"#
+                .to_vec(),
+        ),
+    };
+    let image = expect_single_resolved(dezoomer.images(&input).unwrap());
+    assert_eq!(image.title(), Some("test"));
 }
 
 #[test]

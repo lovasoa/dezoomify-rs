@@ -5,8 +5,10 @@ use image_properties::{ImageProperties, ZoomLevelInfo};
 
 use crate::dezoomer::{
     Dezoomer, DezoomerError, DezoomerInput, DezoomerInputWithContents, Images, IntoZoomLevels,
-    TilesRect, Vec2d, ZoomLevels,
+    ResolvedImage, TilesRect, Vec2d, ZoomLevels,
 };
+#[cfg(test)]
+use crate::dezoomer::{PageContents, test_utils::expect_single_resolved};
 
 mod image_properties;
 
@@ -24,7 +26,8 @@ impl Dezoomer for ZoomifyDezoomer {
         self.assert(data.uri.contains("/ImageProperties.xml"))?;
         let DezoomerInputWithContents { uri, contents } = data.with_contents()?;
         let levels = load_from_properties(uri, contents)?;
-        Ok(levels.into())
+        let title = levels.first().and_then(|level| level.title());
+        Ok(ResolvedImage::new(levels, title).into())
     }
 }
 
@@ -176,4 +179,20 @@ fn test_title_extraction_simple_path() {
 
     // Test fallback when no meaningful path is found
     assert_eq!(level.title(), Some("example.com".to_string()));
+}
+
+#[test]
+fn test_dezoomer_title_reaches_resolved_image() {
+    // regression test: title used to get dropped on the way to ResolvedImage
+    let mut dezoomer = ZoomifyDezoomer;
+    let input = DezoomerInput {
+        uri: "http://example.com/images/manuscript123/ImageProperties.xml".to_string(),
+        contents: PageContents::Success(
+            br#"<IMAGE_PROPERTIES WIDTH="1000" HEIGHT="1000"
+                NUMTILES="25" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>"#
+                .to_vec(),
+        ),
+    };
+    let image = expect_single_resolved(dezoomer.images(&input).unwrap());
+    assert_eq!(image.title(), Some("manuscript123"));
 }

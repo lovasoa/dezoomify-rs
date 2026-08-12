@@ -4,8 +4,8 @@ use std::sync::Arc;
 use tile_info::{PageInfo, TileInfo};
 
 use crate::dezoomer::{
-    Dezoomer, DezoomerError, DezoomerInput, Images, IntoZoomLevels, PostProcessFn, TileReference,
-    TilesRect, Vec2d, ZoomLevels,
+    Dezoomer, DezoomerError, DezoomerInput, Images, IntoZoomLevels, PostProcessFn, ResolvedImage,
+    TileReference, TilesRect, Vec2d, ZoomLevels,
 };
 
 mod decryption;
@@ -92,7 +92,7 @@ impl Dezoomer for GAPDezoomer {
                         }
                     })
                     .into_zoom_levels();
-                Ok(levels.into())
+                Ok(ResolvedImage::new(levels, Some(page_info.name.clone())).into())
             }
         }
     }
@@ -240,6 +240,25 @@ mod tests {
         assert!(level.size_hint().is_some());
         let name = level.name();
         assert!(name.contains("©Designers Anonymes")); // Name extracted from test data
+    }
+
+    #[test]
+    fn test_dezoomer_title_reaches_resolved_image() {
+        // regression test: title used to get dropped on the way to ResolvedImage
+        let mut dezoomer = GAPDezoomer::default();
+
+        let input1 = DezoomerInput {
+            uri: "https://artsandculture.google.com/asset/test".to_string(),
+            contents: PageContents::Success(get_test_page_html()),
+        };
+        let tile_info_uri = expect_needs_data(dezoomer.images(&input1));
+
+        let input2 = DezoomerInput {
+            uri: tile_info_uri,
+            contents: PageContents::Success(get_test_tile_info_xml()),
+        };
+        let image = expect_single_resolved(dezoomer.images(&input2).unwrap());
+        assert!(image.title().is_some());
     }
 
     #[test]
