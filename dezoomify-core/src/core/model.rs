@@ -145,6 +145,32 @@ pub struct LevelDescriptor {
     pub warnings: Vec<String>,
 }
 
+impl LevelDescriptor {
+    /// Human-readable label for interactive pickers.
+    ///
+    /// Shows the level title (or stable id as a fallback) followed by the
+    /// image size, tile size and tile count whenever they are known.
+    #[must_use]
+    pub fn display_label(&self) -> String {
+        let label = self.title.clone().unwrap_or_else(|| self.id.to_string());
+        let mut details: Vec<String> = Vec::new();
+        if let Some(Vec2d { x, y }) = self.size {
+            details.push(format!("{x: >5} x {y: >5} pixels"));
+        }
+        if let Some(Vec2d { x, y }) = self.tile_size {
+            details.push(format!("tiles of {x: >5} x {y: >5}"));
+        }
+        if let LevelPlan::Known(plan) = &self.plan {
+            details.push(format!("{: >5} tiles", plan.len()));
+        }
+        if details.is_empty() {
+            label
+        } else {
+            format!("{label} ({})", details.join(", "))
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ImageDescriptor {
     pub id: StableId,
@@ -279,6 +305,31 @@ mod tests {
             provenance: Provenance::default(),
             warnings: Vec::new(),
         }
+    }
+
+    #[test]
+    fn display_label_includes_geometry_and_tile_count() {
+        let mut level = level("gap:0", 100);
+        level.tile_size = Some(Vec2d::square(100));
+        level.plan = LevelPlan::Known(
+            KnownTilePlan::explicit(vec![TileSpec {
+                id: TileId::new("level".into(), 0),
+                request: Request::new("memory://one"),
+                source_region: None,
+                destination: Vec2d::default(),
+                expected_size: Some(Vec2d::square(1)),
+                processing: ProcessingRecipe::None,
+                role: TileRole::Output,
+            }])
+            .unwrap(),
+        );
+        let label = level.display_label();
+        assert!(label.contains("gap:0"));
+        assert!(label.contains("  100 x   100 pixels"));
+        assert!(label.contains("tiles of   100 x   100"));
+        assert!(label.contains("    1 tiles"));
+        level.title = Some("Krpano Cube forward".into());
+        assert!(level.display_label().starts_with("Krpano Cube forward ("));
     }
 
     #[test]

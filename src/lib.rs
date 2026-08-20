@@ -55,7 +55,7 @@ fn stdin_line() -> Result<String, ZoomError> {
 /// Process an input URI to extract zoomable images
 async fn get_images_from_uri(
     args: &Arguments,
-    resolver: &mut NativeDiscoveryDriver,
+    resolver: &NativeDiscoveryDriver,
     uri: &str,
 ) -> Result<ImageCatalog, ZoomError> {
     let registry =
@@ -101,8 +101,7 @@ fn find_level_with_size(levels: &[LevelDescriptor], target_size: Vec2d) -> Optio
 fn level_picker(mut levels: Vec<LevelDescriptor>) -> Result<LevelDescriptor, ZoomError> {
     println!("Found the following zoom levels:");
     for (i, level) in levels.iter().enumerate() {
-        let title = level.title.as_deref().unwrap_or(level.id.as_str());
-        println!("{i: >2}. {title}");
+        println!("{i: >2}. {}", level.display_label());
     }
     loop {
         println!("Which level do you want to download? ");
@@ -199,7 +198,7 @@ fn choose_image(
 async fn resolve_selected_image(
     mut image: CatalogEntry,
     args: &Arguments,
-    resolver: &mut NativeDiscoveryDriver,
+    resolver: &NativeDiscoveryDriver,
 ) -> Result<ImageDescriptor, ZoomError> {
     loop {
         match image {
@@ -216,7 +215,7 @@ async fn resolve_selected_image(
 
 async fn resolve_deferred_images(
     image_url: DeferredImage,
-    resolver: &mut NativeDiscoveryDriver,
+    resolver: &NativeDiscoveryDriver,
 ) -> Result<ImageCatalog, String> {
     let url = image_url.uri.clone();
     discover_images(resolver, &crate::registry::default_registry(&url), &url)
@@ -248,7 +247,7 @@ fn inherit_deferred_context(catalog: ImageCatalog, parent: &DeferredImage) -> Im
 }
 
 async fn discover_images(
-    driver: &mut NativeDiscoveryDriver,
+    driver: &NativeDiscoveryDriver,
     registry: &dezoomify_core::core::Registry,
     uri: &str,
 ) -> Result<ImageCatalog, String> {
@@ -395,12 +394,12 @@ fn level_area(size: Option<Vec2d>) -> u64 {
 pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
     let uri = args.choose_input_uri()?;
     let http_client = client(args.headers(), args, Some(&uri))?;
-    let mut resolver = NativeDiscoveryDriver::new(http_client);
+    let resolver = NativeDiscoveryDriver::new(http_client);
     debug!("Trying to locate a zoomable image...");
-    let images = get_images_from_uri(args, &mut resolver, &uri).await?;
+    let images = get_images_from_uri(args, &resolver, &uri).await?;
     debug!("Found {} zoomable images", images.len());
     let selected_image = choose_image(images.into_entries(), args)?;
-    let resolved_image = resolve_selected_image(selected_image, args, &mut resolver).await?;
+    let resolved_image = resolve_selected_image(selected_image, args, &resolver).await?;
     debug!("Resolved {} image", resolved_image.format);
     for warning in &resolved_image.warnings {
         warn!("{warning}");
@@ -499,14 +498,14 @@ pub async fn process_bulk(args: &Arguments) -> Result<BulkStats, ZoomError> {
 
     // Discover images from the bulk source.
     let http = client(std::iter::empty(), args, None)?;
-    let mut resolver = NativeDiscoveryDriver::new(http);
+    let resolver = NativeDiscoveryDriver::new(http);
     let registry =
         crate::registry::registry_for_cli(args.dezoomer_name(), bulk_uri).ok_or_else(|| {
             ZoomError::NoSuchDezoomer {
                 name: args.dezoomer_name().to_owned(),
             }
         })?;
-    let images = discover_images(&mut resolver, &registry, bulk_uri)
+    let images = discover_images(&resolver, &registry, bulk_uri)
         .await
         .map_err(|message| ZoomError::Dezoomer { message })?;
 
@@ -527,7 +526,7 @@ pub async fn process_bulk(args: &Arguments) -> Result<BulkStats, ZoomError> {
     process_bulk_zoomable_images(
         images.into_entries(),
         args,
-        &mut resolver,
+        &resolver,
         &mut stats,
         &base_dir,
     )
@@ -549,7 +548,7 @@ pub async fn process_bulk(args: &Arguments) -> Result<BulkStats, ZoomError> {
 async fn process_bulk_zoomable_images(
     images: Vec<CatalogEntry>,
     args: &Arguments,
-    resolver: &mut NativeDiscoveryDriver,
+    resolver: &NativeDiscoveryDriver,
     stats: &mut BulkStats,
     base_dir: &Path,
 ) -> Result<(), ZoomError> {

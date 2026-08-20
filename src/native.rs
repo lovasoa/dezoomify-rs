@@ -5,7 +5,6 @@
 //! local filesystem.  Keeping the loop here also lets tests drive discovery
 //! with a different resolver without pulling a runtime into the core.
 
-use std::collections::HashMap;
 use std::error::Error;
 
 use crate::ZoomError;
@@ -35,49 +34,38 @@ custom_error! {pub NativeDiscoveryError
 
 /// Operation-scoped native acquisition state.
 ///
-/// A resolver may drive a root discovery operation and later a selected
-/// deferred image.  Successful resources are reused across those operations,
-/// matching the CLI's existing metadata-cache behavior without introducing
-/// shared state into the core.
+/// A resolver drives discovery operations by acquiring each resource the
+/// operation needs through HTTP or the local filesystem.  Identical requests
+/// are already deduplicated inside each operation, so the driver needs no
+/// shared state beyond the HTTP client.
 pub(crate) struct NativeDiscoveryDriver {
     http: reqwest::Client,
-    cache: HashMap<Request, FetchedResource>,
 }
 
 impl NativeDiscoveryDriver {
     pub(crate) fn new(http: reqwest::Client) -> Self {
-        Self {
-            http,
-            cache: HashMap::new(),
-        }
+        Self { http }
     }
 
-    /// Resolve one canonical resource request, reusing matching metadata.
+    /// Resolve one canonical resource request.
     pub(crate) async fn resolve(
-        &mut self,
+        &self,
         request: &Request,
     ) -> Result<FetchedResource, ZoomError> {
-        if let Some(resource) = self.cache.get(request) {
-            log::debug!("Using cached metadata for {}", request.uri);
-            return Ok(resource.clone());
-        }
-
         let headers = request_headers(request);
-        let resource = fetch_resource(
+        fetch_resource(
             &request.uri,
             &self.http,
             headers
                 .iter()
                 .map(|(name, value)| (name.as_str(), value.as_str())),
         )
-        .await?;
-        self.cache.insert(request.clone(), resource.clone());
-        Ok(resource)
+        .await
     }
 
     /// Start and drive discovery for an input using the supplied pure registry.
     pub(crate) async fn discover(
-        &mut self,
+        &self,
         registry: &Registry,
         uri: impl Into<String>,
     ) -> Result<ImageCatalog, NativeDiscoveryError> {
@@ -87,7 +75,7 @@ impl NativeDiscoveryDriver {
 
     /// Drive a previously-created pure discovery operation to completion.
     pub(crate) async fn drive(
-        &mut self,
+        &self,
         mut operation: DiscoveryOperation,
     ) -> Result<ImageCatalog, NativeDiscoveryError> {
         loop {
@@ -103,7 +91,7 @@ impl NativeDiscoveryDriver {
     }
 
     async fn satisfy(
-        &mut self,
+        &self,
         operation: &mut DiscoveryOperation,
         need: ResourceNeed,
     ) -> Result<(), DiscoveryError> {

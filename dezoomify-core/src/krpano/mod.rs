@@ -511,6 +511,7 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
                     let id = StableId::new(format!(
                         "krpano:{image_index}:{source_index}:{ordinal}:{side_name}"
                     ));
+                    let face = face_label(shape_name, side_name);
                     let source = KrpanoLevel {
                         base_url: Arc::from(url),
                         size,
@@ -522,7 +523,7 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
                     };
                     levels.push(LevelDescriptor {
                         id,
-                        title: level_title(&global_title, &name),
+                        title: level_title(&global_title, &name, &face),
                         size: Some(size),
                         tile_size: Some(tile_size),
                         scale_factor: None,
@@ -559,8 +560,19 @@ fn joined_nonempty<'a>(parts: impl IntoIterator<Item = &'a str>) -> Option<Strin
     (!title.is_empty()).then_some(title)
 }
 
-fn level_title(global: &str, scene: &str) -> Option<String> {
-    (!(global.is_empty() && scene.is_empty())).then(|| [global, scene].join(" "))
+fn face_label(shape: &str, side: &str) -> String {
+    [shape, side]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .join(" ")
+}
+
+fn level_title(global: &str, scene: &str, face: &str) -> Option<String> {
+    let title = [global, scene, face]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .join(" ");
+    (!title.is_empty()).then_some(title)
 }
 
 fn format_level_label(shape: &str, side: &str, scene: &str) -> String {
@@ -694,6 +706,20 @@ mod tests {
         ));
         assert_eq!(image.levels.len(), 6);
         assert_eq!(image.levels[0].size, Some(Vec2d { x: 1000, y: 100 }));
+        // Cube faces must remain distinguishable in interactive level pickers.
+        let labels: Vec<String> = image
+            .levels
+            .iter()
+            .map(LevelDescriptor::display_label)
+            .collect();
+        assert!(labels[0].contains("Cube forward"));
+        assert!(
+            labels
+                .iter()
+                .all(|l| l.contains("1000 x   100 pixels") && l.contains("tiles of   512 x   512"))
+        );
+        let unique: std::collections::HashSet<&String> = labels.iter().collect();
+        assert_eq!(unique.len(), labels.len(), "labels: {labels:?}");
         assert_eq!(
             format_level_label("Cube", "forward", ""),
             "Krpano Cube forward"
@@ -799,6 +825,10 @@ mod tests {
         let image = image(catalog_from_xml("http://test.com", br#"<krpano><image tilesize="512"><level tiledimagewidth="1000" tiledimageheight="100"><cube url="http://example.com/%s/%r/%c.jpg"/></level></image></krpano>"#));
         assert_eq!(image.title, None);
         assert_eq!(image.levels.len(), 6);
+        let titles: Vec<_> = image.levels.iter().map(|l| l.title.clone()).collect();
+        assert!(!titles.iter().any(Option::is_none));
+        let unique: std::collections::HashSet<&Option<String>> = titles.iter().collect();
+        assert_eq!(unique.len(), titles.len(), "titles: {titles:?}");
     }
 
     #[test]

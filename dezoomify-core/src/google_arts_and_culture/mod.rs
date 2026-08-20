@@ -105,7 +105,7 @@ fn catalog(page: &Arc<PageInfo>, bytes: &[u8]) -> Result<ImageCatalog, Discovery
             };
             LevelDescriptor {
                 id,
-                title: None,
+                title: Some(page.name.clone()),
                 size: Some(size),
                 tile_size: Some(source.tile_size),
                 scale_factor: None,
@@ -217,6 +217,19 @@ mod tests {
             panic!("Google Arts produces one ready image");
         };
         assert_eq!(image.levels.len(), 5);
+        // Level names must carry the page title, as they did before the core refactor.
+        assert!(
+            image
+                .levels
+                .iter()
+                .all(|level| level.title.as_deref() == Some(image.title.as_deref().unwrap_or("")))
+        );
+        assert!(
+            image
+                .levels
+                .iter()
+                .all(|level| level.display_label().contains("©Designers Anonymes"))
+        );
         assert!(
             image
                 .levels

@@ -757,7 +757,7 @@ mod tests {
                 ) => {
                     unreachable!("failed session never requests a resource")
                 }
-                (Script::Need { .. }, _) | (Script::Delegate { .. }, _) | (Script::Target, _) => {
+                (Script::Need { .. } | Script::Delegate { .. } | Script::Target, _) => {
                     Err(DiscoveryError::Session("unexpected test transition".into()))
                 }
                 (Script::Boundary, _) => Err(DiscoveryError::Session(
@@ -1090,7 +1090,11 @@ mod tests {
                 profile: Some("inner"),
             })),
         );
-        registry.register("target", Priority(2), Arc::new(ScriptProgram(Script::Target)));
+        registry.register(
+            "target",
+            Priority(2),
+            Arc::new(ScriptProgram(Script::Target)),
+        );
         registry.register_profile("outer", Arc::new(WarningProfile { warning: "outer" }));
         registry.register_profile("inner", Arc::new(WarningProfile { warning: "inner" }));
 
