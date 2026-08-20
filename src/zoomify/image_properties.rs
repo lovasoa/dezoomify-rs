@@ -1,7 +1,6 @@
 use serde::Deserialize;
 
-use crate::dezoomer::Vec2d;
-use log::{info, warn};
+use crate::Vec2d;
 use std::convert::TryInto;
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -30,12 +29,23 @@ impl ImageProperties {
         }
     }
 
+    #[cfg(test)]
     pub fn levels(&self) -> Vec<ZoomLevelInfo> {
+        self.levels_with_warnings().0
+    }
+
+    /// Computes the pyramid levels and reports metadata inconsistencies.
+    ///
+    /// The warning is returned as data so the application can decide how to
+    /// present it; parsing a Zoomify document must not have logging side
+    /// effects.
+    pub fn levels_with_warnings(&self) -> (Vec<ZoomLevelInfo>, Vec<String>) {
         // Reimplementation of the algorithm of zoomify.js
         let tile_size = self.tile_size();
         let mut level_divisor = 1_u64;
         let mut level_tiles = Vec::new();
         let mut tiles_before = Vec::new();
+        let mut warnings = Vec::new();
         while u64::from(self.width) > u64::from(tile_size.x) * level_divisor
             || u64::from(self.height) > u64::from(tile_size.y) * level_divisor
         {
@@ -57,12 +67,6 @@ impl ImageProperties {
         }
         let computed_tile_count = tiles_before.iter().sum::<u32>();
         if computed_tile_count != self.num_tiles {
-            info!(
-                "The computed number of tiles ({}) does not match \
-            the number of tiles specified in ImageProperties.xml ({}). \
-            Trying the second computation method...",
-                computed_tile_count, self.num_tiles
-            );
             level_tiles.clear();
             tiles_before.clear();
             let mut size = self.size();
@@ -88,15 +92,12 @@ impl ImageProperties {
                 level_size_ratio = level_size_ratio * Vec2d { x: 2, y: 2 };
             }
         }
-        if log::log_enabled!(log::Level::Warn) {
-            let computed_tile_count = tiles_before.iter().sum::<u32>();
-            if computed_tile_count != self.num_tiles {
-                warn!(
-                    "The computed number of tiles ({}) does not match \
-                        the number of tiles specified in ImageProperties.xml ({})",
-                    computed_tile_count, self.num_tiles
-                );
-            }
+        let computed_tile_count = tiles_before.iter().sum::<u32>();
+        if computed_tile_count != self.num_tiles {
+            warnings.push(format!(
+                "Zoomify tile count mismatch: computed {computed_tile_count}, metadata declares {}",
+                self.num_tiles
+            ));
         }
         level_tiles.reverse();
         let mut total_tiles_before = 0;
@@ -105,7 +106,7 @@ impl ImageProperties {
             level.tiles_before = total_tiles_before;
             total_tiles_before += before;
         }
-        level_tiles
+        (level_tiles, warnings)
     }
 }
 

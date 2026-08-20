@@ -1,74 +1,119 @@
-use crate::dezoomer::{
-    Dezoomer, DezoomerError, DezoomerInput, DezoomerInputWithContents, ImageUrl, Images,
+//! Pure discovery for text files containing deferred image URLs.
+
+use crate::core::discovery::DiscoveryEvent;
+use crate::core::{
+    CatalogEntry, DeferredImage, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
+    DiscoveryProgram, DiscoverySession, DiscoveryStep, ImageCatalog, Provenance, ResourceOutcome,
+    ResourcePurpose, ResourceRequest, StableId,
 };
-use custom_error::custom_error;
 
-custom_error! {pub BulkTextError
-    InvalidUrlOrPath{line_number: usize, input: String} = "On line {line_number}: '{input}' is not a valid URL or file path",
-    NoValidUrls = "No valid URLs found in text file"
-}
-
-impl From<BulkTextError> for DezoomerError {
-    fn from(err: BulkTextError) -> Self {
-        DezoomerError::Other { source: err.into() }
-    }
-}
-
-/// A dezoomer for text files containing lists of URLs
-/// Parses text files where each line is a deferred image URL.
+/// Text-list discovery program.
 #[derive(Default)]
 pub struct BulkTextDezoomer;
 
-impl Dezoomer for BulkTextDezoomer {
-    fn name(&self) -> &'static str {
-        "bulk_text"
-    }
-
-    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
-        // Only process files that are actual bulk URL lists
-        // Must have appropriate file extension or "bulk"/"list" in name
-        // Exclude files with template variables like {{X}} or {{Y}} which are for generic dezoomer
-        let extension = data.uri.rsplit('.').next();
-        let is_bulk_file = (extension.is_some_and(|ext| {
-            ext.eq_ignore_ascii_case("txt") || ext.eq_ignore_ascii_case("urls")
-        }) || data.uri.contains("bulk")
-            || data.uri.contains("list"))
-            && !data.uri.contains("{{")
-            && !data.uri.contains("}}");
-        self.assert(is_bulk_file)?;
-
-        let DezoomerInputWithContents { uri: _, contents } = data.with_contents()?;
-
-        // Parse the text content to extract URLs
-        let content = std::str::from_utf8(contents).map_err(|e| DezoomerError::DownloadError {
-            msg: format!("Failed to parse text file as UTF-8: {e}"),
-        })?;
-
-        let urls = parse_text_urls(content)?;
-
-        if urls.is_empty() {
-            return Err(BulkTextError::NoValidUrls.into());
-        }
-
-        Ok(urls.into())
+impl DiscoveryProgram for BulkTextDezoomer {
+    fn start(&self, input: &DiscoveryInput) -> Box<dyn DiscoverySession> {
+        Box::new(BulkSession {
+            uri: input.uri.clone(),
+            requested: false,
+        })
     }
 }
 
-/// Validate that a string is either a URL, template, or syntactic local path.
-fn validate_url_or_path(input: &str, line_number: usize) -> Result<(), BulkTextError> {
-    // Try parsing as URL first
-    if url::Url::parse(input).is_ok() {
-        return Ok(());
-    }
+struct BulkSession {
+    uri: String,
+    requested: bool,
+}
 
-    // If it is an URL template, check if it is valid
-    if input.contains("{{X}}") || input.contains("{{Y}}") {
-        return Ok(());
+impl DiscoverySession for BulkSession {
+    fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
+        match event {
+            DiscoveryEvent::Start if !is_bulk_file(&self.uri) => Ok(DiscoveryStep::Reject(
+                DiscoveryDiagnostic::from("not a bulk URL-list file"),
+            )),
+            DiscoveryEvent::Start if !self.requested => {
+                self.requested = true;
+                Ok(DiscoveryStep::Need(ResourceRequest::new(
+                    self.uri.clone(),
+                    ResourcePurpose::InitialMetadata,
+                )))
+            }
+            DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
+                let text = std::str::from_utf8(&response.bytes).map_err(|error| {
+                    DiscoveryError::Session(format!("failed to parse bulk list as UTF-8: {error}"))
+                })?;
+                let images = parse_text_urls(text)?;
+                if images.is_empty() {
+                    return Err(DiscoveryError::Session(
+                        "no valid URLs found in text file".into(),
+                    ));
+                }
+                Ok(DiscoveryStep::Complete(ImageCatalog::new(
+                    images.into_iter().enumerate().map(|(index, image)| {
+                        CatalogEntry::Deferred(DeferredImage {
+                            id: StableId::new(format!("bulk:{index}")),
+                            uri: image.uri,
+                            title: Some(image.title),
+                            provenance: Provenance::default(),
+                            warnings: Vec::new(),
+                        })
+                    }),
+                )))
+            }
+            DiscoveryEvent::Resource(ResourceOutcome::Failure(failure)) => {
+                Err(DiscoveryError::Session(failure.message.clone()))
+            }
+            DiscoveryEvent::Start => {
+                Err(DiscoveryError::Session("bulk session started twice".into()))
+            }
+        }
     }
+}
 
-    // Existence is application policy. Discovery recognizes portable local
-    // path syntax without consulting the filesystem.
-    if input.starts_with(['/', '.', '\\'])
+fn is_bulk_file(uri: &str) -> bool {
+    (uri.rsplit('.').next().is_some_and(|extension| {
+        extension.eq_ignore_ascii_case("txt") || extension.eq_ignore_ascii_case("urls")
+    }) || uri.contains("bulk")
+        || uri.contains("list"))
+        && !uri.contains("{{")
+        && !uri.contains("}}")
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ListedImage {
+    uri: String,
+    title: String,
+}
+
+fn parse_text_urls(content: &str) -> Result<Vec<ListedImage>, DiscoveryError> {
+    content
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let line = line.trim();
+            (!line.is_empty() && !line.starts_with('#')).then(|| (index + 1, line))
+        })
+        .map(|(line_number, line)| {
+            let mut parts = line.splitn(2, char::is_whitespace);
+            let uri = parts.next().unwrap_or_default();
+            validate_uri(uri, line_number)?;
+            let title = parts
+                .next()
+                .filter(|title| !title.is_empty())
+                .map_or_else(|| title_from_uri(uri, line_number), str::to_owned);
+            Ok(ListedImage {
+                uri: uri.to_owned(),
+                title,
+            })
+        })
+        .collect()
+}
+
+fn validate_uri(input: &str, line: usize) -> Result<(), DiscoveryError> {
+    if url::Url::parse(input).is_ok()
+        || input.contains("{{X}}")
+        || input.contains("{{Y}}")
+        || input.starts_with(['/', '.', '\\'])
         || input.contains(['/', '\\'])
         || (input.len() >= 2
             && input.as_bytes()[1] == b':'
@@ -76,196 +121,121 @@ fn validate_url_or_path(input: &str, line_number: usize) -> Result<(), BulkTextE
     {
         return Ok(());
     }
-
-    Err(BulkTextError::InvalidUrlOrPath {
-        line_number,
-        input: input.to_string(),
-    })
+    Err(DiscoveryError::Session(format!(
+        "on line {line}: '{input}' is not a valid URL or file path"
+    )))
 }
 
-/// Parse a text file content and extract URLs
-/// Each non-empty, non-comment line should start with a valid URL
-/// Optional custom title can be provided after the URL, separated by whitespace
-/// Format: URL [custom title]
-fn parse_text_urls(content: &str) -> Result<Vec<ImageUrl>, BulkTextError> {
-    let mut urls = Vec::new();
-
-    for (line_num, line) in content.lines().enumerate() {
-        let trimmed = line.trim();
-
-        // Skip empty lines and comments
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-
-        // Split line into URL and optional title
-        let mut parts = trimmed.splitn(2, char::is_whitespace);
-        let url_part = parts.next().unwrap_or_default();
-        let custom_title = parts.next().filter(|s| !s.is_empty());
-
-        // Validate that the first part is a valid URL or file path
-        validate_url_or_path(url_part, line_num + 1)?;
-
-        // Use custom title if provided, otherwise extract from URL
-        let title = Some(custom_title.map_or_else(
-            || extract_title_from_url(url_part, line_num + 1),
-            str::to_string,
-        ));
-
-        urls.push(ImageUrl {
-            url: url_part.to_string(),
-            title,
-        });
-    }
-
-    Ok(urls)
-}
-
-/// Extract a title from a URL for better identification
-fn extract_title_from_url(url: &str, line_number: usize) -> String {
-    // Try to extract filename from URL
-    if let Ok(parsed_url) = url::Url::parse(url)
-        && let Some(segments) = parsed_url.path_segments()
-    {
-        let segments: Vec<&str> = segments.collect();
-        if let Some(last_segment) = segments.iter().rev().find(|s| !s.is_empty()) {
-            // Remove file extension for a cleaner title
-            let title = if let Some(dot_pos) = last_segment.rfind('.') {
-                &last_segment[..dot_pos]
-            } else {
-                last_segment
-            };
-
-            if !title.is_empty() {
-                return title.to_string();
-            }
-        }
-    }
-
-    // Fallback to line number if we can't extract a good title
-    format!("URL_{line_number}")
+fn title_from_uri(uri: &str, line: usize) -> String {
+    url::Url::parse(uri)
+        .ok()
+        .and_then(|url| {
+            url.path_segments()?
+                .rfind(|segment| !segment.is_empty())
+                .map(str::to_owned)
+        })
+        .map(|name| {
+            name.rsplit_once('.')
+                .map_or(name.clone(), |(stem, _)| stem.to_owned())
+        })
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| format!("URL_{line}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dezoomer::{
-        PageContents,
-        test_utils::{assert_error_contains, expect_image_urls},
-    };
+    use crate::core::discovery::{RequestId, ResourceOutcome, ResourceResponse};
 
-    #[test]
-    fn test_parse_empty_content() {
-        let urls = parse_text_urls("");
-        assert!(urls.unwrap().is_empty());
+    fn response(content: &str) -> ResourceOutcome {
+        ResourceOutcome::Response(ResourceResponse {
+            id: RequestId(0),
+            bytes: content.as_bytes().to_vec(),
+            content_type: Some("text/plain".into()),
+        })
+    }
+
+    fn complete(uri: &str, content: &str) -> Result<ImageCatalog, DiscoveryError> {
+        let mut session = BulkTextDezoomer.start(&DiscoveryInput::from(uri));
+        assert!(matches!(
+            session.advance(DiscoveryEvent::Start)?,
+            DiscoveryStep::Need(_)
+        ));
+        match session.advance(DiscoveryEvent::Resource(&response(content)))? {
+            DiscoveryStep::Complete(catalog) => Ok(catalog),
+            _ => panic!("bulk discovery did not complete"),
+        }
     }
 
     #[test]
-    fn test_parse_comments_and_empty_lines() {
-        let content = "# This is a comment\n\n   \n# Another comment";
-        let urls = parse_text_urls(content);
-        assert!(urls.unwrap().is_empty());
-    }
-
-    #[test]
-    fn test_parse_valid_urls() {
-        let content = "http://example.com/image1.jpg\nhttps://example.org/manifest.json";
-        let urls = parse_text_urls(content).unwrap();
-
-        assert_eq!(urls.len(), 2);
-        assert_eq!(urls[0].url, "http://example.com/image1.jpg");
-        assert_eq!(urls[0].title, Some("image1".to_string()));
-        assert_eq!(urls[1].url, "https://example.org/manifest.json");
-        assert_eq!(urls[1].title, Some("manifest".to_string()));
-    }
-
-    #[test]
-    fn test_parse_mixed_content() {
-        let content = "# IIIF manifests\nhttp://example.com/manifest1.json\n\n# Images\nhttps://example.org/info.json\n# End";
-        let urls = parse_text_urls(content).unwrap();
-
-        assert_eq!(urls.len(), 2);
-        assert_eq!(urls[0].url, "http://example.com/manifest1.json");
-        assert_eq!(urls[0].title, Some("manifest1".to_string()));
-        assert_eq!(urls[1].url, "https://example.org/info.json");
-        assert_eq!(urls[1].title, Some("info".to_string()));
-    }
-
-    #[test]
-    fn test_parse_urls_with_custom_titles() {
-        let content = "http://example.com/image1.jpg My Custom Title\nhttps://example.org/manifest.json Another Title";
-        let urls = parse_text_urls(content).unwrap();
-
-        assert_eq!(urls.len(), 2);
-        assert_eq!(urls[0].url, "http://example.com/image1.jpg");
-        assert_eq!(urls[0].title, Some("My Custom Title".to_string()));
-        assert_eq!(urls[1].url, "https://example.org/manifest.json");
-        assert_eq!(urls[1].title, Some("Another Title".to_string()));
-    }
-
-    #[test]
-    fn test_parse_invalid_url() {
-        let content = "not_a_valid_url";
-        assert_error_contains(parse_text_urls(content), &["line 1", "not_a_valid_url"]);
-    }
-
-    #[test]
-    fn test_extract_title_from_url() {
-        assert_eq!(
-            extract_title_from_url("http://example.com/image.jpg", 1),
-            "image"
+    fn parses_urls_titles_paths_and_invalid_content() {
+        assert!(parse_text_urls("").unwrap().is_empty());
+        assert!(
+            parse_text_urls("# comment\n\n   \n# another")
+                .unwrap()
+                .is_empty()
         );
+        let images = parse_text_urls(
+            "# comment\nhttps://example.test/a.jpg A title\n./local.dzi\nhttps://example.org/manifest.json",
+        )
+        .unwrap();
         assert_eq!(
-            extract_title_from_url("https://example.org/path/manifest.json", 2),
-            "manifest"
-        );
-        assert_eq!(extract_title_from_url("http://example.com/", 3), "URL_3");
-        assert_eq!(extract_title_from_url("not_a_url", 4), "URL_4");
-    }
-
-    #[test]
-    fn test_images() {
-        let mut dezoomer = BulkTextDezoomer;
-        let content = "http://example.com/image1.jpg\nhttps://example.org/manifest.json".as_bytes();
-
-        let input = DezoomerInput {
-            uri: "file://test.txt".to_string(),
-            contents: PageContents::Success(content.to_vec()),
-        };
-
-        let urls = expect_image_urls(dezoomer.images(&input).unwrap());
-        assert_eq!(
-            urls.iter().map(|url| url.url.as_str()).collect::<Vec<_>>(),
-            [
-                "http://example.com/image1.jpg",
-                "https://example.org/manifest.json"
+            images,
+            vec![
+                ListedImage {
+                    uri: "https://example.test/a.jpg".into(),
+                    title: "A title".into()
+                },
+                ListedImage {
+                    uri: "./local.dzi".into(),
+                    title: "URL_3".into()
+                },
+                ListedImage {
+                    uri: "https://example.org/manifest.json".into(),
+                    title: "manifest".into()
+                },
             ]
         );
+        let urls = parse_text_urls(
+            "http://example.com/image1.jpg My Custom Title\nhttps://example.org/manifest.json Another Title",
+        )
+        .unwrap();
+        assert_eq!(urls[0].title, "My Custom Title");
+        assert_eq!(urls[1].title, "Another Title");
+        let error = parse_text_urls("not_a_valid_url").unwrap_err().to_string();
+        assert!(error.contains("line 1") && error.contains("not_a_valid_url"));
+        assert_eq!(title_from_uri("http://example.com/image.jpg", 1), "image");
+        assert_eq!(
+            title_from_uri("https://example.org/path/manifest.json", 2),
+            "manifest"
+        );
+        assert_eq!(title_from_uri("http://example.com/", 3), "URL_3");
+        assert_eq!(title_from_uri("not_a_url", 4), "URL_4");
     }
 
     #[test]
-    fn test_images_empty_file() {
-        let mut dezoomer = BulkTextDezoomer;
-        let content = "# Only comments\n\n# Nothing else".as_bytes();
+    fn session_completes_deferred_entries_and_rejects_bad_lists() {
+        let catalog = complete(
+            "file://test.txt",
+            "http://example.com/image1.jpg\nhttps://example.org/manifest.json",
+        )
+        .unwrap();
+        assert_eq!(catalog.len(), 2);
+        let entries = catalog.into_entries();
+        assert!(
+            matches!(entries[0], CatalogEntry::Deferred(DeferredImage { ref uri, ref title, .. }) if uri == "http://example.com/image1.jpg" && title.as_deref() == Some("image1"))
+        );
+        assert!(
+            matches!(entries[1], CatalogEntry::Deferred(DeferredImage { ref uri, .. }) if uri == "https://example.org/manifest.json")
+        );
 
-        let input = DezoomerInput {
-            uri: "file://empty.txt".to_string(),
-            contents: PageContents::Success(content.to_vec()),
-        };
-
-        assert_error_contains(dezoomer.images(&input), &["No valid URLs found"]);
-    }
-
-    #[test]
-    fn test_images_invalid_url() {
-        let mut dezoomer = BulkTextDezoomer;
-        let content = "not_a_valid_url".as_bytes();
-
-        let input = DezoomerInput {
-            uri: "file://invalid.txt".to_string(),
-            contents: PageContents::Success(content.to_vec()),
-        };
-
-        assert_error_contains(dezoomer.images(&input), &["line 1", "not_a_valid_url"]);
+        let error = complete("file://empty.txt", "# Only comments\n\n# Nothing else")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("No valid URLs found") || error.contains("no valid URLs found"));
+        let error = complete("file://invalid.txt", "not_a_valid_url")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("line 1") && error.contains("not_a_valid_url"));
     }
 }

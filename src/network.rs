@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::future::Future;
 use std::iter::once;
 use std::path::PathBuf;
@@ -7,22 +8,15 @@ use std::sync::Arc;
 use log::{debug, trace, warn};
 use reqwest::{Client, header};
 use sanitize_filename_reader_friendly::sanitize;
+use sha1::{Digest, Sha1};
 use tokio::fs;
 use tokio::time::Duration;
 
 use crate::arguments::Arguments;
 use crate::binary_display::display_bytes;
-use crate::dezoomer::{PostProcessFn, TileReference};
+use crate::core::{ProcessingRecipe, Request, TileSpec};
 use crate::errors::BufferToImageError;
 use crate::errors::{TileDownloadError, ZoomError};
-
-/// Fetch data, either from an URL or a path to a local file.
-/// If uri doesnt start with "http(s)://", it is considered to be a path
-/// to a local file
-// TODO: return Bytes
-pub async fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
-    Ok(fetch_resource(uri, http, std::iter::empty()).await?.bytes)
-}
 
 /// Bytes and portable response metadata acquired by the native application.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -92,15 +86,34 @@ pub(crate) async fn fetch_resource<'a>(
     }
 }
 
+pub(crate) fn request_headers(request: &Request) -> Vec<(String, String)> {
+    let mut headers = request.headers.clone();
+    if !request.accepted_content_types.is_empty()
+        && !headers
+            .keys()
+            .any(|name| name.eq_ignore_ascii_case("accept"))
+    {
+        headers.insert(
+            "Accept".to_owned(),
+            request
+                .accepted_content_types
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
+    headers.into_iter().collect()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DownloadedTile {
-    pub position: crate::Vec2d,
+    pub spec: TileSpec,
     pub bytes: Arc<Vec<u8>>,
 }
 
 pub struct TileDownloader {
     pub http_client: reqwest::Client,
-    pub post_process_fn: PostProcessFn,
     pub retries: usize,
     pub retry_delay: Duration,
     pub tile_storage_folder: Option<PathBuf>,
@@ -109,7 +122,7 @@ pub struct TileDownloader {
 impl TileDownloader {
     pub async fn download_tile_and_then<T, F, Fut>(
         &self,
-        tile_reference: TileReference,
+        tile_spec: TileSpec,
         mut process: F,
     ) -> Result<T, TileDownloadError>
     where
@@ -117,13 +130,12 @@ impl TileDownloader {
         Fut: Future<Output = Result<T, ZoomError>>,
     {
         let n = 100;
-        let idx: f64 = ((tile_reference.position.x + tile_reference.position.y) % n).into();
-        let tile_reference = Arc::new(tile_reference);
+        let idx: f64 = ((tile_spec.destination.x + tile_spec.destination.y) % n).into();
         let mut wait_time = self.retry_delay
             + Duration::from_secs_f64(idx * self.retry_delay.as_secs_f64() / f64::from(n));
         let mut failures: usize = 0;
         loop {
-            let result = match self.load_tile_bytes(Arc::clone(&tile_reference)).await {
+            let result = match self.load_tile_bytes(&tile_spec).await {
                 Ok(tile) => process(tile).await,
                 Err(cause) => Err(cause),
             };
@@ -131,11 +143,7 @@ impl TileDownloader {
                 Ok(processed) => return Ok(processed),
                 Err(cause) => {
                     if failures >= self.retries {
-                        return Err(TileDownloadError {
-                            tile_reference: Arc::try_unwrap(tile_reference)
-                                .expect("tile reference shouldn't leak"),
-                            cause,
-                        });
+                        return Err(TileDownloadError { tile_spec, cause });
                     }
                     failures += 1;
                     warn!("{cause}. Retrying tile download in {wait_time:?}.");
@@ -146,68 +154,124 @@ impl TileDownloader {
         }
     }
 
-    async fn load_tile_bytes(
-        &self,
-        tile_reference: Arc<TileReference>,
-    ) -> Result<DownloadedTile, ZoomError> {
-        let bytes = if let Some(bytes) = self.read_from_tile_cache(&tile_reference.url).await {
+    async fn load_tile_bytes(&self, tile_spec: &TileSpec) -> Result<DownloadedTile, ZoomError> {
+        let bytes = if let Some(bytes) = self.read_from_tile_cache(&tile_spec.request).await {
             bytes
         } else {
-            let bytes = self
-                .download_image_bytes(Arc::clone(&tile_reference))
-                .await?;
-            self.write_to_tile_cache(&tile_reference.url, &bytes).await;
+            let bytes = self.download_image_bytes(tile_spec).await?;
+            self.write_to_tile_cache(&tile_spec.request, &bytes).await;
             bytes
         };
 
         Ok(DownloadedTile {
-            position: tile_reference.position,
+            spec: tile_spec.clone(),
             bytes: Arc::new(bytes),
         })
     }
 
-    async fn download_image_bytes(
-        &self,
-        tile_reference: Arc<TileReference>,
-    ) -> Result<Vec<u8>, ZoomError> {
-        let mut bytes = fetch_uri(&tile_reference.url, &self.http_client).await?;
-        if let PostProcessFn::Fn(post_process) = self.post_process_fn {
-            bytes = tokio::task::spawn_blocking(move || -> Result<_, BufferToImageError> {
-                post_process(&tile_reference, bytes)
-                    .map_err(|e| BufferToImageError::PostProcessing { e })
-            })
-            .await??;
+    async fn download_image_bytes(&self, tile_spec: &TileSpec) -> Result<Vec<u8>, ZoomError> {
+        let headers = request_headers(&tile_spec.request);
+        let mut bytes = fetch_resource(
+            &tile_spec.request.uri,
+            &self.http_client,
+            headers
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str())),
+        )
+        .await?
+        .bytes;
+        match &tile_spec.processing {
+            ProcessingRecipe::None => {}
+            ProcessingRecipe::Named(name) if name.as_str() == "google-arts-decrypt" => {
+                bytes = tokio::task::spawn_blocking(move || {
+                    crate::native::decrypt_google_arts_tile(bytes)
+                        .map_err(|e| BufferToImageError::PostProcessing { e })
+                })
+                .await??;
+            }
+            ProcessingRecipe::Named(name) => {
+                return Err(ZoomError::UnsupportedProcessingRecipe {
+                    name: name.to_string(),
+                });
+            }
         }
         Ok(bytes)
     }
 
-    async fn write_to_tile_cache(&self, uri: &str, contents: &[u8]) {
+    async fn write_to_tile_cache(&self, request: &Request, contents: &[u8]) {
         if let Some(root) = &self.tile_storage_folder {
-            match tokio::fs::write(root.join(sanitize(uri)), contents).await {
-                Ok(()) => debug!("Wrote {} to tile cache ({} bytes)", uri, contents.len()),
+            match tokio::fs::write(tile_cache_path(root, request), contents).await {
+                Ok(()) => debug!(
+                    "Wrote {} to tile cache ({} bytes)",
+                    request.uri,
+                    contents.len()
+                ),
                 Err(e) => warn!(
-                    "Unable to write {uri} to the tile cache {}: {e}",
+                    "Unable to write {} to the tile cache {}: {e}",
+                    request.uri,
                     root.display()
                 ),
             }
         }
     }
 
-    async fn read_from_tile_cache(&self, uri: &str) -> Option<Vec<u8>> {
+    async fn read_from_tile_cache(&self, request: &Request) -> Option<Vec<u8>> {
         if let Some(root) = &self.tile_storage_folder {
-            match tokio::fs::read(root.join(sanitize(uri))).await {
-                Ok(d) => {
-                    debug!("{uri} read from tile cache");
-                    return Some(d);
+            let paths = tile_cache_paths(root, request);
+            for (index, path) in paths.iter().enumerate() {
+                match tokio::fs::read(path).await {
+                    Ok(d) => {
+                        if index == 0 {
+                            debug!("{} read from tile cache", request.uri);
+                        } else {
+                            debug!("{} read from legacy tile cache", request.uri);
+                        }
+                        return Some(d);
+                    }
+                    Err(e) => debug!(
+                        "Unable to open {} from tile cache {}: {e}",
+                        request.uri,
+                        root.display()
+                    ),
                 }
-                Err(e) => debug!(
-                    "Unable to open {uri} from tile cache {}: {e}",
-                    root.display()
-                ),
             }
         }
         None
     }
+}
+
+fn tile_cache_path(root: &std::path::Path, request: &Request) -> PathBuf {
+    let mut digest = Sha1::new();
+    digest.update(request.uri.as_bytes());
+    for (name, value) in &request.headers {
+        digest.update(name.as_bytes());
+        digest.update([0]);
+        digest.update(value.as_bytes());
+        digest.update([0]);
+    }
+    for content_type in &request.accepted_content_types {
+        digest.update(content_type.as_bytes());
+        digest.update([0]);
+    }
+    let digest = digest
+        .finalize()
+        .iter()
+        .fold(String::with_capacity(40), |mut output, byte| {
+            write!(output, "{byte:02x}").expect("writing to a string cannot fail");
+            output
+        });
+    root.join(format!("{}-{digest}", sanitize(&request.uri)))
+}
+
+fn legacy_tile_cache_path(root: &std::path::Path, request: &Request) -> PathBuf {
+    root.join(sanitize(&request.uri))
+}
+
+fn tile_cache_paths(root: &std::path::Path, request: &Request) -> [PathBuf; 2] {
+    [
+        tile_cache_path(root, request),
+        legacy_tile_cache_path(root, request),
+    ]
 }
 
 pub fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
@@ -239,4 +303,78 @@ pub fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
 
 pub fn default_headers() -> HashMap<String, String> {
     serde_yaml::from_str(include_str!("default_headers.yaml")).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Request, TileDownloader, request_headers, tile_cache_path, tile_cache_paths};
+    use std::path::Path;
+    use tokio::time::Duration;
+
+    #[test]
+    fn tile_cache_identity_includes_all_request_requirements() {
+        let first = Request::new("https://example.test/tile").with_header("X-Key", "one");
+        let second = Request::new("https://example.test/tile").with_header("X-Key", "two");
+        assert_ne!(
+            tile_cache_path(Path::new("/tmp/cache"), &first),
+            tile_cache_path(Path::new("/tmp/cache"), &second)
+        );
+        let mut png = Request::new("https://example.test/tile");
+        png.accepted_content_types.insert("image/png".into());
+        let mut jpeg = Request::new("https://example.test/tile");
+        jpeg.accepted_content_types.insert("image/jpeg".into());
+        assert_ne!(
+            tile_cache_path(Path::new("/tmp/cache"), &png),
+            tile_cache_path(Path::new("/tmp/cache"), &jpeg)
+        );
+    }
+
+    #[test]
+    fn tile_cache_paths_try_hashed_path_before_legacy_path() {
+        let request = Request::new("https://example.test/tile");
+        let paths = tile_cache_paths(Path::new("/tmp/cache"), &request);
+        assert_eq!(paths[0], tile_cache_path(Path::new("/tmp/cache"), &request));
+        assert_eq!(
+            paths[1],
+            Path::new("/tmp/cache").join("https_example.test_tile")
+        );
+        assert_ne!(paths[0], paths[1]);
+    }
+
+    #[tokio::test]
+    async fn tile_cache_reads_legacy_entries_and_prefers_hashed_entries() {
+        let directory = tempfile::tempdir().unwrap();
+        let request = Request::new("https://example.test/tile");
+        let paths = tile_cache_paths(directory.path(), &request);
+        tokio::fs::write(&paths[1], b"legacy").await.unwrap();
+
+        let downloader = TileDownloader {
+            http_client: reqwest::Client::new(),
+            retries: 0,
+            retry_delay: Duration::ZERO,
+            tile_storage_folder: Some(directory.path().to_path_buf()),
+        };
+        assert_eq!(
+            downloader.read_from_tile_cache(&request).await,
+            Some(b"legacy".to_vec())
+        );
+
+        tokio::fs::write(&paths[0], b"hashed").await.unwrap();
+        assert_eq!(
+            downloader.read_from_tile_cache(&request).await,
+            Some(b"hashed".to_vec())
+        );
+    }
+
+    #[test]
+    fn accepted_content_types_supply_default_accept_header() {
+        let mut request = Request::new("memory://tile");
+        request
+            .accepted_content_types
+            .insert("image/png".to_owned());
+        assert_eq!(
+            request_headers(&request),
+            vec![("Accept".to_owned(), "image/png".to_owned())]
+        );
+    }
 }

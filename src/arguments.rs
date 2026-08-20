@@ -4,9 +4,7 @@ use std::time::Duration;
 use clap::Parser;
 use regex::Regex;
 
-use crate::dezoomer::Dezoomer;
-
-use super::{Vec2d, ZoomError, auto, stdin_line};
+use super::{Vec2d, ZoomError, stdin_line};
 
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, disable_help_flag = true)]
@@ -227,20 +225,6 @@ impl Arguments {
     pub fn has_level_specifying_args(&self) -> bool {
         self.max_width.is_some() || self.max_height.is_some() || self.zoom_level.is_some()
     }
-    /// Finds the dezoomer selected by the command-line arguments.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ZoomError::NoSuchDezoomer`] if the configured name is unknown.
-    pub fn find_dezoomer(&self) -> Result<Box<dyn Dezoomer>, ZoomError> {
-        auto::all_dezoomers(true)
-            .into_iter()
-            .find(|d| d.name() == self.dezoomer)
-            .ok_or_else(|| ZoomError::NoSuchDezoomer {
-                name: self.dezoomer.clone(),
-            })
-    }
-
     pub(crate) fn dezoomer_name(&self) -> &str {
         &self.dezoomer
     }

@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::dezoomer::TileReference;
+use crate::core::TileSpec;
 use crate::encoder::tile_buffer::TileBufferMsg;
 use custom_error::custom_error;
 use reqwest::{self, header};
@@ -10,8 +10,7 @@ use tokio::sync::mpsc::error::SendError;
 custom_error! {
     pub ZoomError
     Networking{source: reqwest::Error, details: String} = "{details}",
-    Dezoomer{source: DezoomerError} = "Dezoomer error: {source}",
-    TileSequence{source: crate::dezoomer::TileSequenceError} = "Tile sequence error: {source}",
+    Dezoomer{message: String} = "Dezoomer error: {message}",
     NoLevels = "A zoomable image was found, but it did not contain any zoom level",
     NoBulkUrl { bulk_file_path: String } = "No url found in bulk file {bulk_file_path}",
     NoTile = "Could not get any tile for the image. See https://dezoomify-rs.ophir.dev/no-tile-error",
@@ -29,6 +28,7 @@ custom_error! {
     MalformedTileStr{tile_str: String} = "Malformed tile string: '{tile_str}' \
                                           expected 'x y url'",
     NoSuchDezoomer{name: String} = "No such dezoomer: {name}",
+    UnsupportedProcessingRecipe{name: String} = "Unsupported tile processing recipe: {name}",
     InvalidHeaderName{source: header::InvalidHeaderName} = "Invalid header name: {source}",
     InvalidHeaderValue{source: header::InvalidHeaderValue} = "Invalid header value: {source}",
     AsyncError{source: tokio::task::JoinError} = "Unable get the result from a thread: {source}",
@@ -65,19 +65,6 @@ custom_error! {
     PostProcessing{e: Box<dyn Error + Send>} = "unable to process the downloaded tile: {e}",
 }
 
-custom_error! {pub DezoomerError
-    NeedsData{uri: String}           = "Need to download data from {uri}",
-    WrongDezoomer{name:&'static str} = "The '{name}' dezoomer cannot handle this URI",
-    DownloadError{msg: String} = "Unable to download required data: {msg}",
-    Other{source: Box<dyn Error>}    = "Unable to create the dezoomer: {source}"
-}
-
-impl DezoomerError {
-    pub fn wrap<E: Error + 'static>(err: E) -> DezoomerError {
-        DezoomerError::Other { source: err.into() }
-    }
-}
-
 pub fn image_error_to_io_error(err: image::ImageError) -> std::io::Error {
     match err {
         image::ImageError::IoError(e) => e,
@@ -94,7 +81,7 @@ where
 
 #[derive(Debug)]
 pub struct TileDownloadError {
-    pub tile_reference: TileReference,
+    pub tile_spec: TileSpec,
     pub cause: ZoomError,
 }
 
@@ -103,7 +90,7 @@ impl fmt::Display for TileDownloadError {
         write!(
             f,
             "Unable to download tile \'{}\'. Cause: {}",
-            self.tile_reference.url, self.cause
+            self.tile_spec.request.uri, self.cause
         )
     }
 }

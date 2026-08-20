@@ -1,266 +1,225 @@
+//! Pure NYPL metadata discovery.
+
 use std::collections::HashMap;
-use std::fmt::{Debug, Formatter};
-use std::iter::successors;
 use std::sync::Arc;
 
-use custom_error::custom_error;
 use regex::Regex;
 use serde::Deserialize;
 
 use crate::Vec2d;
-use crate::dezoomer::{
-    Dezoomer, DezoomerError, DezoomerInput, DezoomerInputWithContents, Images, IntoZoomLevels,
-    TileReference, TilesRect,
+use crate::core::discovery::DiscoveryEvent;
+use crate::core::tile_plan::RectangularSource;
+use crate::core::{
+    CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
+    DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
+    LevelPlan, ProcessingRecipe, Provenance, Request, ResourceOutcome, ResourcePurpose,
+    ResourceRequest, StableId,
 };
 use crate::json_utils::number_or_string;
 
-/// A dezoomer for NYPL images
+const VIEW: &str = "https://digitalcollections.nypl.org/items/";
+const META: &str = "https://access.nypl.org/image.php/";
+const POSTFIX: &str = "/tiles/config.js";
+
 #[derive(Default)]
 pub struct NYPLImage;
-
-const NYPL_IMAGE_VIEW_PREFIX: &str = "https://digitalcollections.nypl.org/items/";
-const NYPL_META_PREFIX: &str = "https://access.nypl.org/image.php/";
-const NYPL_META_POSTFIX: &str = "/tiles/config.js";
-
-fn get_image_id_from_meta_url(meta_url: &str) -> String {
-    meta_url
-        .replace(NYPL_META_PREFIX, "")
-        .replace(NYPL_META_POSTFIX, "")
-}
-
-fn parse_image_id(image_view_url: &str) -> Option<String> {
-    Regex::new(r"https://digitalcollections.nypl.org/items/([a-f0-9\-]+)")
-        .unwrap()
-        .captures(image_view_url)
-        .and_then(|cap| cap.get(1))
-        .map(|m| m.as_str().to_string())
-}
-
-impl Dezoomer for NYPLImage {
-    fn name(&self) -> &'static str {
-        "nypl"
+impl DiscoveryProgram for NYPLImage {
+    fn start(&self, input: &DiscoveryInput) -> Box<dyn DiscoverySession> {
+        Box::new(NyplSession {
+            input: input.uri.clone(),
+            requested: false,
+            metadata_uri: None,
+        })
     }
-    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
-        if data.uri.starts_with(NYPL_IMAGE_VIEW_PREFIX) {
-            let image_view_url = data.uri.as_str();
-            let image_id = parse_image_id(image_view_url).ok_or_else(|| {
-                DezoomerError::wrap(NYPLError::NoIdInUrl {
-                    url: image_view_url.to_string(),
-                })
-            })?;
-            let meta_uri = format!("{NYPL_META_PREFIX}{image_id}{NYPL_META_POSTFIX}");
-            Err(DezoomerError::NeedsData { uri: meta_uri })
-        } else {
-            self.assert(data.uri.contains(NYPL_META_PREFIX))?;
-            let DezoomerInputWithContents { uri, contents } = data.with_contents()?;
-            let iter = iter_levels(uri, contents).map_err(DezoomerError::wrap)?;
-            Ok(iter.into_zoom_levels().into())
+}
+struct NyplSession {
+    input: String,
+    requested: bool,
+    metadata_uri: Option<String>,
+}
+impl DiscoverySession for NyplSession {
+    fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
+        match event {
+            DiscoveryEvent::Start if !self.requested => {
+                self.requested = true;
+                let meta = if self.input.starts_with(VIEW) {
+                    let id = image_id(&self.input).ok_or_else(|| {
+                        DiscoveryError::Session(format!(
+                            "unable to extract NYPL image ID from {:?}",
+                            self.input
+                        ))
+                    })?;
+                    format!("{META}{id}{POSTFIX}")
+                } else if self.input.starts_with(META) {
+                    self.input.clone()
+                } else {
+                    return Ok(DiscoveryStep::Reject(DiscoveryDiagnostic::from(
+                        "not an NYPL image URL",
+                    )));
+                };
+                self.metadata_uri = Some(meta.clone());
+                Ok(DiscoveryStep::Need(ResourceRequest::new(
+                    meta,
+                    ResourcePurpose::InitialMetadata,
+                )))
+            }
+            DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => catalog(
+                self.metadata_uri.as_deref().unwrap_or(&self.input),
+                &response.bytes,
+            )
+            .map(DiscoveryStep::Complete),
+            DiscoveryEvent::Resource(ResourceOutcome::Failure(failure)) => {
+                Err(DiscoveryError::Session(failure.message.clone()))
+            }
+            DiscoveryEvent::Start => {
+                Err(DiscoveryError::Session("NYPL session started twice".into()))
+            }
         }
     }
 }
 
-fn arcs<T, U: ?Sized>(v: T) -> impl Iterator<Item = Arc<U>>
-where
-    Arc<U>: From<T>,
-{
-    successors(Some(Arc::from(v)), |x| Some(Arc::clone(x)))
+fn image_id(uri: &str) -> Option<String> {
+    Regex::new(r"https://digitalcollections\.nypl\.org/items/([a-f0-9\-]+)")
+        .expect("constant NYPL pattern")
+        .captures(uri)
+        .and_then(|capture| capture.get(1))
+        .map(|match_| match_.as_str().to_owned())
 }
-
-fn iter_levels(
-    uri: &str,
-    contents: &[u8],
-) -> Result<impl Iterator<Item = Level> + 'static, NYPLError> {
-    if contents.is_empty() {
-        return Err(NYPLError::NoMetadata);
-    }
-    let base = get_image_id_from_meta_url(uri);
-    let mut meta_map: MetadataRoot = serde_json::from_slice(contents)?;
-    let (_, meta) = meta_map
+fn catalog(uri: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
+    let root: MetadataRoot = serde_json::from_slice(bytes)
+        .map_err(|error| DiscoveryError::Session(format!("invalid NYPL metadata: {error}")))?;
+    let metadata = root
         .configs
-        .drain()
-        .find(|(k, _v)| k == "0")
-        .ok_or(NYPLError::NoMetadata)?;
-
-    let level_count: u32 = meta.level_count();
-    let levels = (0..=level_count)
-        .zip(arcs(base))
-        .zip(arcs(meta))
-        .map(|((index, base), info)| Level { info, base, index });
-    Ok(levels)
+        .get("0")
+        .ok_or_else(|| DiscoveryError::Session("NYPL metadata contains no primary image".into()))?
+        .clone();
+    let id = uri
+        .strip_prefix(META)
+        .unwrap_or(uri)
+        .trim_end_matches(POSTFIX)
+        .to_owned();
+    let metadata = Arc::new(metadata);
+    let mut levels: Vec<_> = (0..=metadata.level_count())
+        .map(|index| {
+            let size = Vec2d::from(metadata.size) / 2_u32.pow(metadata.level_count() - index);
+            let level_id = StableId::new(format!("nypl:{index}"));
+            let source = NyplLevel {
+                id: Arc::from(id.as_str()),
+                metadata: Arc::clone(&metadata),
+                index,
+                level_id: level_id.clone(),
+            };
+            LevelDescriptor {
+                id: level_id,
+                title: None,
+                size: Some(size),
+                tile_size: Some(Vec2d::square(metadata.tile_size)),
+                scale_factor: None,
+                has_overlapping_tiles: metadata.overlap > 0,
+                plan: LevelPlan::Known(KnownTilePlan::rectangular(source)),
+                provenance: Provenance::default(),
+                warnings: Vec::new(),
+            }
+        })
+        .collect();
+    levels.sort_by_key(|level| level.size.map_or(0, Vec2d::area));
+    Ok(ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
+        id: StableId::new("nypl:image"),
+        title: None,
+        format: StableId::new("nypl"),
+        levels,
+        provenance: Provenance::default(),
+        warnings: Vec::new(),
+    })]))
 }
 
-#[derive(PartialEq, Eq)]
-struct Level {
-    info: Arc<Metadata>,
-    base: Arc<str>,
+#[derive(Clone, Debug)]
+struct NyplLevel {
+    id: Arc<str>,
+    metadata: Arc<Metadata>,
     index: u32,
+    level_id: StableId,
 }
-
-impl Debug for Level {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "NYPL Image")
+impl RectangularSource for NyplLevel {
+    fn level_id(&self) -> StableId {
+        self.level_id.clone()
     }
-}
-
-impl TilesRect for Level {
-    fn size(&self) -> Vec2d {
-        let reverse_level = self.info.level_count() - self.index;
-        Vec2d::from(self.info.size) / 2_u32.pow(reverse_level)
+    fn image_size(&self) -> Vec2d {
+        Vec2d::from(self.metadata.size) / 2_u32.pow(self.metadata.level_count() - self.index)
     }
-
     fn tile_size(&self) -> Vec2d {
-        Vec2d::square(self.info.tile_size)
+        Vec2d::square(self.metadata.tile_size)
     }
-
-    fn tile_url(&self, Vec2d { x, y }: Vec2d) -> String {
-        format!(
-            "https://access.nypl.org/image.php/{id}/tiles/0/{level}/{x}_{y}.{format}",
-            id = self.base,
-            level = self.index,
-            x = x,
-            y = y,
-            format = self.info.format,
-        )
+    fn request(&self, cell: Vec2d) -> Request {
+        Request::new(format!(
+            "{META}{}/tiles/0/{}/{}_{}.{}",
+            self.id, self.index, cell.x, cell.y, self.metadata.format
+        ))
     }
-
-    fn tile_ref(&self, pos: Vec2d) -> TileReference {
-        let delta = Vec2d {
-            x: if pos.x == 0 { 0 } else { self.info.overlap },
-            y: if pos.y == 0 { 0 } else { self.info.overlap },
-        };
-        TileReference {
-            url: self.tile_url(pos),
-            position: self.tile_size() * pos - delta,
-        }
+    fn overlap(&self) -> Vec2d {
+        Vec2d::square(self.metadata.overlap)
     }
-
-    fn has_overlapping_tiles(&self) -> bool {
-        self.info.overlap > 0
+    fn processing(&self) -> ProcessingRecipe {
+        ProcessingRecipe::None
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize)]
-pub struct MetadataRoot {
+#[derive(Debug, Deserialize)]
+struct MetadataRoot {
     configs: HashMap<String, Metadata>,
 }
-
-#[derive(Debug, PartialEq, Eq, Deserialize)]
-pub struct Metadata {
+#[derive(Clone, Debug, Deserialize)]
+struct Metadata {
     size: MetadataSize,
     #[serde(alias = "tilesize", deserialize_with = "number_or_string")]
     tile_size: u32,
     format: String,
-    #[serde(default = "Default::default", deserialize_with = "number_or_string")]
+    #[serde(default, deserialize_with = "number_or_string")]
     overlap: u32,
 }
-
 impl Metadata {
     fn level_count(&self) -> u32 {
-        let max_dim: u32 = self.size.width.max(self.size.height);
-        32 - max_dim.leading_zeros()
+        32 - self.size.width.max(self.size.height).leading_zeros()
     }
 }
-
-impl From<MetadataSize> for Vec2d {
-    fn from(s: MetadataSize) -> Self {
-        Vec2d {
-            x: s.width,
-            y: s.height,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize)]
 struct MetadataSize {
     #[serde(deserialize_with = "number_or_string")]
     width: u32,
     #[serde(deserialize_with = "number_or_string")]
     height: u32,
 }
-
-custom_error! {pub NYPLError
-    JsonError{resp: String} = "Failed to parse NYPL Image meta as json, \
-        got content(blank shows the site has no zoom function for this one):\n {resp}",
-    Utf8{source: std::str::Utf8Error} = "Invalid NYPL metadata file: {source}",
-    NoIdInUrl{url: String} = "Unable to extract an image id from {url:?}",
-    BadMetadata{source: serde_json::Error} = "Invalid nypl metadata: {source}",
-    NoMetadata = "No metadata found. This image is probably not tiled, \
-    and you can download it directly by right-clicking on it from \
-    your browser without any external tool.",
+impl From<MetadataSize> for Vec2d {
+    fn from(size: MetadataSize) -> Self {
+        Self {
+            x: size.width,
+            y: size.height,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn test_parse_metadata() {
-        let contents = r#"
-        {
-          "configs":{
-            "0":{
-              "size":{
-                "width":"2422",
-                "height":"3000"
-              },
-              "tilesize":"256",
-              "overlap":"2",
-              "format":"png"
-            },
-            "90":{
-              "size":{
-                "width":"3000",
-                "height":"2422"
-              },
-              "tilesize":"256",
-              "overlap":"2",
-              "format":"png"
-            },
-            "180":{
-              "size":{
-                "width":"2422",
-                "height":"3000"
-              },
-              "tilesize":"256",
-              "overlap":"2",
-              "format":"png"
-            },
-            "270":{
-              "size":{
-                "width":"3000",
-                "height":"2422"
-              },
-              "tilesize":"256",
-              "overlap":"2",
-              "format":"png"
-            }
-          }
-        }
-        "#
-        .as_bytes();
-        let base: Arc<String> = Arc::new("a28d6e6b-b317-f008-e040-e00a1806635d".into());
-        let level: Level = iter_levels(&base, contents).unwrap().last().unwrap();
+    fn parses_metadata_and_tile_url() {
+        let bytes = br#"{"configs":{"0":{"size":{"width":"2422","height":"3000"},"tilesize":"256","overlap":"2","format":"png"}}}"#;
+        let catalog =
+            catalog("https://access.nypl.org/image.php/a/tiles/config.js", bytes).unwrap();
+        let CatalogEntry::Ready(image) = catalog.into_entries().pop().unwrap() else {
+            unreachable!()
+        };
         assert_eq!(
-            level.info,
-            Arc::new(Metadata {
-                size: MetadataSize {
-                    width: 2422,
-                    height: 3000
-                },
-                tile_size: 256,
-                format: "png".to_string(),
-                overlap: 2,
-            })
+            image.levels.last().unwrap().size,
+            Some(Vec2d { x: 2422, y: 3000 })
         );
-        let expected_url = "https://access.nypl.org/image.php/\
-            a28d6e6b-b317-f008-e040-e00a1806635d\
-            /tiles/0/12/0_0.png";
-        assert_eq!(level.tile_url(Vec2d { x: 0, y: 0 }), expected_url);
+        let LevelPlan::Known(plan) = &image.levels.last().unwrap().plan else {
+            unreachable!()
+        };
         assert_eq!(
-            parse_image_id(
-                "https://digitalcollections.nypl.org/items/a14f3200-fac1-012f-f7a4-58d385a7bbd0#item-data"
-            ).unwrap(),
-            "a14f3200-fac1-012f-f7a4-58d385a7bbd0",
+            plan.cursor().take_ready(1).unwrap().unwrap()[0].request.uri,
+            "https://access.nypl.org/image.php/a/tiles/0/12/0_0.png"
         );
+        assert_eq!(image_id("https://digitalcollections.nypl.org/items/a14f3200-fac1-012f-f7a4-58d385a7bbd0#item-data").as_deref(), Some("a14f3200-fac1-012f-f7a4-58d385a7bbd0"));
     }
 }

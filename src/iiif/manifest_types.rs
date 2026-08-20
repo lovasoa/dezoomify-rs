@@ -59,6 +59,7 @@ impl MetadataEntry {
 
 // Default implementation to handle missing labels gracefully via #[serde(default)]
 
+#[allow(clippy::struct_field_names)]
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq, Default)]
 pub struct Manifest {
     #[serde(default, rename = "@context", skip_deserializing)]
@@ -78,6 +79,7 @@ pub struct Manifest {
     // pub thumbnail: Option<Vec<Thumbnail>>,
 }
 
+#[allow(clippy::struct_field_names)]
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq, Default)]
 pub struct Canvas {
     #[serde(default)]
@@ -92,6 +94,7 @@ pub struct Canvas {
     pub height: Option<u32>,
 }
 
+#[allow(clippy::struct_field_names)]
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq, Default)]
 pub struct AnnotationPage {
     #[serde(default)]
@@ -102,6 +105,7 @@ pub struct AnnotationPage {
     pub items: Vec<Annotation>,
 }
 
+#[allow(clippy::struct_field_names)]
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq, Default)]
 pub struct Annotation {
     pub id: Option<String>,

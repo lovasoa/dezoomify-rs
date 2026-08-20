@@ -7,18 +7,17 @@
 
 use std::collections::HashMap;
 use std::error::Error;
-use std::fmt;
 
 use crate::ZoomError;
 use crate::core::discovery::{
-    DiscoveryError, DiscoveryOperation, RequestRequirements, ResourceFailure, ResourceNeed,
-    ResourceResponse,
+    DiscoveryError, DiscoveryOperation, ResourceFailure, ResourceNeed, ResourceResponse,
 };
-use crate::core::model::ImageCatalog;
+use crate::core::model::{ImageCatalog, Request};
 use crate::core::registry::{Registry, RegistryError};
-use crate::network::{FetchedResource, fetch_resource};
+use crate::network::{FetchedResource, fetch_resource, request_headers};
+use custom_error::custom_error;
 
-#[path = "google_arts_and_culture/decryption.rs"]
+#[path = "google_arts_decryption.rs"]
 mod google_arts_decryption;
 
 pub(crate) fn decrypt_google_arts_tile(
@@ -28,60 +27,10 @@ pub(crate) fn decrypt_google_arts_tile(
         .map_err(|error| Box::new(error) as Box<dyn Error + Send + 'static>)
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct ResourceCacheKey {
-    uri: String,
-    headers: Vec<(String, String)>,
-}
-
-impl ResourceCacheKey {
-    fn new(uri: &str, requirements: &RequestRequirements) -> Self {
-        Self {
-            uri: uri.to_string(),
-            headers: requirements
-                .headers
-                .iter()
-                .map(|(name, value)| (name.clone(), value.clone()))
-                .collect(),
-        }
-    }
-}
-
-/// Errors which can occur while the native application drives discovery.
-#[derive(Debug)]
-pub(crate) enum NativeDiscoveryError {
-    Registry(RegistryError),
-    Discovery(DiscoveryError),
-}
-
-impl fmt::Display for NativeDiscoveryError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Registry(error) => write!(f, "invalid discovery registry: {error}"),
-            Self::Discovery(error) => write!(f, "discovery failed: {error}"),
-        }
-    }
-}
-
-impl Error for NativeDiscoveryError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Registry(error) => Some(error),
-            Self::Discovery(error) => Some(error),
-        }
-    }
-}
-
-impl From<RegistryError> for NativeDiscoveryError {
-    fn from(error: RegistryError) -> Self {
-        Self::Registry(error)
-    }
-}
-
-impl From<DiscoveryError> for NativeDiscoveryError {
-    fn from(error: DiscoveryError) -> Self {
-        Self::Discovery(error)
-    }
+// Errors which can occur while the native application drives discovery.
+custom_error! {pub NativeDiscoveryError
+    Registry{source: RegistryError} = "invalid discovery registry: {source}",
+    Discovery{source: DiscoveryError} = "discovery failed: {source}",
 }
 
 /// Operation-scoped native acquisition state.
@@ -92,7 +41,7 @@ impl From<DiscoveryError> for NativeDiscoveryError {
 /// shared state into the core.
 pub(crate) struct NativeDiscoveryDriver {
     http: reqwest::Client,
-    cache: HashMap<ResourceCacheKey, FetchedResource>,
+    cache: HashMap<Request, FetchedResource>,
 }
 
 impl NativeDiscoveryDriver {
@@ -103,28 +52,26 @@ impl NativeDiscoveryDriver {
         }
     }
 
-    /// Resolve a URI for the compatibility driver.
-    pub(crate) async fn resolve_uri(
+    /// Resolve one canonical resource request, reusing matching metadata.
+    pub(crate) async fn resolve(
         &mut self,
-        uri: &str,
-        requirements: &RequestRequirements,
+        request: &Request,
     ) -> Result<FetchedResource, ZoomError> {
-        let key = ResourceCacheKey::new(uri, requirements);
-        if let Some(resource) = self.cache.get(&key) {
-            log::debug!("Using cached metadata for {uri}");
+        if let Some(resource) = self.cache.get(request) {
+            log::debug!("Using cached metadata for {}", request.uri);
             return Ok(resource.clone());
         }
 
+        let headers = request_headers(request);
         let resource = fetch_resource(
-            uri,
+            &request.uri,
             &self.http,
-            requirements
-                .headers
+            headers
                 .iter()
                 .map(|(name, value)| (name.as_str(), value.as_str())),
         )
         .await?;
-        self.cache.insert(key, resource.clone());
+        self.cache.insert(request.clone(), resource.clone());
         Ok(resource)
     }
 
@@ -160,7 +107,7 @@ impl NativeDiscoveryDriver {
         operation: &mut DiscoveryOperation,
         need: ResourceNeed,
     ) -> Result<(), DiscoveryError> {
-        match self.resolve_uri(&need.uri, &need.requirements).await {
+        match self.resolve(&need.request).await {
             Ok(resource) => operation.provide(ResourceResponse {
                 id: need.id,
                 bytes: resource.bytes,

@@ -1,353 +1,294 @@
-use std::error::Error;
-use std::sync::Arc;
+//! Pure Google Arts & Culture two-stage discovery.
 
-use tile_info::{PageInfo, TileInfo};
-
-use crate::dezoomer::{
-    Dezoomer, DezoomerError, DezoomerInput, Images, IntoZoomLevels, PostProcessFn, TileReference,
-    TilesRect, Vec2d, ZoomLevels,
+use crate::Vec2d;
+use crate::core::discovery::DiscoveryEvent;
+use crate::core::tile_plan::RectangularSource;
+use crate::core::{
+    CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
+    DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
+    LevelPlan, ProcessingRecipe, Provenance, Request, ResourceOutcome, ResourcePurpose,
+    ResourceRequest, StableId,
 };
-
+use std::sync::Arc;
+use tile_info::{PageInfo, TileInfo};
 mod tile_info;
 mod url;
 
-/// A dezoomer for google arts and culture.
-/// It takes an url to an artwork page as input.
 #[derive(Default)]
-pub struct GAPDezoomer {
-    page_info: Option<Arc<PageInfo>>,
-}
-
-impl Dezoomer for GAPDezoomer {
-    fn name(&self) -> &'static str {
-        "google_arts_and_culture"
+pub struct GAPDezoomer;
+impl DiscoveryProgram for GAPDezoomer {
+    fn start(&self, input: &DiscoveryInput) -> Box<dyn DiscoverySession> {
+        Box::new(GapSession {
+            uri: input.uri.clone(),
+            page: None,
+            requested: false,
+        })
     }
-
-    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
-        // Allow Google Arts & Culture URLs or tile info URLs when we have page_info
-        let is_valid_uri = data.uri.contains("artsandculture.google.com")
-            || (self.page_info.is_some() && data.uri.ends_with("=g"));
-        self.assert(is_valid_uri)?;
-
-        let contents = data.with_contents()?.contents;
-        match &self.page_info {
-            None => {
-                let page_source = std::str::from_utf8(contents).map_err(DezoomerError::wrap)?;
-                let info: PageInfo = page_source.parse().map_err(DezoomerError::wrap)?;
-                log::debug!("Decoded google arts page info: {info:?}");
-                let uri = info.tile_info_url();
-                self.page_info = Some(Arc::new(info));
-                Err(DezoomerError::NeedsData { uri })
+}
+struct GapSession {
+    uri: String,
+    page: Option<Arc<PageInfo>>,
+    requested: bool,
+}
+impl DiscoverySession for GapSession {
+    fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
+        match event {
+            DiscoveryEvent::Start
+                if !self.uri.contains("artsandculture.google.com") && !self.uri.ends_with("=g") =>
+            {
+                Ok(DiscoveryStep::Reject(DiscoveryDiagnostic::from(
+                    "not a Google Arts & Culture URL",
+                )))
             }
-            Some(page_info) => {
-                log::debug!("Attempting to parse tile info XML from {}", data.uri);
-
-                // Debug: Log the first few bytes of the response to see what we're getting
-                let response_preview = if contents.len() > 100 {
-                    String::from_utf8_lossy(&contents[..100])
-                } else {
-                    String::from_utf8_lossy(contents)
-                };
-                log::debug!("Tile info response preview: {response_preview}");
-
-                let TileInfo {
-                    tile_width,
-                    tile_height,
-                    pyramid_level,
-                    ..
-                } = serde_xml_rs::from_reader(contents).map_err(|e| {
-                    log::error!(
-                        "Failed to parse tile info XML: {}. Response was: {}",
-                        e,
-                        String::from_utf8_lossy(contents)
-                    );
-                    DezoomerError::wrap(e)
-                })?;
-
-                log::debug!(
-                    "Successfully parsed tile info: {}x{} tiles, {} levels",
-                    tile_width,
-                    tile_height,
-                    pyramid_level.len()
-                );
-
-                let levels: ZoomLevels = pyramid_level
-                    .into_iter()
-                    .enumerate()
-                    .map(|(z, level)| {
-                        let width = tile_width * level.num_tiles_x - level.empty_pels_x;
-                        let height = tile_height * level.num_tiles_y - level.empty_pels_y;
-                        GAPZoomLevel {
-                            size: Vec2d {
-                                x: width,
-                                y: height,
-                            },
-                            tile_size: Vec2d {
-                                x: tile_width,
-                                y: tile_height,
-                            },
-                            z,
-                            page_info: Arc::clone(page_info),
-                        }
-                    })
-                    .into_zoom_levels();
-                Ok(levels.into())
+            DiscoveryEvent::Start if !self.requested => {
+                self.requested = true;
+                Ok(DiscoveryStep::Need(ResourceRequest::new(
+                    self.uri.clone(),
+                    ResourcePurpose::InitialMetadata,
+                )))
+            }
+            DiscoveryEvent::Resource(ResourceOutcome::Response(response))
+                if self.page.is_none() =>
+            {
+                let source = std::str::from_utf8(&response.bytes)
+                    .map_err(|error| DiscoveryError::Session(error.to_string()))?;
+                let page: PageInfo = source
+                    .parse::<PageInfo>()
+                    .map_err(|error| DiscoveryError::Session(error.to_string()))?;
+                let next = page.tile_info_url();
+                self.page = Some(Arc::new(page));
+                Ok(DiscoveryStep::Need(ResourceRequest::new(
+                    next,
+                    ResourcePurpose::TileInformation,
+                )))
+            }
+            DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
+                catalog(self.page.as_ref().expect("page set"), &response.bytes)
+                    .map(DiscoveryStep::Complete)
+            }
+            DiscoveryEvent::Resource(ResourceOutcome::Failure(failure)) => {
+                Err(DiscoveryError::Session(failure.message.clone()))
+            }
+            DiscoveryEvent::Start => {
+                Err(DiscoveryError::Session("GAP session started twice".into()))
             }
         }
     }
 }
-
-struct GAPZoomLevel {
+fn catalog(page: &Arc<PageInfo>, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
+    let TileInfo {
+        tile_width,
+        tile_height,
+        pyramid_level,
+        ..
+    } = serde_xml_rs::from_reader(bytes).map_err(|error| {
+        DiscoveryError::Session(format!("invalid Google Arts tile XML: {error}"))
+    })?;
+    let mut levels: Vec<_> = pyramid_level
+        .into_iter()
+        .enumerate()
+        .map(|(z, level)| {
+            let size = Vec2d {
+                x: tile_width * level.num_tiles_x - level.empty_pels_x,
+                y: tile_height * level.num_tiles_y - level.empty_pels_y,
+            };
+            let id = StableId::new(format!("gap:{z}"));
+            let source = GapLevel {
+                size,
+                tile_size: Vec2d {
+                    x: tile_width,
+                    y: tile_height,
+                },
+                z,
+                page: Arc::clone(page),
+                id: id.clone(),
+            };
+            LevelDescriptor {
+                id,
+                title: None,
+                size: Some(size),
+                tile_size: Some(source.tile_size),
+                scale_factor: None,
+                has_overlapping_tiles: false,
+                plan: LevelPlan::Known(KnownTilePlan::rectangular(source)),
+                provenance: Provenance::default(),
+                warnings: Vec::new(),
+            }
+        })
+        .collect();
+    levels.sort_by_key(|level| level.size.map_or(0, Vec2d::area));
+    Ok(ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
+        id: StableId::new("gap:image"),
+        title: Some(page.name.clone()),
+        format: StableId::new("google_arts_and_culture"),
+        levels,
+        provenance: Provenance::default(),
+        warnings: Vec::new(),
+    })]))
+}
+#[derive(Debug)]
+struct GapLevel {
     size: Vec2d,
     tile_size: Vec2d,
     z: usize,
-    page_info: Arc<PageInfo>,
+    page: Arc<PageInfo>,
+    id: StableId,
 }
-
-impl TilesRect for GAPZoomLevel {
-    fn size(&self) -> Vec2d {
+impl RectangularSource for GapLevel {
+    fn level_id(&self) -> StableId {
+        self.id.clone()
+    }
+    fn image_size(&self) -> Vec2d {
         self.size
     }
-
     fn tile_size(&self) -> Vec2d {
         self.tile_size
     }
-
-    fn tile_url(&self, pos: Vec2d) -> String {
-        let Vec2d { x, y } = pos;
-        url::compute_url(&self.page_info, x, y, self.z)
+    fn request(&self, cell: Vec2d) -> Request {
+        Request::new(url::compute_url(&self.page, cell.x, cell.y, self.z))
     }
-
-    fn post_process_fn(&self) -> PostProcessFn {
-        PostProcessFn::Fn(post_process_tile)
-    }
-
-    fn title(&self) -> Option<String> {
-        Some(format!("{self:?}"))
-    }
-}
-
-pub(crate) fn post_process_tile(
-    _tile: &TileReference,
-    data: Vec<u8>,
-) -> Result<Vec<u8>, Box<dyn Error + Send + 'static>> {
-    crate::native::decrypt_google_arts_tile(data)
-}
-
-impl std::fmt::Debug for GAPZoomLevel {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.page_info.name)
+    fn processing(&self) -> ProcessingRecipe {
+        ProcessingRecipe::Named(StableId::new("google-arts-decrypt"))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dezoomer::test_utils::{expect_needs_data, expect_single_resolved};
-    use crate::dezoomer::{DezoomerInput, PageContents};
-    use std::fs;
-    use std::path::Path;
+    use crate::core::{RequestId, ResourceResponse};
 
-    fn get_test_page_html() -> Vec<u8> {
-        let test_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("testdata")
-            .join("google_arts_and_culture")
-            .join("page_source.html");
-        fs::read(test_path).expect("Failed to read test page source")
+    fn response(bytes: &[u8]) -> ResourceOutcome {
+        ResourceOutcome::Response(ResourceResponse {
+            id: RequestId(0),
+            bytes: bytes.to_vec(),
+            content_type: None,
+        })
     }
 
-    fn get_test_tile_info_xml() -> Vec<u8> {
-        let test_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("testdata")
-            .join("google_arts_and_culture")
-            .join("tile_info.xml");
-        fs::read(test_path).expect("Failed to read test tile info XML")
-    }
-
-    #[test]
-    fn test_parse_google_arts_page() {
-        let mut dezoomer = GAPDezoomer::default();
-        let page_html = get_test_page_html();
-
-        let input = DezoomerInput {
-            uri: "https://artsandculture.google.com/asset/test".to_string(),
-            contents: PageContents::Success(page_html),
-        };
-
-        // First call should extract page info and request tile info URL
-        let uri = expect_needs_data(dezoomer.images(&input));
-        assert!(uri.ends_with("=g"));
-        assert!(uri.contains("lh5.ggpht.com"));
-
-        // Dezoomer should now have page_info stored
-        assert!(dezoomer.page_info.is_some());
-    }
-
-    #[test]
-    fn test_parse_tile_info() {
-        let mut dezoomer = GAPDezoomer::default();
-
-        // First, set up page_info manually (normally this would be set by the first call)
-        let page_info = PageInfo {
-            base_url: "https://lh5.ggpht.com/test".to_string(),
-            token: "test_token".to_string(),
-            name: "Test Image".to_string(),
-        };
-        dezoomer.page_info = Some(Arc::new(page_info));
-
-        let tile_info_xml = get_test_tile_info_xml();
-
-        let input = DezoomerInput {
-            uri: "https://lh5.ggpht.com/test=g".to_string(),
-            contents: PageContents::Success(tile_info_xml),
-        };
-
-        // Second call should parse tile info and return zoom levels
-        let levels = expect_single_resolved(dezoomer.images(&input).unwrap()).into_zoom_levels();
-        assert_eq!(levels.len(), 5); // Based on our test XML
-
-        // Verify the largest level
-        let largest_level = &levels[4];
-        assert_eq!(largest_level.size_hint(), Some(Vec2d { x: 5436, y: 4080 })); // 11*512-196, 8*512-16
-    }
-
-    #[test]
-    fn test_full_workflow() {
-        let mut dezoomer = GAPDezoomer::default();
-
-        // Step 1: Parse Google Arts page
-        let page_html = get_test_page_html();
-        let input1 = DezoomerInput {
-            uri: "https://artsandculture.google.com/asset/test".to_string(),
-            contents: PageContents::Success(page_html),
-        };
-
-        let tile_info_uri = expect_needs_data(dezoomer.images(&input1));
-
-        // Step 2: Parse tile info
-        let tile_info_xml = get_test_tile_info_xml();
-        let input2 = DezoomerInput {
-            uri: tile_info_uri,
-            contents: PageContents::Success(tile_info_xml),
-        };
-
-        let levels = expect_single_resolved(dezoomer.images(&input2).unwrap()).into_zoom_levels();
-        assert_eq!(levels.len(), 5);
-
-        // Test that levels have the expected properties
-        let level = &levels[0];
-        assert!(level.size_hint().is_some());
-        let name = level.name();
-        assert!(name.contains("©Designers Anonymes")); // Name extracted from test data
-    }
-
-    #[test]
-    fn test_url_validation() {
-        let mut dezoomer = GAPDezoomer::default();
-
-        // Should accept Google Arts & Culture URLs
-        let valid_input = DezoomerInput {
-            uri: "https://artsandculture.google.com/asset/test".to_string(),
-            contents: PageContents::Success(vec![]),
-        };
-        // This will fail because contents are empty, but URL validation should pass
-        let result = dezoomer.images(&valid_input);
-        assert!(matches!(
-            result,
-            Err(DezoomerError::DownloadError { .. } | DezoomerError::Other { .. })
+    fn fixture_catalog() -> ImageCatalog {
+        let input = DiscoveryInput::from("https://artsandculture.google.com/asset/test");
+        let mut session = GAPDezoomer.start(&input);
+        session.advance(DiscoveryEvent::Start).unwrap();
+        let page = response(include_bytes!(
+            "../../testdata/google_arts_and_culture/page_source.html"
         ));
-
-        // Should reject non-Google Arts URLs when no page_info is set
-        let invalid_input = DezoomerInput {
-            uri: "https://example.com/test".to_string(),
-            contents: PageContents::Success(vec![]),
+        session.advance(DiscoveryEvent::Resource(&page)).unwrap();
+        let tile_info = response(include_bytes!(
+            "../../testdata/google_arts_and_culture/tile_info.xml"
+        ));
+        let DiscoveryStep::Complete(catalog) = session
+            .advance(DiscoveryEvent::Resource(&tile_info))
+            .unwrap()
+        else {
+            panic!("fixture tile information must complete discovery");
         };
-        let result = dezoomer.images(&invalid_input);
-        assert!(matches!(result, Err(DezoomerError::WrongDezoomer { .. })));
-
-        // Should accept tile info URLs when page_info is set
-        dezoomer.page_info = Some(Arc::new(PageInfo {
-            base_url: "https://lh5.ggpht.com/test".to_string(),
-            token: "test_token".to_string(),
-            name: "Test Image".to_string(),
-        }));
-
-        let tile_info_input = DezoomerInput {
-            uri: "https://lh5.ggpht.com/test=g".to_string(),
-            contents: PageContents::Success(vec![]),
-        };
-        // This will fail because contents are empty, but URL validation should pass
-        let result = dezoomer.images(&tile_info_input);
-        assert!(!matches!(result, Err(DezoomerError::WrongDezoomer { .. })));
+        catalog
     }
 
     #[test]
-    fn test_invalid_tile_info_xml() {
-        let mut dezoomer = GAPDezoomer {
-            page_info: Some(Arc::new(PageInfo {
-                base_url: "https://lh5.ggpht.com/test".to_string(),
-                token: "test_token".to_string(),
-                name: "Test Image".to_string(),
-            })),
+    fn discovers_fixture_as_five_replayable_levels() {
+        let input = DiscoveryInput::from("https://artsandculture.google.com/asset/test");
+        let mut session = GAPDezoomer.start(&input);
+        let DiscoveryStep::Need(page) = session.advance(DiscoveryEvent::Start).unwrap() else {
+            panic!("Google Arts discovery must request the page");
         };
+        assert_eq!(page.request.uri, input.uri);
 
-        let invalid_xml = b"<invalid>not a tile info</invalid>";
-        let input = DezoomerInput {
-            uri: "https://lh5.ggpht.com/test=g".to_string(),
-            contents: PageContents::Success(invalid_xml.to_vec()),
+        let page = response(include_bytes!(
+            "../../testdata/google_arts_and_culture/page_source.html"
+        ));
+        let DiscoveryStep::Need(tile_info) =
+            session.advance(DiscoveryEvent::Resource(&page)).unwrap()
+        else {
+            panic!("the page must lead to tile information");
         };
+        assert!(tile_info.request.uri.ends_with("=g"));
 
+        let tile_info = response(include_bytes!(
+            "../../testdata/google_arts_and_culture/tile_info.xml"
+        ));
+        let DiscoveryStep::Complete(catalog) = session
+            .advance(DiscoveryEvent::Resource(&tile_info))
+            .unwrap()
+        else {
+            panic!("tile information must complete discovery");
+        };
+        let [CatalogEntry::Ready(image)] = catalog.entries() else {
+            panic!("Google Arts produces one ready image");
+        };
+        assert_eq!(image.levels.len(), 5);
+        assert!(
+            image
+                .levels
+                .windows(2)
+                .all(|levels| { levels[0].size.unwrap().area() <= levels[1].size.unwrap().area() })
+        );
+        let LevelPlan::Known(plan) = &image.levels[0].plan else {
+            panic!("Google Arts geometry is known");
+        };
+        let tile = plan.cursor().take_ready(1).unwrap().unwrap().pop().unwrap();
+        assert_eq!(
+            tile.processing,
+            ProcessingRecipe::Named(StableId::new("google-arts-decrypt"))
+        );
+    }
+
+    #[test]
+    fn rejects_non_google_urls_without_requesting_data() {
+        let input = DiscoveryInput::from("https://example.com/test");
+        let mut session = GAPDezoomer.start(&input);
         assert!(matches!(
-            dezoomer.images(&input),
-            Err(DezoomerError::Other { .. })
+            session.advance(DiscoveryEvent::Start).unwrap(),
+            DiscoveryStep::Reject(_)
         ));
     }
 
     #[test]
-    fn test_tile_url_generation() {
-        let page_info = Arc::new(PageInfo {
-            base_url: "https://lh5.ggpht.com/test".to_string(),
-            token: "test_token".to_string(),
-            name: "Test Image".to_string(),
-        });
-
-        let level = GAPZoomLevel {
-            size: Vec2d { x: 1024, y: 768 },
-            tile_size: Vec2d { x: 256, y: 256 },
-            z: 2,
-            page_info: Arc::clone(&page_info),
+    fn catalog_preserves_page_identity_and_tile_geometry() {
+        let catalog = fixture_catalog();
+        let [CatalogEntry::Ready(image)] = catalog.entries() else {
+            panic!("Google Arts produces one ready image");
         };
+        assert_eq!(image.id, StableId::new("gap:image"));
+        assert_eq!(image.format, StableId::new("google_arts_and_culture"));
+        assert_eq!(image.title.as_deref(), Some("©Designers Anonymes"));
 
-        let tile_url = level.tile_url(Vec2d { x: 1, y: 1 });
-        assert!(tile_url.starts_with("https://lh5.ggpht.com/test"));
-        assert!(tile_url.contains("=x1-y1-z2-t"));
-
-        // URL should contain the HMAC signature
-        assert!(tile_url.len() > page_info.base_url.len() + 20);
+        let level = image.levels.last().expect("largest level");
+        assert_eq!(level.size, Some(Vec2d { x: 5436, y: 4080 }));
+        assert_eq!(level.tile_size, Some(Vec2d { x: 512, y: 512 }));
+        let LevelPlan::Known(plan) = &level.plan else {
+            panic!("Google Arts geometry is known");
+        };
+        assert_eq!(plan.len(), 88);
+        let first = plan.tile(0).unwrap().unwrap();
+        assert_eq!(first.destination, Vec2d::default());
+        assert_eq!(first.expected_size, Some(Vec2d { x: 512, y: 512 }));
+        assert!(first.request.uri.contains("=x0-y0-z4-t"));
+        assert_eq!(
+            first.processing,
+            ProcessingRecipe::Named(StableId::new("google-arts-decrypt"))
+        );
+        let last = plan.tile(87).unwrap().unwrap();
+        assert_eq!(last.destination, Vec2d { x: 5120, y: 3584 });
+        assert_eq!(last.expected_size, Some(Vec2d { x: 316, y: 496 }));
+        assert!(last.request.uri.contains("=x10-y7-z4-t"));
     }
 
     #[test]
-    fn test_dezoomer_name() {
-        let dezoomer = GAPDezoomer::default();
-        assert_eq!(dezoomer.name(), "google_arts_and_culture");
-    }
-
-    #[test]
-    fn test_zoom_level_debug() {
-        let page_info = Arc::new(PageInfo {
-            base_url: "https://lh5.ggpht.com/test".to_string(),
-            token: "test_token".to_string(),
-            name: "Test Image Name".to_string(),
-        });
-
-        let level = GAPZoomLevel {
-            size: Vec2d { x: 1024, y: 768 },
-            tile_size: Vec2d { x: 256, y: 256 },
-            z: 2,
-            page_info: Arc::clone(&page_info),
+    fn invalid_tile_information_is_reported_as_a_session_error() {
+        let input = DiscoveryInput::from("https://artsandculture.google.com/asset/test");
+        let mut session = GAPDezoomer.start(&input);
+        session.advance(DiscoveryEvent::Start).unwrap();
+        let page = response(include_bytes!(
+            "../../testdata/google_arts_and_culture/page_source.html"
+        ));
+        session.advance(DiscoveryEvent::Resource(&page)).unwrap();
+        let invalid = response(b"<invalid>not a tile info</invalid>");
+        let Err(DiscoveryError::Session(message)) =
+            session.advance(DiscoveryEvent::Resource(&invalid))
+        else {
+            panic!("invalid tile XML must be rejected by the pure session");
         };
-
-        let debug_str = format!("{level:?}");
-        assert_eq!(debug_str, "Test Image Name");
+        assert!(message.contains("invalid Google Arts tile XML"));
     }
 }

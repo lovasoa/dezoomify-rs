@@ -10,19 +10,19 @@ use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 
 pub use arguments::Arguments;
 pub use binary_display::{BinaryDisplay, display_bytes};
-use dezoomer::TileReference;
-use dezoomer::{ZoomLevel, ZoomLevelIter};
 pub use errors::ZoomError;
 use network::client;
 use output_file::get_outname;
 use tile::Tile;
 pub use vec2d::Vec2d;
 
-use crate::dezoomer::{Images, ResolvedImage, ZoomableImage};
+use crate::core::{
+    CatalogEntry, DeferredImage, ImageCatalog, ImageDescriptor, LevelDescriptor, LevelPlan,
+};
 use crate::encoder::SourceLevel;
 use crate::encoder::tile_buffer::TileBuffer;
 
@@ -32,31 +32,29 @@ use crate::output_file::reserve_output_file;
 mod arguments;
 mod binary_display;
 
-pub mod core;
-pub mod dezoomer;
+mod core;
 pub(crate) mod download_state;
 mod encoder;
 mod errors;
-pub mod format_adapter;
 mod native;
 mod network;
 mod output_file;
+mod registry;
 pub mod tile;
 mod vec2d;
 
-pub mod auto;
-pub mod bulk_text;
-pub mod custom_yaml;
-pub mod dzi;
-pub mod generic;
-pub mod google_arts_and_culture;
-pub mod iiif;
-pub mod iipimage;
+mod bulk_text;
+mod custom_yaml;
+mod dzi;
+mod generic;
+mod google_arts_and_culture;
+mod iiif;
+mod iipimage;
 mod json_utils;
-pub mod krpano;
-pub mod nypl;
+mod krpano;
+mod nypl;
 mod throttler;
-pub mod zoomify;
+mod zoomify;
 
 fn stdin_line() -> Result<String, ZoomError> {
     let stdin = std::io::stdin();
@@ -73,15 +71,16 @@ async fn get_images_from_uri(
     args: &Arguments,
     resolver: &mut NativeDiscoveryDriver,
     uri: &str,
-) -> Result<Vec<ZoomableImage>, ZoomError> {
+) -> Result<ImageCatalog, ZoomError> {
     let registry =
-        crate::format_adapter::legacy_registry_for(args.dezoomer_name()).map_err(|_| {
+        crate::registry::registry_for_cli(args.dezoomer_name(), uri).ok_or_else(|| {
             ZoomError::NoSuchDezoomer {
                 name: args.dezoomer_name().to_owned(),
             }
         })?;
-    let images = discover_images(resolver, &registry, uri).await?;
-    Ok(images.into_iter().collect())
+    discover_images(resolver, &registry, uri)
+        .await
+        .map_err(|message| ZoomError::Dezoomer { message })
 }
 
 /// Validates a user input line as a level index
@@ -108,17 +107,16 @@ fn resolve_image_index(requested: usize, available_count: usize) -> usize {
 }
 
 /// Finds the position of a level with the specified size hint
-fn find_level_with_size(levels: &[ZoomLevel], target_size: Vec2d) -> Option<usize> {
-    levels
-        .iter()
-        .position(|l| l.size_hint() == Some(target_size))
+fn find_level_with_size(levels: &[LevelDescriptor], target_size: Vec2d) -> Option<usize> {
+    levels.iter().position(|l| l.size == Some(target_size))
 }
 
 /// An interactive level picker
-fn level_picker(mut levels: Vec<ZoomLevel>) -> Result<ZoomLevel, ZoomError> {
+fn level_picker(mut levels: Vec<LevelDescriptor>) -> Result<LevelDescriptor, ZoomError> {
     println!("Found the following zoom levels:");
     for (i, level) in levels.iter().enumerate() {
-        println!("{: >2}. {}", i, level.name());
+        let title = level.title.as_deref().unwrap_or(level.id.as_str());
+        println!("{i: >2}. {title}");
     }
     loop {
         println!("Which level do you want to download? ");
@@ -130,14 +128,10 @@ fn level_picker(mut levels: Vec<ZoomLevel>) -> Result<ZoomLevel, ZoomError> {
     }
 }
 
-fn choose_level(mut levels: Vec<ZoomLevel>, args: &Arguments) -> Result<ZoomLevel, ZoomError> {
-    if levels.iter().all(|level| level.size_hint().is_some()) {
-        levels.sort_by_key(|level| {
-            let size = level.size_hint().expect("all level sizes were checked");
-            u64::from(size.x) * u64::from(size.y)
-        });
-    }
-
+fn choose_level(
+    mut levels: Vec<LevelDescriptor>,
+    args: &Arguments,
+) -> Result<LevelDescriptor, ZoomError> {
     match levels.len() {
         0 => Err(ZoomError::NoLevels),
         1 => Ok(levels.swap_remove(0)),
@@ -154,7 +148,7 @@ fn choose_level(mut levels: Vec<ZoomLevel>, args: &Arguments) -> Result<ZoomLeve
                 return Ok(levels.swap_remove(actual_level));
             }
 
-            if let Some(best_size) = args.best_size(levels.iter().filter_map(|l| l.size_hint()))
+            if let Some(best_size) = args.best_size(levels.iter().filter_map(|l| l.size))
                 && let Some(pos) = find_level_with_size(&levels, best_size)
             {
                 return Ok(levels.swap_remove(pos));
@@ -166,12 +160,11 @@ fn choose_level(mut levels: Vec<ZoomLevel>, args: &Arguments) -> Result<ZoomLeve
 }
 
 /// An interactive image picker for when multiple images are available
-fn image_picker(mut images: Vec<ZoomableImage>) -> Result<ZoomableImage, ZoomError> {
+fn image_picker(mut images: Vec<CatalogEntry>) -> Result<CatalogEntry, ZoomError> {
     println!("Found the following images:");
     for (i, image) in images.iter().enumerate() {
-        let title = image
-            .title()
-            .map_or_else(|| format!("Image {}", i + 1), str::to_string);
+        let title =
+            catalog_entry_title(image).map_or_else(|| format!("Image {}", i + 1), str::to_string);
         println!("{i: >2}. {title}");
     }
     loop {
@@ -186,9 +179,9 @@ fn image_picker(mut images: Vec<ZoomableImage>) -> Result<ZoomableImage, ZoomErr
 
 /// Choose an image from multiple options (interactive or automatic)
 fn choose_image(
-    mut images: Vec<ZoomableImage>,
+    mut images: Vec<CatalogEntry>,
     args: &Arguments,
-) -> Result<ZoomableImage, ZoomError> {
+) -> Result<CatalogEntry, ZoomError> {
     match images.len() {
         0 => Err(ZoomError::NoLevels),
         1 => Ok(images.swap_remove(0)),
@@ -218,45 +211,73 @@ fn choose_image(
 }
 
 async fn resolve_selected_image(
-    mut image: ZoomableImage,
+    mut image: CatalogEntry,
     args: &Arguments,
     resolver: &mut NativeDiscoveryDriver,
-) -> Result<ResolvedImage, ZoomError> {
+) -> Result<ImageDescriptor, ZoomError> {
     loop {
         match image {
-            ZoomableImage::Resolved(image) => return Ok(image),
-            ZoomableImage::Url(image_url) => {
+            CatalogEntry::Ready(image) => return Ok(image),
+            CatalogEntry::Deferred(image_url) => {
                 let images = resolve_deferred_images(image_url, resolver)
                     .await
-                    .map_err(|source| ZoomError::Dezoomer { source })?;
-                image = choose_image(images.into_iter().collect(), args)?;
+                    .map_err(|message| ZoomError::Dezoomer { message })?;
+                image = choose_image(images.into_entries(), args)?;
             }
         }
     }
 }
 
 async fn resolve_deferred_images(
-    image_url: crate::dezoomer::ImageUrl,
+    image_url: DeferredImage,
     resolver: &mut NativeDiscoveryDriver,
-) -> Result<Images, crate::dezoomer::DezoomerError> {
-    let crate::dezoomer::ImageUrl { url, title } = image_url;
-    discover_images(resolver, &crate::format_adapter::legacy_registry(), &url)
+) -> Result<ImageCatalog, String> {
+    let url = image_url.uri.clone();
+    discover_images(resolver, &crate::registry::default_registry(&url), &url)
         .await
-        .map(|images| images.with_fallback_title(title))
+        .map(|catalog| inherit_deferred_context(catalog, &image_url))
+}
+
+fn inherit_deferred_context(catalog: ImageCatalog, parent: &DeferredImage) -> ImageCatalog {
+    let parent_title = parent
+        .title
+        .as_deref()
+        .filter(|title| !title.trim().is_empty());
+    ImageCatalog::new(catalog.into_entries().into_iter().map(|mut entry| {
+        let (title, provenance, warnings) = match entry {
+            CatalogEntry::Ready(ref mut image) => {
+                (&mut image.title, &mut image.provenance, &mut image.warnings)
+            }
+            CatalogEntry::Deferred(ref mut image) => {
+                (&mut image.title, &mut image.provenance, &mut image.warnings)
+            }
+        };
+        if title.as_deref().is_none_or(str::is_empty) {
+            *title = parent_title.map(str::to_owned);
+        }
+        provenance.0.splice(0..0, parent.provenance.0.clone());
+        warnings.splice(0..0, parent.warnings.clone());
+        entry
+    }))
 }
 
 async fn discover_images(
     driver: &mut NativeDiscoveryDriver,
     registry: &crate::core::Registry,
     uri: &str,
-) -> Result<Images, crate::dezoomer::DezoomerError> {
-    let catalog = driver.discover(registry, uri).await.map_err(|error| {
-        crate::dezoomer::DezoomerError::DownloadError {
-            msg: error.to_string(),
-        }
-    })?;
-    crate::format_adapter::catalog_to_legacy_images(catalog)
-        .map_err(crate::dezoomer::DezoomerError::wrap)
+) -> Result<ImageCatalog, String> {
+    let catalog = driver
+        .discover(registry, uri)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(catalog)
+}
+
+fn catalog_entry_title(entry: &CatalogEntry) -> Option<&str> {
+    match entry {
+        CatalogEntry::Ready(image) => image.title.as_deref(),
+        CatalogEntry::Deferred(image) => image.title.as_deref(),
+    }
 }
 
 /// Prepares the output file path for saving
@@ -287,48 +308,46 @@ fn output_prefers_source_pyramid(path: &Path, args: &Arguments) -> bool {
     )
 }
 
-fn can_dezoomify_source_pyramid(path: &Path, args: &Arguments, levels: &[ZoomLevel]) -> bool {
+fn can_dezoomify_source_pyramid(path: &Path, args: &Arguments, levels: &[LevelDescriptor]) -> bool {
     output_prefers_source_pyramid(path, args)
         && largest_level_size(levels).is_some()
         && levels.iter().all(|level| {
-            level.size_hint().is_some()
-                && level.tile_size_hint().is_some()
-                && !level.has_overlapping_tiles()
+            level.size.is_some() && level.tile_size.is_some() && !level.has_overlapping_tiles
         })
 }
 
 async fn dezoomify_source_pyramid(
     args: &Arguments,
-    mut levels: Vec<ZoomLevel>,
+    mut levels: Vec<LevelDescriptor>,
     tile_buffer: TileBuffer,
 ) -> Result<(), ZoomError> {
     let mut canvas = tile_buffer;
     let full_size = largest_level_size(&levels).ok_or(ZoomError::NoLevels)?;
     let base_scale_factor = levels
         .iter()
-        .filter(|level| level.size_hint() == Some(full_size))
-        .filter_map(|level| level.scale_factor_hint())
+        .filter(|level| level.size == Some(full_size))
+        .filter_map(|level| level.scale_factor)
         .filter(|&scale_factor| scale_factor > 0)
         .min()
         .unwrap_or(1);
-    levels.sort_by_key(|level| std::cmp::Reverse(level_area(level.size_hint())));
+    levels.sort_by_key(|level| std::cmp::Reverse(level_area(level.size)));
 
     let mut total_tiles = 0;
     let mut successful_tiles = 0;
-    for (index, zoom_level) in levels.into_iter().enumerate() {
-        let level_size = zoom_level.size_hint().unwrap_or(full_size);
+    for (index, level) in levels.into_iter().enumerate() {
+        let level_size = level.size.unwrap_or(full_size);
         let scale_factor =
-            source_level_scale_factor(full_size, level_size, &zoom_level, base_scale_factor);
+            source_level_scale_factor(full_size, level_size, level.scale_factor, base_scale_factor);
         canvas
             .begin_level(SourceLevel {
                 index,
                 size: full_size,
                 scale_factor,
-                tile_size: zoom_level.tile_size_hint(),
-                has_overlapping_tiles: zoom_level.has_overlapping_tiles(),
+                tile_size: level.tile_size,
+                has_overlapping_tiles: level.has_overlapping_tiles,
             })
             .await?;
-        let state = dezoomify_level_into_buffer(args, zoom_level, &mut canvas).await?;
+        let state = dezoomify_level_into_buffer(args, level, &mut canvas).await?;
         validate_download_success(&state)?;
         total_tiles += state.total_tiles;
         successful_tiles += state.successful_tiles;
@@ -349,15 +368,10 @@ async fn dezoomify_source_pyramid(
 fn source_level_scale_factor(
     full_size: Vec2d,
     level_size: Vec2d,
-    level: &ZoomLevel,
+    scale_factor: Option<u32>,
     base_scale_factor: u32,
 ) -> u32 {
-    source_level_scale_factor_from_hint(
-        full_size,
-        level_size,
-        level.scale_factor_hint(),
-        base_scale_factor,
-    )
+    source_level_scale_factor_from_hint(full_size, level_size, scale_factor, base_scale_factor)
 }
 
 fn source_level_scale_factor_from_hint(
@@ -375,10 +389,10 @@ fn source_level_scale_factor_from_hint(
     full_size.x.div_ceil(level_size.x).max(1)
 }
 
-fn largest_level_size(levels: &[ZoomLevel]) -> Option<Vec2d> {
+fn largest_level_size(levels: &[LevelDescriptor]) -> Option<Vec2d> {
     levels
         .iter()
-        .filter_map(|level| level.size_hint())
+        .filter_map(|level| level.size)
         .max_by_key(|size| level_area(Some(*size)))
 }
 
@@ -399,10 +413,14 @@ pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
     debug!("Trying to locate a zoomable image...");
     let images = get_images_from_uri(args, &mut resolver, &uri).await?;
     debug!("Found {} zoomable images", images.len());
-    let selected_image = choose_image(images, args)?;
+    let selected_image = choose_image(images.into_entries(), args)?;
     let resolved_image = resolve_selected_image(selected_image, args, &mut resolver).await?;
-    let title = resolved_image.title().map(str::to_string);
-    let zoom_levels = resolved_image.into_zoom_levels();
+    debug!("Resolved {} image", resolved_image.format);
+    for warning in &resolved_image.warnings {
+        warn!("{warning}");
+    }
+    let title = resolved_image.title.clone();
+    let zoom_levels = resolved_image.levels;
 
     let base_dir = current_dir()?;
     let output_file = args.output_file();
@@ -431,10 +449,13 @@ pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
             output_file.as_deref(),
             title.as_deref(),
             &base_dir,
-            zoom_level.size_hint(),
+            zoom_level.size,
         )?;
         let tile_buffer = create_tile_buffer(save_as.clone(), args.compression);
-        info!("Dezooming {}", zoom_level.name());
+        info!(
+            "Dezooming {}",
+            zoom_level.title.clone().unwrap_or_else(|| "level".into())
+        );
         dezoomify_level(args, zoom_level, tile_buffer).await?;
         Ok(save_as)
     }
@@ -494,14 +515,14 @@ pub async fn process_bulk(args: &Arguments) -> Result<BulkStats, ZoomError> {
     let http = client(std::iter::empty(), args, None)?;
     let mut resolver = NativeDiscoveryDriver::new(http);
     let registry =
-        crate::format_adapter::legacy_registry_for(args.dezoomer_name()).map_err(|_| {
+        crate::registry::registry_for_cli(args.dezoomer_name(), bulk_uri).ok_or_else(|| {
             ZoomError::NoSuchDezoomer {
                 name: args.dezoomer_name().to_owned(),
             }
         })?;
     let images = discover_images(&mut resolver, &registry, bulk_uri)
         .await
-        .map_err(|source| ZoomError::Dezoomer { source })?;
+        .map_err(|message| ZoomError::Dezoomer { message })?;
 
     let mut stats = BulkStats::new();
     let base_dir = current_dir()?;
@@ -511,13 +532,14 @@ pub async fn process_bulk(args: &Arguments) -> Result<BulkStats, ZoomError> {
     debug!(
         "Images discovered: {:?}",
         images
+            .entries()
             .iter()
-            .map(|img| img.title().unwrap_or("Untitled"))
+            .map(|img| catalog_entry_title(img).unwrap_or("Untitled"))
             .collect::<Vec<_>>()
     );
 
     process_bulk_zoomable_images(
-        images.into_iter().collect(),
+        images.into_entries(),
         args,
         &mut resolver,
         &mut stats,
@@ -539,7 +561,7 @@ pub async fn process_bulk(args: &Arguments) -> Result<BulkStats, ZoomError> {
 
 /// Resolve and process images without fetching deferred metadata ahead of time.
 async fn process_bulk_zoomable_images(
-    images: Vec<ZoomableImage>,
+    images: Vec<CatalogEntry>,
     args: &Arguments,
     resolver: &mut NativeDiscoveryDriver,
     stats: &mut BulkStats,
@@ -551,17 +573,16 @@ async fn process_bulk_zoomable_images(
     let mut pending = VecDeque::from(images);
     let mut index = 0;
 
-    while let Some(zoomable_image) = pending.pop_front() {
-        let image_title = zoomable_image
-            .title()
+    while let Some(catalog_entry) = pending.pop_front() {
+        let image_title = catalog_entry_title(&catalog_entry)
             .map_or_else(|| format!("Image_{}", index + 1), str::to_string);
 
-        let resolved_image = match zoomable_image {
-            ZoomableImage::Resolved(image) => image,
-            ZoomableImage::Url(image_url) => {
+        let resolved_image = match catalog_entry {
+            CatalogEntry::Ready(image) => image,
+            CatalogEntry::Deferred(image_url) => {
                 match resolve_deferred_images(image_url, resolver).await {
                     Ok(images) if !images.is_empty() => {
-                        let images = images.into_iter().collect::<Vec<_>>();
+                        let images = images.into_entries();
                         stats.total_images += images.len() - 1;
                         for image in images.into_iter().rev() {
                             pending.push_front(image);
@@ -610,7 +631,7 @@ async fn process_bulk_zoomable_images(
 }
 
 async fn process_bulk_image(
-    image: ResolvedImage,
+    image: ImageDescriptor,
     image_title: &str,
     index: usize,
     args: &Arguments,
@@ -625,7 +646,11 @@ async fn process_bulk_image(
         index + 1,
         stats.total_images
     );
-    let zoom_levels = image.into_zoom_levels();
+    debug!("Resolved {} image", image.format);
+    for warning in &image.warnings {
+        warn!("{warning}");
+    }
+    let zoom_levels = image.levels;
     trace!(
         "Zoom levels for image {}: {} levels available",
         index + 1,
@@ -646,18 +671,21 @@ async fn process_bulk_image(
     debug!(
         "Selected zoom level for image {}: {} ({}x{})",
         index + 1,
-        zoom_level.name(),
-        zoom_level.size_hint().map_or(0, |s| s.x),
-        zoom_level.size_hint().map_or(0, |s| s.y)
+        zoom_level.title.as_deref().unwrap_or("level"),
+        zoom_level.size.map_or(0, |s| s.x),
+        zoom_level.size.map_or(0, |s| s.y)
     );
 
-    let level_title = zoom_level.title().unwrap_or_else(|| image_title.to_owned());
+    let level_title = zoom_level
+        .title
+        .clone()
+        .unwrap_or_else(|| image_title.to_owned());
     let indexed_outfile = bulk_outfile.map(|path| generate_bulk_output_name(path, index));
     let save_as = get_outname(
         indexed_outfile.as_deref(),
         Some(&level_title),
         base_dir,
-        zoom_level.size_hint(),
+        zoom_level.size,
     );
     if let Err(error) = reserve_output_file(&save_as) {
         let file_name = save_as
@@ -767,12 +795,12 @@ fn determine_final_result(
 /// or if only part of the image can be downloaded.
 pub async fn dezoomify_level(
     args: &Arguments,
-    zoom_level: ZoomLevel,
+    level: LevelDescriptor,
     tile_buffer: TileBuffer,
 ) -> Result<(), ZoomError> {
-    debug!("Starting to dezoomify {zoom_level:?}");
+    debug!("Starting to dezoomify level {:?}", level.id);
     let mut canvas = tile_buffer;
-    let state = dezoomify_level_into_buffer(args, zoom_level, &mut canvas).await?;
+    let state = dezoomify_level_into_buffer(args, level, &mut canvas).await?;
     validate_download_success(&state)?;
     finalize_canvas(&mut canvas).await?;
     let destination = canvas.destination().to_string_lossy().to_string();
@@ -781,23 +809,61 @@ pub async fn dezoomify_level(
 
 async fn dezoomify_level_into_buffer(
     args: &Arguments,
-    mut zoom_level: ZoomLevel,
+    level: LevelDescriptor,
     canvas: &mut TileBuffer,
 ) -> Result<download_state::DownloadState, ZoomError> {
-    let mut coordinator = download_state::TileDownloadCoordinator::new(&zoom_level, args)?;
+    let mut coordinator = download_state::TileDownloadCoordinator::new(args)?;
     let mut state = download_state::DownloadState::new();
     let progress = download_state::ProgressManager::new();
 
     progress.set_computing_urls();
 
-    let mut zoom_level_iter = ZoomLevelIter::new(&mut zoom_level);
-
-    while let Some(tile_refs) = zoom_level_iter.next_tile_references()? {
-        coordinator
-            .download_batch(tile_refs, canvas, &mut state, &progress, &zoom_level_iter)
-            .await?;
-
-        zoom_level_iter.set_fetch_result(state.create_fetch_result())?;
+    let level_size = level.size;
+    match level.plan {
+        LevelPlan::Known(plan) => {
+            let mut cursor = plan.cursor();
+            while let Some(specs) =
+                cursor
+                    .take_ready(args.parallelism)
+                    .map_err(|error| ZoomError::Dezoomer {
+                        message: error.to_string(),
+                    })?
+            {
+                coordinator
+                    .download_batch(specs, canvas, &mut state, &progress, level_size)
+                    .await?;
+            }
+        }
+        LevelPlan::Adaptive(plan) => {
+            let mut program = plan.start();
+            loop {
+                let Some(specs) =
+                    program
+                        .take_ready(args.parallelism)
+                        .map_err(|error| ZoomError::Dezoomer {
+                            message: error.to_string(),
+                        })?
+                else {
+                    break;
+                };
+                let observations = coordinator
+                    .download_batch(
+                        specs,
+                        canvas,
+                        &mut state,
+                        &progress,
+                        program.image_size().or(level_size),
+                    )
+                    .await?;
+                if !observations.is_empty() {
+                    program
+                        .submit(&observations)
+                        .map_err(|error| ZoomError::Dezoomer {
+                            message: error.to_string(),
+                        })?;
+                }
+            }
+        }
     }
 
     progress.finish();
@@ -823,68 +889,80 @@ mod tests {
     use super::*;
     use clap::Parser;
 
-    #[derive(Debug)]
-    struct PyramidTestLevel {
+    fn test_level(
         size: Option<Vec2d>,
         tile_size: Option<Vec2d>,
         overlaps: bool,
-    }
-
-    impl dezoomer::TileProvider for PyramidTestLevel {
-        fn next_tiles(
-            &mut self,
-            _previous: Option<dezoomer::TileFetchResult>,
-        ) -> Vec<TileReference> {
-            Vec::new()
-        }
-
-        fn size_hint(&self) -> Option<Vec2d> {
-            self.size
-        }
-
-        fn tile_size_hint(&self) -> Option<Vec2d> {
-            self.tile_size
-        }
-
-        fn has_overlapping_tiles(&self) -> bool {
-            self.overlaps
+    ) -> LevelDescriptor {
+        LevelDescriptor {
+            id: "test-level".into(),
+            title: None,
+            size,
+            tile_size,
+            scale_factor: None,
+            has_overlapping_tiles: overlaps,
+            plan: LevelPlan::Known(
+                crate::core::KnownTilePlan::explicit(Vec::new()).expect("empty plan is valid"),
+            ),
+            provenance: crate::core::Provenance::default(),
+            warnings: Vec::new(),
         }
     }
 
-    #[derive(Debug)]
-    struct TestLevel(Vec2d);
-
-    impl dezoomer::TileProvider for TestLevel {
-        fn next_tiles(
-            &mut self,
-            _previous: Option<dezoomer::TileFetchResult>,
-        ) -> Vec<TileReference> {
-            Vec::new()
-        }
-
-        fn size_hint(&self) -> Option<Vec2d> {
-            Some(self.0)
-        }
-    }
-
-    fn test_levels(sizes: &[u32]) -> Vec<ZoomLevel> {
+    fn test_levels(sizes: &[u32]) -> Vec<LevelDescriptor> {
         sizes
             .iter()
-            .map(|&size| Box::new(TestLevel(Vec2d { x: size, y: size })) as ZoomLevel)
+            .map(|&size| test_level(Some(Vec2d::square(size)), None, false))
             .collect()
     }
 
-    fn pyramid_test_levels() -> Vec<ZoomLevel> {
+    fn pyramid_test_levels() -> Vec<LevelDescriptor> {
         [256, 512]
             .into_iter()
-            .map(|size| {
-                Box::new(PyramidTestLevel {
-                    size: Some(Vec2d { x: size, y: size }),
-                    tile_size: Some(Vec2d { x: 256, y: 256 }),
-                    overlaps: false,
-                }) as ZoomLevel
-            })
+            .map(|size| test_level(Some(Vec2d::square(size)), Some(Vec2d::square(256)), false))
             .collect()
+    }
+
+    #[test]
+    fn deferred_context_reaches_the_resolved_image() {
+        let parent = DeferredImage {
+            id: "manifest-entry".into(),
+            uri: "memory://image/info.json".into(),
+            title: Some("Manifest title".into()),
+            provenance: crate::core::Provenance(vec![crate::core::ProvenanceStep {
+                id: "manifest-rule".into(),
+                description: "found image service".into(),
+            }]),
+            warnings: vec!["manifest warning".into()],
+        };
+        let child = ImageDescriptor {
+            id: "iiif-image".into(),
+            title: None,
+            format: "iiif".into(),
+            levels: Vec::new(),
+            provenance: crate::core::Provenance(vec![crate::core::ProvenanceStep {
+                id: "iiif".into(),
+                description: "parsed info.json".into(),
+            }]),
+            warnings: vec!["image warning".into()],
+        };
+
+        let catalog =
+            inherit_deferred_context(ImageCatalog::new([CatalogEntry::Ready(child)]), &parent);
+        let [CatalogEntry::Ready(image)] = catalog.entries() else {
+            panic!("resolved child must remain ready")
+        };
+        assert_eq!(image.title.as_deref(), Some("Manifest title"));
+        assert_eq!(image.warnings, ["manifest warning", "image warning"]);
+        assert_eq!(
+            image
+                .provenance
+                .0
+                .iter()
+                .map(|step| step.id.as_str())
+                .collect::<Vec<_>>(),
+            ["manifest-rule", "iiif"]
+        );
     }
 
     #[test]
@@ -910,16 +988,16 @@ mod tests {
     fn choose_level_indexes_levels_from_smallest_to_largest() {
         let mut args = Arguments::default();
         args.zoom_level = Some(0);
-        let selected = choose_level(test_levels(&[400, 100, 200]), &args).unwrap();
-        assert_eq!(selected.size_hint(), Some(Vec2d { x: 100, y: 100 }));
+        let selected = choose_level(test_levels(&[100, 200, 400]), &args).unwrap();
+        assert_eq!(selected.size, Some(Vec2d::square(100)));
 
         args.zoom_level = Some(1);
-        let selected = choose_level(test_levels(&[400, 100, 200]), &args).unwrap();
-        assert_eq!(selected.size_hint(), Some(Vec2d { x: 200, y: 200 }));
+        let selected = choose_level(test_levels(&[100, 200, 400]), &args).unwrap();
+        assert_eq!(selected.size, Some(Vec2d::square(200)));
 
         args.zoom_level = Some(10);
-        let selected = choose_level(test_levels(&[400, 100, 200]), &args).unwrap();
-        assert_eq!(selected.size_hint(), Some(Vec2d { x: 400, y: 400 }));
+        let selected = choose_level(test_levels(&[100, 200, 400]), &args).unwrap();
+        assert_eq!(selected.size, Some(Vec2d::square(400)));
     }
 
     #[test]
@@ -1037,33 +1115,25 @@ mod tests {
             &pyramid_test_levels()
         ));
 
-        let missing_size = vec![Box::new(PyramidTestLevel {
-            size: None,
-            tile_size: Some(Vec2d { x: 256, y: 256 }),
-            overlaps: false,
-        }) as ZoomLevel];
+        let missing_size = vec![test_level(None, Some(Vec2d::square(256)), false)];
         assert!(!can_dezoomify_source_pyramid(
             Path::new("output.tiff"),
             &Arguments::default(),
             &missing_size
         ));
 
-        let missing_tile_size = vec![Box::new(PyramidTestLevel {
-            size: Some(Vec2d { x: 512, y: 512 }),
-            tile_size: None,
-            overlaps: false,
-        }) as ZoomLevel];
+        let missing_tile_size = vec![test_level(Some(Vec2d::square(512)), None, false)];
         assert!(!can_dezoomify_source_pyramid(
             Path::new("output.tiff"),
             &Arguments::default(),
             &missing_tile_size
         ));
 
-        let overlapping = vec![Box::new(PyramidTestLevel {
-            size: Some(Vec2d { x: 512, y: 512 }),
-            tile_size: Some(Vec2d { x: 256, y: 256 }),
-            overlaps: true,
-        }) as ZoomLevel];
+        let overlapping = vec![test_level(
+            Some(Vec2d::square(512)),
+            Some(Vec2d::square(256)),
+            true,
+        )];
         assert!(!can_dezoomify_source_pyramid(
             Path::new("output.tiff"),
             &Arguments::default(),
@@ -1096,7 +1166,7 @@ mod tests {
     #[test]
     fn test_validate_download_success() {
         let mut successful_state = download_state::DownloadState::new();
-        successful_state.record_success();
+        successful_state.record_output_success();
         assert!(validate_download_success(&successful_state).is_ok());
 
         let failed_state = download_state::DownloadState::new();
@@ -1111,7 +1181,7 @@ mod tests {
         let mut success_state = download_state::DownloadState::new();
         success_state.add_batch(10);
         for _ in 0..10 {
-            success_state.record_success();
+            success_state.record_output_success();
         }
         assert!(determine_final_result(&success_state, destination.clone()).is_ok());
 
@@ -1119,7 +1189,7 @@ mod tests {
         let mut partial_state = download_state::DownloadState::new();
         partial_state.add_batch(10);
         for _ in 0..8 {
-            partial_state.record_success();
+            partial_state.record_output_success();
         }
         let result = determine_final_result(&partial_state, destination.clone());
         assert!(result.is_err());
@@ -1138,8 +1208,7 @@ mod tests {
 
     #[test]
     fn test_find_level_with_size() {
-        // Since we can't easily create real ZoomLevel instances for testing,
-        // let's test the logic directly with a simpler approach
+        // Test the size-selection predicate directly with a simple set of hints.
         let sizes = [
             Some(Vec2d { x: 100, y: 100 }),
             Some(Vec2d { x: 200, y: 200 }),

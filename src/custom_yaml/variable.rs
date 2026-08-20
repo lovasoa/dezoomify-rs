@@ -1,7 +1,6 @@
 use std::sync::LazyLock;
 
 use evalexpr::{ContextWithMutableVariables, DefaultNumericTypes, HashMapContext};
-use itertools::Itertools;
 use regex::Regex;
 use serde::Deserialize;
 
@@ -30,18 +29,38 @@ impl Variable {
                 name: self.name.clone(),
             });
         }
-        let steps = (self.to - self.from) / self.step;
+        if self.step == 0 {
+            return Err(BadVariableError::Infinite {
+                name: self.name.clone(),
+            });
+        }
+        let steps = (i128::from(self.to) - i128::from(self.from)) / i128::from(self.step);
         if steps < 0 {
             return Err(BadVariableError::Infinite {
                 name: self.name.clone(),
             });
-        } else if steps > i64::from(u32::MAX) {
+        } else if steps > i128::from(u32::MAX) {
             return Err(BadVariableError::TooManyValues {
                 name: self.name.clone(),
-                steps,
+                steps: i64::MAX,
             });
         }
         Ok(())
+    }
+
+    fn len(&self) -> Result<u64, BadVariableError> {
+        self.check()?;
+        u64::try_from((i128::from(self.to) - i128::from(self.from)) / i128::from(self.step) + 1)
+            .map_err(|_| BadVariableError::TooManyValues {
+                name: self.name.clone(),
+                steps: i64::MAX,
+            })
+    }
+
+    fn value_at(&self, index: u64) -> i64 {
+        debug_assert!(index < self.len().expect("validated variable"));
+        i64::try_from(i128::from(self.from) + i128::from(self.step) * i128::from(index))
+            .expect("validated variable range fits in i64")
     }
 
     pub fn name(&self) -> &str {
@@ -141,7 +160,7 @@ impl IntoIterator for &VarOrConst {
     }
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Clone, Deserialize, Debug)]
 pub struct Variables(Vec<VarOrConst>);
 
 impl Variables {
@@ -149,22 +168,62 @@ impl Variables {
     pub fn new(vars: Vec<VarOrConst>) -> Variables {
         Variables(vars)
     }
-    pub fn iter_contexts(
+
+    #[cfg(test)]
+    fn iter_contexts(
         &self,
     ) -> impl Iterator<Item = Result<HashMapContext<DefaultNumericTypes>, BadVariableError>> + '_
     {
-        self.0
-            .iter()
-            .map(|variable| variable.into_iter().map(move |val| (variable.name(), val)))
-            .multi_cartesian_product()
-            .map(|var_values| {
-                // Iterator on all the combination of values for the variables
-                let mut ctx = build_context();
-                for (var_name, var_value) in var_values {
-                    ctx.set_value(var_name.into(), evalexpr::Value::Int(var_value))?;
-                }
-                Ok(ctx)
-            })
+        let count = self.cardinality();
+        (0..count.unwrap_or(0)).map(move |index| self.context_at(index))
+    }
+
+    pub(crate) fn cardinality(&self) -> Result<u64, BadVariableError> {
+        self.0.iter().try_fold(1u64, |cardinality, variable| {
+            let values = match variable {
+                VarOrConst::Var(variable) => variable.len()?,
+                VarOrConst::Const(_) => 1,
+            };
+            cardinality
+                .checked_mul(values)
+                .ok_or_else(|| BadVariableError::TooManyValues {
+                    name: "combined variables".into(),
+                    steps: i64::MAX,
+                })
+        })
+    }
+
+    pub(crate) fn context_at(
+        &self,
+        mut index: u64,
+    ) -> Result<HashMapContext<DefaultNumericTypes>, BadVariableError> {
+        let cardinality = self.cardinality()?;
+        if index >= cardinality {
+            return Err(BadVariableError::TooManyValues {
+                name: "variable index".into(),
+                steps: i64::MAX,
+            });
+        }
+        let mut ctx = build_context();
+        let mut values = Vec::with_capacity(self.0.len());
+        for variable in self.0.iter().rev() {
+            let radix = match variable {
+                VarOrConst::Var(variable) => variable.len()?,
+                VarOrConst::Const(_) => 1,
+            };
+            let value_index = index % radix;
+            index /= radix;
+            values.push(match variable {
+                VarOrConst::Var(variable) => variable.value_at(value_index),
+                VarOrConst::Const(constant) => constant.value,
+            });
+        }
+        values.reverse();
+        for (variable, value) in self.0.iter().zip(values) {
+            ctx.set_value(variable.name().into(), evalexpr::Value::Int(value))
+                .map_err(|source| BadVariableError::EvalError { source })?;
+        }
+        Ok(ctx)
     }
 }
 
@@ -234,5 +293,19 @@ mod tests {
 
         assert_eq!(Some(&evalexpr::Value::Int(1)), ctxs[3].get_value("x"));
         assert_eq!(Some(&evalexpr::Value::Int(9)), ctxs[3].get_value("y"));
+    }
+
+    #[test]
+    fn indexed_contexts_match_cartesian_product_order() {
+        let vars = Variables(vec![
+            VarOrConst::var("x", 0, 1, 1).unwrap(),
+            VarOrConst::var("x", 8, 9, 1).unwrap(),
+        ]);
+        let context = vars.context_at(0).unwrap();
+        assert_eq!(Some(&evalexpr::Value::Int(8)), context.get_value("x"));
+        assert_eq!(
+            Some(&evalexpr::Value::Int(9)),
+            vars.context_at(1).unwrap().get_value("x")
+        );
     }
 }

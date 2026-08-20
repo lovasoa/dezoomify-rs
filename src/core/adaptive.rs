@@ -1,55 +1,50 @@
-//! Pure, observation-driven tile planning for formats whose bounds are unknown.
+//! Observation-driven plans, including the single Generic implementation.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{self, Write};
 
-use super::model::{
-    Dimensions, Point, ProcessingRecipe, Region, RequestSpec, StableId, TileId, TileRole, TileSpec,
-};
+use crate::Vec2d;
 
-/// An observation supplied by an application after inspecting one probe tile.
+use super::model::{ProcessingRecipe, Request, StableId, TileId, TileRole, TileSpec};
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TileObservation {
     pub id: TileId,
     pub result: ObservationResult,
 }
 
-impl TileObservation {
-    #[must_use]
-    pub fn success(id: TileId, dimensions: Dimensions) -> Self {
-        Self {
-            id,
-            result: ObservationResult::Success { dimensions },
-        }
-    }
-
-    #[must_use]
-    pub fn failure(id: TileId) -> Self {
-        Self {
-            id,
-            result: ObservationResult::Failure,
-        }
-    }
-}
-
-/// Intrinsic information learned from a probe.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ObservationResult {
-    Success { dimensions: Dimensions },
-    Failure,
+    Available { size: Vec2d },
+    Missing,
 }
 
-/// Errors caused by invalid adaptive-program sequencing or observations.
+impl TileObservation {
+    #[must_use]
+    pub fn available(id: TileId, size: Vec2d) -> Self {
+        Self {
+            id,
+            result: ObservationResult::Available { size },
+        }
+    }
+
+    #[must_use]
+    pub fn missing(id: TileId) -> Self {
+        Self {
+            id,
+            result: ObservationResult::Missing,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AdaptiveError {
     ZeroCapacity,
-    PendingObservations,
-    NoPendingObservations,
-    EmptyObservationBatch,
-    UnknownObservation(TileId),
-    DuplicateObservation(TileId),
-    WrongObservationRole(TileId),
+    PendingObservation,
+    NoPendingObservation,
+    InvalidObservationCount(usize),
+    InvalidObservation(TileId),
     InvalidDimensions(TileId),
     ArithmeticOverflow,
 }
@@ -57,323 +52,290 @@ pub enum AdaptiveError {
 impl fmt::Display for AdaptiveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ZeroCapacity => f.write_str("adaptive batch capacity must be greater than zero"),
-            Self::PendingObservations => {
-                f.write_str("cannot request more probes while observations are pending")
+            Self::ZeroCapacity => f.write_str("adaptive capacity must be greater than zero"),
+            Self::PendingObservation => f.write_str("a probe observation is pending"),
+            Self::NoPendingObservation => f.write_str("no probe observation is pending"),
+            Self::InvalidObservationCount(count) => {
+                write!(f, "expected one probe observation, received {count}")
             }
-            Self::NoPendingObservations => f.write_str("no probe observations are pending"),
-            Self::EmptyObservationBatch => {
-                f.write_str("at least one probe observation is required")
-            }
-            Self::UnknownObservation(id) => write!(f, "observation is not pending: {id:?}"),
-            Self::DuplicateObservation(id) => write!(f, "duplicate observation: {id:?}"),
-            Self::WrongObservationRole(id) => write!(f, "observation is not a probe: {id:?}"),
-            Self::InvalidDimensions(id) => write!(f, "probe returned invalid dimensions: {id:?}"),
-            Self::ArithmeticOverflow => f.write_str("adaptive tile geometry overflowed u32"),
+            Self::InvalidObservation(id) => write!(f, "unexpected observation for {id}"),
+            Self::InvalidDimensions(id) => write!(f, "invalid dimensions for {id}"),
+            Self::ArithmeticOverflow => f.write_str("adaptive geometry overflowed u32"),
         }
     }
 }
 
 impl Error for AdaptiveError {}
 
-/// A pure Generic-style adaptive planner.
-///
-/// The planner emits one probe at a time because each dichotomy transition
-/// depends on that probe's success.  Once the bounds are established, the
-/// remaining output tiles are emitted in canonical row-major batches.
-#[derive(Clone, Debug)]
-pub struct AdaptiveProgram {
-    level: StableId,
-    url_template: String,
-    dichotomy: Dichotomy2d,
-    last_tile: Point,
-    tile_size: Option<Dimensions>,
-    image_size: Option<Dimensions>,
-    done: HashSet<Point>,
-    pending_output: VecDeque<TileSpec>,
-    pending_probe: Option<ProbeBatch>,
-    next_probe_ordinal: u64,
-    finished: bool,
+pub trait AdaptivePlan: fmt::Debug + Send + Sync {
+    fn start(&self) -> Box<dyn TileProgram>;
 }
 
-#[derive(Clone, Debug)]
-struct ProbeBatch {
-    id: TileId,
-    point: Point,
+pub trait TileProgram: fmt::Debug + Send {
+    fn take_ready(&mut self, capacity: usize) -> Result<Option<Vec<TileSpec>>, AdaptiveError>;
+    fn submit(&mut self, observations: &[TileObservation]) -> Result<(), AdaptiveError>;
+    fn image_size(&self) -> Option<Vec2d>;
 }
 
-impl AdaptiveProgram {
+/// Immutable descriptor for the Generic URL-template protocol.
+#[derive(Clone, Debug)]
+pub struct GenericAdaptivePlan {
+    pub level: StableId,
+    pub template: String,
+}
+
+impl GenericAdaptivePlan {
     #[must_use]
-    pub fn new(level: impl Into<StableId>, url_template: impl Into<String>) -> Self {
+    pub fn new(level: impl Into<StableId>, template: impl Into<String>) -> Self {
         Self {
             level: level.into(),
-            url_template: url_template.into(),
-            dichotomy: Dichotomy2d::default(),
-            last_tile: Point::default(),
+            template: template.into(),
+        }
+    }
+}
+
+impl AdaptivePlan for GenericAdaptivePlan {
+    fn start(&self) -> Box<dyn TileProgram> {
+        Box::new(GenericProgram::new(self.clone()))
+    }
+}
+
+#[derive(Debug)]
+struct GenericProgram {
+    plan: GenericAdaptivePlan,
+    search: Dichotomy2d,
+    pending: Option<(TileId, Vec2d)>,
+    observed: HashMap<Vec2d, bool>,
+    next_point: Vec2d,
+    next_id: u64,
+    tile_size: Option<Vec2d>,
+    image_size: Option<Vec2d>,
+    grid_size: Option<Vec2d>,
+    output_cursor: u64,
+}
+
+impl GenericProgram {
+    fn new(plan: GenericAdaptivePlan) -> Self {
+        Self {
+            plan,
+            search: Dichotomy2d::default(),
+            pending: None,
+            observed: HashMap::new(),
+            next_point: Vec2d::default(),
+            next_id: 0,
             tile_size: None,
             image_size: None,
-            done: HashSet::new(),
-            pending_output: VecDeque::new(),
-            pending_probe: None,
-            next_probe_ordinal: 0,
-            finished: false,
+            grid_size: None,
+            output_cursor: 0,
         }
     }
 
-    /// Returns ready probes or, after bounds are known, output tile specs.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AdaptiveError::ZeroCapacity`] for zero capacity or
-    /// [`AdaptiveError::PendingObservations`] when the previous probe has not
-    /// been submitted yet.
-    pub fn take_ready(&mut self, capacity: usize) -> Result<Option<Vec<TileSpec>>, AdaptiveError> {
-        if capacity == 0 {
-            return Err(AdaptiveError::ZeroCapacity);
-        }
-        if self.pending_probe.is_some() {
-            return Err(AdaptiveError::PendingObservations);
-        }
-        if !self.pending_output.is_empty() {
-            let count = capacity.min(self.pending_output.len());
-            let result = self.pending_output.drain(..count).collect();
-            return Ok(Some(result));
-        }
-        if self.finished {
-            return Ok(None);
-        }
-
-        let point = if self.done.is_empty() {
-            Point::default()
-        } else {
-            // The dichotomy always leaves a next point in `advance`; this is
-            // only reached for the initial probe.
-            self.last_tile
+    fn spec(&mut self, point: Vec2d, role: TileRole) -> Result<TileSpec, AdaptiveError> {
+        let size = self.tile_size.unwrap_or_default();
+        let origin = Vec2d {
+            x: point
+                .x
+                .checked_mul(size.x)
+                .ok_or(AdaptiveError::ArithmeticOverflow)?,
+            y: point
+                .y
+                .checked_mul(size.y)
+                .ok_or(AdaptiveError::ArithmeticOverflow)?,
         };
-        let id = TileId::new(self.level.clone(), TileRole::Probe, self.next_probe_ordinal);
-        self.next_probe_ordinal = self.next_probe_ordinal.saturating_add(1);
-        self.pending_probe = Some(ProbeBatch {
-            id: id.clone(),
-            point,
-        });
-        Ok(Some(vec![self.probe_spec(id, point)]))
-    }
-
-    /// Advances the program using observations for the currently pending probe.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed error when observations are missing, duplicated, do not
-    /// identify the pending probe, or report invalid dimensions.
-    pub fn submit(
-        &mut self,
-        observations: impl IntoIterator<Item = TileObservation>,
-    ) -> Result<(), AdaptiveError> {
-        let Some(batch) = self.pending_probe.take() else {
-            return Err(AdaptiveError::NoPendingObservations);
-        };
-        let observations: Vec<_> = observations.into_iter().collect();
-        if observations.is_empty() {
-            self.pending_probe = Some(batch);
-            return Err(AdaptiveError::EmptyObservationBatch);
-        }
-        if observations.len() != 1 {
-            self.pending_probe = Some(batch);
-            if observations[1].id == observations[0].id {
-                return Err(AdaptiveError::DuplicateObservation(
-                    observations[1].id.clone(),
-                ));
-            }
-            return Err(AdaptiveError::UnknownObservation(
-                observations[1].id.clone(),
-            ));
-        }
-        let observation = &observations[0];
-        if observation.id != batch.id {
-            let expected_ordinal = batch.id.ordinal;
-            self.pending_probe = Some(batch);
-            if observation.id.level == self.level && observation.id.ordinal == expected_ordinal {
-                return Err(AdaptiveError::WrongObservationRole(observation.id.clone()));
-            }
-            return Err(AdaptiveError::UnknownObservation(observation.id.clone()));
-        }
-        let (success, dimensions) = match observation.result {
-            ObservationResult::Success { dimensions } if !dimensions.is_empty() => {
-                (true, Some(dimensions))
-            }
-            ObservationResult::Success { .. } => {
-                self.pending_probe = Some(batch);
-                return Err(AdaptiveError::InvalidDimensions(observation.id.clone()));
-            }
-            ObservationResult::Failure => (false, None),
-        };
-
-        if let Some(dimensions) = dimensions {
-            self.tile_size.get_or_insert(dimensions);
-        }
-        self.last_tile = batch.point;
-        self.done.insert(batch.point);
-        if let Some(next) = self.dichotomy.next(success) {
-            self.last_tile = next;
-            return Ok(());
-        }
-        self.finish_bounds()
-    }
-
-    #[must_use]
-    pub fn image_size(&self) -> Option<Dimensions> {
-        self.image_size
-    }
-
-    fn probe_spec(&self, id: TileId, point: Point) -> TileSpec {
-        let tile_size = self.tile_size.unwrap_or_default();
-        let origin = Point::new(
-            point.x.saturating_mul(tile_size.width),
-            point.y.saturating_mul(tile_size.height),
-        );
-        let region = Region::new(origin, tile_size);
-        TileSpec {
+        let id = TileId::new(self.plan.level.clone(), self.next_id);
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .ok_or(AdaptiveError::ArithmeticOverflow)?;
+        Ok(TileSpec {
             id,
-            request: RequestSpec::new(render_template(&self.url_template, point.x, point.y)),
-            source_region: region,
-            destination_region: region,
-            expected_size: None,
+            request: Request::new(render_template(&self.plan.template, point.x, point.y)),
+            source_region: None,
+            destination: origin,
+            expected_size: (role == TileRole::Output).then_some(size),
             processing: ProcessingRecipe::None,
-            role: TileRole::Probe,
-        }
+            role,
+        })
     }
 
-    fn finish_bounds(&mut self) -> Result<(), AdaptiveError> {
-        let Some(tile_size) = self.tile_size else {
-            self.finished = true;
+    fn finish_search(&mut self, last: Vec2d) -> Result<(), AdaptiveError> {
+        let Some(tile) = self.tile_size else {
+            self.grid_size = Some(Vec2d::default());
             return Ok(());
         };
-        let width = u32::try_from(
-            (u64::from(self.last_tile.x) + 1)
-                .checked_mul(u64::from(tile_size.width))
+        let grid = Vec2d {
+            x: last
+                .x
+                .checked_add(1)
                 .ok_or(AdaptiveError::ArithmeticOverflow)?,
-        )
-        .map_err(|_| AdaptiveError::ArithmeticOverflow)?;
-        let height = u32::try_from(
-            (u64::from(self.last_tile.y) + 1)
-                .checked_mul(u64::from(tile_size.height))
+            y: last
+                .y
+                .checked_add(1)
                 .ok_or(AdaptiveError::ArithmeticOverflow)?,
-        )
-        .map_err(|_| AdaptiveError::ArithmeticOverflow)?;
-        self.image_size = Some(Dimensions::new(width, height));
-
-        let mut ordinal = 0_u64;
-        for y in 0..=self.last_tile.y {
-            for x in 0..=self.last_tile.x {
-                let point = Point::new(x, y);
-                if self.done.contains(&point) {
-                    continue;
-                }
-                let origin = Point::new(
-                    x.checked_mul(tile_size.width)
-                        .ok_or(AdaptiveError::ArithmeticOverflow)?,
-                    y.checked_mul(tile_size.height)
-                        .ok_or(AdaptiveError::ArithmeticOverflow)?,
-                );
-                let region = Region::new(origin, tile_size);
-                self.pending_output.push_back(TileSpec {
-                    id: TileId::new(self.level.clone(), TileRole::Output, ordinal),
-                    request: RequestSpec::new(render_template(&self.url_template, x, y)),
-                    source_region: region,
-                    destination_region: region,
-                    expected_size: Some(tile_size),
-                    processing: ProcessingRecipe::None,
-                    role: TileRole::Output,
-                });
-                ordinal = ordinal.saturating_add(1);
-            }
-        }
-        self.done.clear();
-        // `finished` means no further probes will ever be generated.  Output
-        // specs may still remain in `pending_output` and are drained first by
-        // `take_ready`.
-        self.finished = true;
+        };
+        self.image_size = Some(Vec2d {
+            x: grid
+                .x
+                .checked_mul(tile.x)
+                .ok_or(AdaptiveError::ArithmeticOverflow)?,
+            y: grid
+                .y
+                .checked_mul(tile.y)
+                .ok_or(AdaptiveError::ArithmeticOverflow)?,
+        });
+        self.grid_size = Some(grid);
         Ok(())
     }
 }
 
+impl TileProgram for GenericProgram {
+    fn take_ready(&mut self, capacity: usize) -> Result<Option<Vec<TileSpec>>, AdaptiveError> {
+        if capacity == 0 {
+            return Err(AdaptiveError::ZeroCapacity);
+        }
+        if self.pending.is_some() {
+            return Err(AdaptiveError::PendingObservation);
+        }
+        if let Some(grid) = self.grid_size {
+            let total = u64::from(grid.x) * u64::from(grid.y);
+            let mut batch = Vec::with_capacity(capacity);
+            while self.output_cursor < total && batch.len() < capacity {
+                let ordinal = self.output_cursor;
+                self.output_cursor += 1;
+                let point = Vec2d {
+                    x: u32::try_from(ordinal % u64::from(grid.x))
+                        .map_err(|_| AdaptiveError::ArithmeticOverflow)?,
+                    y: u32::try_from(ordinal / u64::from(grid.x))
+                        .map_err(|_| AdaptiveError::ArithmeticOverflow)?,
+                };
+                if !self.observed.contains_key(&point) {
+                    batch.push(self.spec(point, TileRole::Output)?);
+                }
+            }
+            return Ok((!batch.is_empty()).then_some(batch));
+        }
+
+        let point = self.next_point;
+        let spec = self.spec(point, TileRole::ProbeAndOutput)?;
+        self.pending = Some((spec.id.clone(), point));
+        Ok(Some(vec![spec]))
+    }
+
+    fn submit(&mut self, observations: &[TileObservation]) -> Result<(), AdaptiveError> {
+        let Some((expected, point)) = self.pending.take() else {
+            return Err(AdaptiveError::NoPendingObservation);
+        };
+        if observations.len() != 1 {
+            self.pending = Some((expected.clone(), point));
+            return Err(AdaptiveError::InvalidObservationCount(observations.len()));
+        }
+        if observations[0].id != expected {
+            self.pending = Some((expected.clone(), point));
+            return Err(AdaptiveError::InvalidObservation(
+                observations[0].id.clone(),
+            ));
+        }
+        let success = match observations[0].result {
+            ObservationResult::Available { size } if size.x > 0 && size.y > 0 => {
+                self.tile_size.get_or_insert(size);
+                true
+            }
+            ObservationResult::Available { .. } => {
+                self.pending = Some((expected.clone(), point));
+                return Err(AdaptiveError::InvalidDimensions(expected));
+            }
+            ObservationResult::Missing => false,
+        };
+        let first = self.observed.is_empty();
+        self.observed.insert(point, success);
+        if first {
+            if success {
+                self.next_point = Dichotomy2d::first();
+            } else {
+                self.grid_size = Some(Vec2d::default());
+            }
+            return Ok(());
+        }
+        let mut next = self.search.next(success);
+        while let Some(point) = next {
+            let Some(previous) = self.observed.get(&point) else {
+                self.next_point = point;
+                return Ok(());
+            };
+            next = self.search.next(*previous);
+        }
+        let boundary = self.search.boundary();
+        self.finish_search(boundary)
+    }
+
+    fn image_size(&self) -> Option<Vec2d> {
+        self.image_size
+    }
+}
+
 fn render_template(template: &str, x: u32, y: u32) -> String {
-    let mut result = String::with_capacity(template.len());
+    let mut output = String::with_capacity(template.len());
     let mut rest = template;
     while let Some(start) = rest.find("{{") {
-        result.push_str(&rest[..start]);
-        let after_open = &rest[start + 2..];
-        let Some(end) = after_open.find("}}") else {
-            result.push_str(&rest[start..]);
-            return result;
-        };
-        let expression = after_open[..end].trim();
-        let (dimension, width) =
-            expression
-                .split_once(':')
-                .map_or((expression, 0), |(dimension, padding)| {
-                    (
-                        dimension.trim(),
-                        padding
-                            .strip_prefix('0')
-                            .and_then(|n| n.parse().ok())
-                            .unwrap_or(0),
-                    )
-                });
+        output.push_str(&rest[..start]);
+        let open = &rest[start + 2..];
+        let Some(end) = open.find("}}") else { break };
+        let expression = open[..end].trim();
+        let (dimension, width) = expression
+            .split_once(':')
+            .map_or((expression, 0), |(d, w)| {
+                (d.trim(), w.trim_start_matches('0').parse().unwrap_or(0))
+            });
         let value = match dimension.to_ascii_lowercase().as_str() {
             "x" => Some(x),
             "y" => Some(y),
             _ => None,
         };
         if let Some(value) = value {
-            if width == 0 {
-                result.push_str(&value.to_string());
-            } else {
-                let _ = write!(result, "{value:0width$}");
-            }
+            let _ = write!(output, "{value:0width$}");
         } else {
-            result.push_str(&rest[start..start + 2 + end + 2]);
+            output.push_str(&rest[start..start + end + 4]);
         }
-        rest = &after_open[end + 2..];
+        rest = &open[end + 2..];
     }
-    result.push_str(rest);
-    result
+    output.push_str(rest);
+    output
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 struct Dichotomy {
     min: u32,
     max: Option<u32>,
 }
 
 impl Dichotomy {
-    fn best_guess(&self) -> u32 {
-        self.max
-            .map_or(self.min * 3 + 1, |max| u32::midpoint(max, self.min))
+    fn guess(&self) -> u32 {
+        self.max.map_or_else(
+            || self.min.saturating_mul(3).saturating_add(1),
+            |max| u32::midpoint(max, self.min),
+        )
     }
 
-    fn next(&mut self, previous_success: bool) -> Option<u32> {
-        let last_guess = self.best_guess();
-        if previous_success {
-            self.min = last_guess;
+    fn next(&mut self, success: bool) -> Option<u32> {
+        let previous = self.guess();
+        if success {
+            self.min = previous;
         } else {
-            self.max = Some(last_guess);
+            self.max = Some(previous);
         }
-        let next_guess = self.best_guess();
-        (next_guess != last_guess).then_some(next_guess)
+        let next = self.guess();
+        (next != previous).then_some(next)
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 enum Dichotomy2d {
     Diagonal(Dichotomy),
-    Orientation {
+    Orientation(u32),
+    Last {
         diagonal: u32,
-    },
-    LastDim {
-        diagonal: u32,
-        is_landscape: bool,
-        last_dim: Dichotomy,
+        landscape: bool,
+        dimension: Dichotomy,
     },
 }
 
@@ -384,49 +346,98 @@ impl Default for Dichotomy2d {
 }
 
 impl Dichotomy2d {
-    fn next(&mut self, previous_success: bool) -> Option<Point> {
+    const fn first() -> Vec2d {
+        Vec2d { x: 1, y: 1 }
+    }
+
+    fn boundary(&self) -> Vec2d {
+        match self {
+            Self::Diagonal(search) => Vec2d {
+                x: search.guess(),
+                y: search.guess(),
+            },
+            Self::Orientation(diagonal) => Vec2d {
+                x: *diagonal,
+                y: *diagonal,
+            },
+            Self::Last {
+                diagonal,
+                landscape,
+                dimension,
+            } => {
+                let last = dimension.guess();
+                if *landscape {
+                    Vec2d {
+                        x: last,
+                        y: *diagonal,
+                    }
+                } else {
+                    Vec2d {
+                        x: *diagonal,
+                        y: last,
+                    }
+                }
+            }
+        }
+    }
+
+    fn next(&mut self, success: bool) -> Option<Vec2d> {
         let mut transition = None;
         let result = match self {
-            Self::Diagonal(dichotomy) => {
-                if let Some(next) = dichotomy.next(previous_success) {
-                    Some(Point::new(next, next))
-                } else {
-                    let diagonal = dichotomy.best_guess();
-                    transition = Some(Self::Orientation { diagonal });
-                    Some(Point::new(diagonal + 1, diagonal))
-                }
-            }
-            Self::Orientation { diagonal } => {
-                let dichotomy = Dichotomy {
-                    min: *diagonal + u32::from(previous_success),
+            Self::Diagonal(search) => search.next(success).map_or_else(
+                || {
+                    let diagonal = search.guess();
+                    transition = Some(Self::Orientation(diagonal));
+                    Some(Vec2d {
+                        x: diagonal + 1,
+                        y: diagonal,
+                    })
+                },
+                |next| Some(Vec2d { x: next, y: next }),
+            ),
+            Self::Orientation(diagonal) => {
+                let search = Dichotomy {
+                    min: *diagonal + u32::from(success),
                     max: None,
                 };
-                let best = dichotomy.best_guess();
-                transition = Some(Self::LastDim {
+                let next = search.guess();
+                transition = Some(Self::Last {
                     diagonal: *diagonal,
-                    is_landscape: previous_success,
-                    last_dim: dichotomy,
+                    landscape: success,
+                    dimension: search,
                 });
-                if previous_success {
-                    Some(Point::new(best, *diagonal))
+                Some(if success {
+                    Vec2d {
+                        x: next,
+                        y: *diagonal,
+                    }
                 } else {
-                    Some(Point::new(*diagonal, best))
-                }
+                    Vec2d {
+                        x: *diagonal,
+                        y: next,
+                    }
+                })
             }
-            Self::LastDim {
+            Self::Last {
                 diagonal,
-                is_landscape,
-                last_dim,
-            } => last_dim.next(previous_success).map(|next| {
-                if *is_landscape {
-                    Point::new(next, *diagonal)
+                landscape,
+                dimension,
+            } => dimension.next(success).map(|next| {
+                if *landscape {
+                    Vec2d {
+                        x: next,
+                        y: *diagonal,
+                    }
                 } else {
-                    Point::new(*diagonal, next)
+                    Vec2d {
+                        x: *diagonal,
+                        y: next,
+                    }
                 }
             }),
         };
-        if let Some(transition) = transition {
-            *self = transition;
+        if let Some(state) = transition {
+            *self = state;
         }
         result
     }
@@ -434,114 +445,178 @@ impl Dichotomy2d {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
 
-    fn success_for(spec: &TileSpec, width: u32, height: u32) -> TileObservation {
-        TileObservation::success(spec.id.clone(), Dimensions::new(width, height))
+    fn generic(level: &str) -> Box<dyn TileProgram> {
+        GenericAdaptivePlan::new(level, "memory://{{X:02}},{{y}}").start()
     }
 
     #[test]
-    fn advances_only_from_submitted_observations() {
-        let mut program = AdaptiveProgram::new("level", "memory://{{X}},{{Y}}");
-        let mut output = Vec::new();
-        let mut steps = 0;
-        while let Some(batch) = program.take_ready(8).unwrap() {
-            steps += 1;
-            assert!(steps < 20);
-            if batch[0].role == TileRole::Probe {
-                let success = [
-                    "memory://0,0",
-                    "memory://1,0",
-                    "memory://2,0",
-                    "memory://0,1",
-                    "memory://1,1",
-                    "memory://2,1",
-                ]
-                .contains(&batch[0].request.uri.as_str());
-                let observation = if success {
-                    success_for(&batch[0], 4, 5)
-                } else {
-                    TileObservation::failure(batch[0].id.clone())
-                };
-                program.submit([observation]).unwrap();
+    fn generic_is_bounded_and_probe_misses_are_not_output() {
+        let plan = GenericAdaptivePlan::new("level", "{{X}},{{Y}}");
+        let mut program = plan.start();
+        let existing = ["0,0", "1,0", "2,0", "0,1", "1,1", "2,1"];
+        let mut available = Vec::new();
+        for _ in 0..20 {
+            let Some(batch) = program.take_ready(2).unwrap() else {
+                break;
+            };
+            if batch[0].role == TileRole::Output {
+                assert!(batch.len() <= 2);
+                available.extend(batch);
+                continue;
+            }
+            let spec = &batch[0];
+            if existing.contains(&spec.request.uri.as_str()) {
+                available.push(spec.clone());
+                program
+                    .submit(&[TileObservation::available(
+                        spec.id.clone(),
+                        Vec2d { x: 4, y: 5 },
+                    )])
+                    .unwrap();
             } else {
-                output.extend(batch);
+                program
+                    .submit(&[TileObservation::missing(spec.id.clone())])
+                    .unwrap();
             }
         }
-        let urls: HashSet<_> = output
-            .iter()
-            .map(|spec| spec.request.uri.as_str())
-            .collect();
-        assert!(urls.iter().all(|url| {
-            [
-                "memory://0,0",
-                "memory://1,0",
-                "memory://2,0",
-                "memory://0,1",
-                "memory://1,1",
-                "memory://2,1",
-            ]
-            .contains(url)
-        }));
-        assert!(!urls.contains("memory://3,0"));
-        assert!(!urls.contains("memory://0,2"));
-        assert!(output.iter().all(|spec| spec.role == TileRole::Output));
+        assert_eq!(program.image_size(), Some(Vec2d { x: 12, y: 10 }));
+        assert_eq!(available.len(), 6);
+        assert!(
+            available
+                .iter()
+                .any(|tile| tile.role == TileRole::ProbeAndOutput)
+        );
+        assert!(
+            available
+                .iter()
+                .all(|tile| existing.contains(&tile.request.uri.as_str()))
+        );
+        assert_eq!(
+            available
+                .iter()
+                .map(|tile| &tile.id)
+                .collect::<HashSet<_>>()
+                .len(),
+            available.len()
+        );
+        assert_eq!(
+            available
+                .iter()
+                .find(|tile| tile.request.uri == "1,1")
+                .unwrap()
+                .destination,
+            Vec2d { x: 4, y: 5 }
+        );
     }
 
     #[test]
-    fn sequencing_and_observation_identity_are_typed() {
-        let mut program = AdaptiveProgram::new("level", "memory://{{x}},{{y}}");
-        let batch = program.take_ready(1).unwrap().unwrap();
+    fn sequencing_errors_preserve_the_pending_probe() {
+        let mut program = generic("level");
+        assert_eq!(
+            program.submit(&[]),
+            Err(AdaptiveError::NoPendingObservation)
+        );
+        assert_eq!(program.take_ready(0), Err(AdaptiveError::ZeroCapacity));
+        let probe = program.take_ready(1).unwrap().unwrap().remove(0);
+        assert_eq!(probe.request.uri, "memory://00,0");
         assert_eq!(
             program.take_ready(1),
-            Err(AdaptiveError::PendingObservations)
+            Err(AdaptiveError::PendingObservation)
         );
         assert_eq!(
-            program.submit([]),
-            Err(AdaptiveError::EmptyObservationBatch)
-        );
-        let wrong = TileId::new(
-            StableId::from("level"),
-            TileRole::Output,
-            batch[0].id.ordinal,
+            program.submit(&[]),
+            Err(AdaptiveError::InvalidObservationCount(0))
         );
         assert_eq!(
-            program.submit([TileObservation::failure(wrong.clone())]),
-            Err(AdaptiveError::WrongObservationRole(wrong))
+            program.submit(&[
+                TileObservation::missing(probe.id.clone()),
+                TileObservation::missing(probe.id.clone()),
+            ]),
+            Err(AdaptiveError::InvalidObservationCount(2))
         );
-        let unknown = TileId::new(StableId::from("other"), TileRole::Probe, 0);
+        let unknown = TileId::new("other".into(), 0);
         assert_eq!(
-            program.submit([TileObservation::failure(unknown.clone())]),
-            Err(AdaptiveError::UnknownObservation(unknown))
+            program.submit(&[TileObservation::missing(unknown.clone())]),
+            Err(AdaptiveError::InvalidObservation(unknown))
         );
-        let duplicate = TileObservation::failure(batch[0].id.clone());
         assert_eq!(
-            program.submit([duplicate.clone(), duplicate]),
-            Err(AdaptiveError::DuplicateObservation(batch[0].id.clone()))
+            program.submit(&[TileObservation::available(
+                probe.id.clone(),
+                Vec2d::default()
+            )]),
+            Err(AdaptiveError::InvalidDimensions(probe.id.clone()))
         );
         program
-            .submit([TileObservation::failure(batch[0].id.clone())])
+            .submit(&[TileObservation::missing(probe.id)])
             .unwrap();
+        assert_eq!(program.take_ready(1).unwrap(), None);
     }
 
     #[test]
-    fn independent_programs_do_not_share_probe_state() {
-        let mut first = AdaptiveProgram::new("level-a", "memory://a/{{x}},{{y}}");
-        let mut second = AdaptiveProgram::new("level-b", "memory://b/{{x}},{{y}}");
+    fn programs_do_not_share_probe_state() {
+        let mut first = generic("first");
+        let mut second = generic("second");
         let first_probe = first.take_ready(1).unwrap().unwrap().remove(0);
         let second_probe = second.take_ready(1).unwrap().unwrap().remove(0);
         assert_ne!(first_probe.id, second_probe.id);
         first
-            .submit([TileObservation::failure(first_probe.id)])
+            .submit(&[TileObservation::missing(first_probe.id)])
             .unwrap();
-        let next_second = second.take_ready(1);
-        assert_eq!(next_second, Err(AdaptiveError::PendingObservations));
+        assert_eq!(second.take_ready(1), Err(AdaptiveError::PendingObservation));
     }
 
     #[test]
-    fn template_padding_and_case_are_preserved() {
-        let mut program = AdaptiveProgram::new("level", "memory://{{X:05}}/{{y}}");
-        let probe = program.take_ready(1).unwrap().unwrap();
-        assert_eq!(probe[0].request.uri, "memory://00000/0");
+    fn generic_templates_are_case_insensitive_and_zero_padded() {
+        let mut program = GenericAdaptivePlan::new(
+            "level",
+            "https://example.test/{{x:05}}/{{Y:03}}/{{unknown}}",
+        )
+        .start();
+        let probe = program.take_ready(1).unwrap().unwrap().remove(0);
+        assert_eq!(
+            probe.request.uri,
+            "https://example.test/00000/000/{{unknown}}"
+        );
+        program
+            .submit(&[TileObservation::available(probe.id, Vec2d { x: 4, y: 5 })])
+            .unwrap();
+        let next = program.take_ready(1).unwrap().unwrap().remove(0);
+        assert_eq!(
+            next.request.uri,
+            "https://example.test/00001/001/{{unknown}}"
+        );
+        assert_eq!(next.role, TileRole::ProbeAndOutput);
+    }
+
+    #[test]
+    fn dichotomies_find_exact_geometry() {
+        for boundary in 0..1000 {
+            let mut search = Dichotomy::default();
+            let mut guess = search.guess();
+            for _ in 0..20 {
+                let Some(next) = search.next(guess <= boundary) else {
+                    break;
+                };
+                guess = next;
+            }
+            assert_eq!(search.guess(), boundary);
+        }
+        for x in 0..10 {
+            for y in 0..10 {
+                let mut search = Dichotomy2d::default();
+                let mut guess = Dichotomy2d::first();
+                for _ in 0..20 {
+                    let Some(next) = search.next(guess.x <= x && guess.y <= y) else {
+                        break;
+                    };
+                    guess = next;
+                }
+                assert_eq!(search.boundary(), Vec2d { x, y });
+            }
+        }
     }
 }

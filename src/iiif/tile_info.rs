@@ -2,9 +2,6 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
-use log::debug;
-use log::info;
-use log::warn;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +19,7 @@ pub struct ImageInfo {
     pub protocol: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile: Option<Profile>,
-    #[serde(rename = "@id", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "@id", alias = "id", skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub width: u32,
     pub height: u32,
@@ -87,10 +84,7 @@ impl ImageInfo {
             .chain(pinfo.qualities.iter().flat_map(|x| x.iter()))
             .max_by_key(|&s| QUALITY_ORDER.iter().position(|&x| x == s))
             .cloned()
-            .unwrap_or_else(|| {
-                debug!("No image quality specified. Using 'default'.");
-                "default".into()
-            })
+            .unwrap_or_else(|| "default".into())
     }
 
     #[must_use]
@@ -102,10 +96,7 @@ impl ImageInfo {
             .chain(pinfo.formats.iter().flat_map(|x| x.iter()))
             .max_by_key(|&s| FORMAT_ORDER.iter().position(|&x| x == s))
             .cloned()
-            .unwrap_or_else(|| {
-                debug!("No image format specified. Using 'jpg'.");
-                "jpg".into()
-            })
+            .unwrap_or_else(|| "jpg".into())
     }
 
     #[must_use]
@@ -180,19 +171,26 @@ impl ImageInfo {
 
     /// Some info.json files contain a an invalid value for "@id",
     /// such as "localhost" or "example.com"
-    pub fn remove_test_id(&mut self) {
+    pub fn remove_test_id(&mut self) -> bool {
         if let Some(id) = &self.id
             && TEST_ID_RE.is_match(id)
         {
-            info!("Removing probably invalid IIIF id '{id}'");
             self.id = None;
+            return true;
         }
+        false
     }
 
     pub fn resolve_relative_urls(&mut self, base: &str) {
         if let Some(id) = &self.id {
             self.id = Some(resolve_relative(base, id));
         }
+    }
+
+    pub(crate) fn warnings(&self) -> Vec<String> {
+        self.profile
+            .as_ref()
+            .map_or_else(Vec::new, Profile::warnings)
     }
 }
 
@@ -284,15 +282,26 @@ fn update_max<T: Ord + Copy>(target: &mut Option<T>, new: Option<T>) {
 }
 
 impl Profile {
+    fn warnings(&self) -> Vec<String> {
+        match self {
+            Self::Reference(reference) if !PROFILE_REFERENCES.contains_key(reference) => {
+                vec![format!(
+                    "Unknown IIIF profile reference '{reference}'; using default capabilities"
+                )]
+            }
+            Self::Reference(_) | Self::Info(_) => Vec::new(),
+            Self::Multiple(profiles) => profiles
+                .iter()
+                .flat_map(|profiles| profiles.iter().flat_map(Profile::warnings))
+                .collect(),
+        }
+    }
+
     fn profile_info(&self) -> Cow<'_, ProfileInfo> {
         match self {
-            Profile::Reference(s) => PROFILE_REFERENCES.get(s).map_or_else(
-                || {
-                    warn!("Unknown IIIF profile reference: {s}");
-                    Cow::Owned(ProfileInfo::default())
-                },
-                Cow::Borrowed,
-            ),
+            Profile::Reference(s) => PROFILE_REFERENCES
+                .get(s)
+                .map_or_else(|| Cow::Owned(ProfileInfo::default()), Cow::Borrowed),
             Profile::Info(info) => Cow::Borrowed(info),
             Profile::Multiple(profiles) => {
                 let mut formats = vec![];

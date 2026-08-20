@@ -1,528 +1,389 @@
+//! Pure, resumable discovery for krpano panoramas.
+
 use std::collections::HashSet;
+use std::fmt;
 use std::sync::{Arc, LazyLock};
 
-use custom_error::custom_error;
 use itertools::Itertools;
-use log::debug;
-use log::warn;
 use regex::Regex;
 
+use krpano_decrypt::{decrypt_xml, is_encrypted_xml};
 use krpano_metadata::{KrpanoMetadata, TemplateString, TemplateStringPart, XY};
 
+use crate::Vec2d;
+use crate::core::discovery::DiscoveryEvent;
 use crate::core::resolve_relative;
-use crate::dezoomer::{
-    Dezoomer, DezoomerError, DezoomerInput, DezoomerInputWithContents, Images, IntoZoomLevels,
-    PageContents, ResolvedImage, TileReference, TilesRect, Vec2d, ZoomLevels,
+use crate::core::tile_plan::RectangularSource;
+use crate::core::{
+    CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
+    DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
+    LevelPlan, ProcessingRecipe, Provenance, ProvenanceStep, Request, ResourceOutcome,
+    ResourcePurpose, ResourceRequest, StableId,
 };
 use crate::krpano::krpano_metadata::{ImageInfo, LevelDesc};
-use krpano_decrypt::{decrypt_xml, is_encrypted_xml};
-
-#[cfg(test)]
-use crate::dezoomer::test_utils::{expect_only, expect_resolved_images, expect_single_resolved};
 
 mod krpano_metadata;
 
-/// A dezoomer for krpano images
-/// See <https://krpano.com/docu/xml/#top>
+/// The krpano metadata discovery program.
+///
+/// The program owns only parser state. The application supplies the requested
+/// HTML, XML, and viewer-script bytes through [`DiscoverySession::advance`].
 #[derive(Default)]
-pub struct KrpanoDezoomer {
-    /// State machine for the `NeedsData` resolution chain.
-    state: ResolveState,
+pub struct KrpanoDezoomer;
+
+impl DiscoveryProgram for KrpanoDezoomer {
+    fn start(&self, input: &DiscoveryInput) -> Box<dyn DiscoverySession> {
+        Box::new(KrpanoSession {
+            input_uri: input.uri.clone(),
+            state: SessionState::Initial,
+        })
+    }
 }
 
-/// Where we are in the HTML → JS → XML → (decrypt JS) resolution chain.
-#[derive(Default)]
-enum ResolveState {
-    #[default]
-    None,
-    /// XML has been requested (from HTML or viewer-JS entry points).
-    /// Carries the viewer JS (if any) so it can be reused if the XML is
-    /// encrypted, plus remaining JS candidates to try on decrypt failure.
+/// One operation-local HTML → XML → viewer-JS resolution chain.
+struct KrpanoSession {
+    input_uri: String,
+    state: SessionState,
+}
+
+enum SessionState {
+    Initial,
+    WaitingInitial,
     NeedXml {
         xml_uri: String,
         viewer_js: Vec<u8>,
         remaining_js_uris: Vec<String>,
     },
-    /// Encrypted XML is pending; need the viewer JS to decrypt it.
-    /// (Used when the entry point is XML directly, not HTML.)
-    NeedJsToDecrypt {
+    NeedViewerJs {
         xml_uri: String,
         xml_contents: Vec<u8>,
         remaining_js_uris: Vec<String>,
     },
+    Complete,
 }
 
-impl Dezoomer for KrpanoDezoomer {
-    fn name(&self) -> &'static str {
-        "krpano"
-    }
-
-    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
-        self.handle_input(data, |uri, contents| {
-            Ok(load_images_from_properties(uri, contents)?.into())
-        })
-    }
-}
-
-impl KrpanoDezoomer {
-    /// Navigate the HTML → JS → XML → (decrypt if encrypted) resolution chain.
-    fn handle_input<T>(
-        &mut self,
-        data: &DezoomerInput,
-        parse: impl FnOnce(&str, &[u8]) -> Result<T, DezoomerError>,
-    ) -> Result<T, DezoomerError> {
-        if let Some(error) = self.handle_failed_js_download(data) {
-            return Err(error);
+impl DiscoverySession for KrpanoSession {
+    fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
+        match event {
+            DiscoveryEvent::Start if matches!(self.state, SessionState::Initial) => {
+                self.state = SessionState::WaitingInitial;
+                Ok(need(&self.input_uri, ResourcePurpose::InitialMetadata))
+            }
+            DiscoveryEvent::Start => Err(DiscoveryError::Session(
+                "krpano session started twice".into(),
+            )),
+            DiscoveryEvent::Resource(ResourceOutcome::Failure(failure)) => {
+                self.handle_failure(failure.message.as_str())
+            }
+            DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
+                self.handle_response(&response.bytes)
+            }
         }
+    }
+}
 
-        let DezoomerInputWithContents { uri, contents } = data.with_contents()?;
-        debug!(
-            "krpano handle_input: uri={uri}, content_len={}",
-            contents.len()
-        );
+impl KrpanoSession {
+    fn handle_failure(&mut self, message: &str) -> Result<DiscoveryStep, DiscoveryError> {
+        let state = std::mem::replace(&mut self.state, SessionState::Complete);
+        match state {
+            SessionState::NeedViewerJs {
+                xml_uri,
+                xml_contents,
+                mut remaining_js_uris,
+            } => {
+                if let Some(next_js_uri) = next_js_candidate(&mut remaining_js_uris) {
+                    self.state = SessionState::NeedViewerJs {
+                        xml_uri,
+                        xml_contents,
+                        remaining_js_uris,
+                    };
+                    Ok(need(&next_js_uri, ResourcePurpose::ViewerScript))
+                } else {
+                    Err(DiscoveryError::Session(format!(
+                        "failed to download krpano viewer script: {message}"
+                    )))
+                }
+            }
+            SessionState::Initial | SessionState::WaitingInitial | SessionState::NeedXml { .. } => {
+                Err(DiscoveryError::Session(format!(
+                    "failed to download krpano metadata: {message}"
+                )))
+            }
+            SessionState::Complete => Err(DiscoveryError::Session(
+                "krpano session has already completed".into(),
+            )),
+        }
+    }
 
-        match std::mem::take(&mut self.state) {
-            ResolveState::None => self.handle_initial_contents(uri, contents, parse),
-            ResolveState::NeedXml {
+    fn handle_response(&mut self, contents: &[u8]) -> Result<DiscoveryStep, DiscoveryError> {
+        let state = std::mem::replace(&mut self.state, SessionState::Complete);
+        match state {
+            SessionState::WaitingInitial => self.handle_initial(contents),
+            SessionState::Initial => Err(DiscoveryError::Session(
+                "krpano session received a resource before it started".into(),
+            )),
+            SessionState::NeedXml {
                 xml_uri,
                 viewer_js,
                 remaining_js_uris,
-            } => self.handle_requested_xml(contents, xml_uri, &viewer_js, remaining_js_uris, parse),
-            ResolveState::NeedJsToDecrypt {
+            } => self.handle_xml(contents, xml_uri, &viewer_js, remaining_js_uris),
+            SessionState::NeedViewerJs {
                 xml_uri,
                 xml_contents,
                 remaining_js_uris,
-            } => self.handle_viewer_js(contents, xml_uri, xml_contents, remaining_js_uris, parse),
+            } => self.handle_viewer_js(contents, xml_uri, xml_contents, remaining_js_uris),
+            SessionState::Complete => Err(DiscoveryError::Session(
+                "krpano session has already completed".into(),
+            )),
         }
     }
 
-    fn handle_failed_js_download(&mut self, data: &DezoomerInput) -> Option<DezoomerError> {
-        if !matches!(self.state, ResolveState::NeedJsToDecrypt { .. })
-            || !matches!(
-                data.contents,
-                PageContents::Error(_) | PageContents::Unknown
-            )
-        {
-            return None;
+    fn handle_initial(&mut self, contents: &[u8]) -> Result<DiscoveryStep, DiscoveryError> {
+        if !looks_like_krpano_xml(contents) && looks_like_viewer_js(contents) {
+            let xml_uri = sibling_uri(&self.input_uri, "tour.xml");
+            self.state = SessionState::NeedXml {
+                xml_uri: xml_uri.clone(),
+                viewer_js: contents.to_vec(),
+                remaining_js_uris: Vec::new(),
+            };
+            return Ok(need(&xml_uri, ResourcePurpose::Metadata));
         }
 
-        let ResolveState::NeedJsToDecrypt {
-            xml_uri,
-            xml_contents,
-            mut remaining_js_uris,
-        } = std::mem::take(&mut self.state)
-        else {
-            unreachable!();
-        };
-        if let Some(next_js_uri) = next_js_candidate(&mut remaining_js_uris) {
-            debug!(
-                "krpano: viewer JS download failed for {}; trying next JS candidate {next_js_uri}",
-                data.uri
+        if !looks_like_krpano_xml(contents) && looks_like_krpano_html(contents) {
+            let html = String::from_utf8_lossy(contents);
+            let remaining_js_uris = extract_js_candidates_from_html(&html, &self.input_uri);
+            let xml_uri = extract_xml_from_embedpano(&html).map_or_else(
+                || sibling_uri(&self.input_uri, "tour.xml"),
+                |reference| resolve_relative(&self.input_uri, &reference),
             );
-            self.state = ResolveState::NeedJsToDecrypt {
-                xml_uri,
-                xml_contents,
+            self.state = SessionState::NeedXml {
+                xml_uri: xml_uri.clone(),
+                viewer_js: Vec::new(),
                 remaining_js_uris,
             };
-            Some(DezoomerError::NeedsData { uri: next_js_uri })
-        } else {
-            Some(DezoomerError::DownloadError {
-                msg: format!("failed to download viewer JS from {}", data.uri),
-            })
+            return Ok(need(&xml_uri, ResourcePurpose::Metadata));
         }
+
+        if is_encrypted_xml(contents) {
+            if let Ok(decrypted) = decrypt_xml(contents, None) {
+                return self.complete(&self.input_uri.clone(), &decrypted);
+            }
+            let mut candidates = viewer_js_candidates_for_xml(&self.input_uri);
+            let viewer_uri = next_js_candidate(&mut candidates)
+                .unwrap_or_else(|| sibling_uri(&self.input_uri, "tour.js"));
+            self.state = SessionState::NeedViewerJs {
+                xml_uri: self.input_uri.clone(),
+                xml_contents: contents.to_vec(),
+                remaining_js_uris: candidates,
+            };
+            return Ok(need(&viewer_uri, ResourcePurpose::ViewerScript));
+        }
+
+        if looks_like_krpano_xml(contents) {
+            return self.complete(&self.input_uri.clone(), contents);
+        }
+
+        Ok(DiscoveryStep::Reject(DiscoveryDiagnostic::from(
+            "not krpano HTML, viewer JavaScript, or XML metadata",
+        )))
     }
 
-    fn handle_requested_xml<T>(
+    fn handle_xml(
         &mut self,
         contents: &[u8],
         xml_uri: String,
         viewer_js: &[u8],
         mut remaining_js_uris: Vec<String>,
-        parse: impl FnOnce(&str, &[u8]) -> Result<T, DezoomerError>,
-    ) -> Result<T, DezoomerError> {
-        debug!(
-            "krpano state=NeedXml → got content ({} bytes), xml_uri={xml_uri}",
-            contents.len()
-        );
-
+    ) -> Result<DiscoveryStep, DiscoveryError> {
         if !is_encrypted_xml(contents) {
-            debug!("krpano: XML is plain, parsing directly");
-            return parse(&xml_uri, contents);
+            return self.complete(&xml_uri, contents);
         }
 
-        let decrypt_result = if viewer_js.is_empty() {
-            debug!("krpano: XML is encrypted, trying decryption without viewer JS");
-            decrypt_xml(contents, None)
-        } else {
-            debug!(
-                "krpano: XML is encrypted, decrypting with saved viewer JS ({} bytes)",
-                viewer_js.len()
-            );
-            decrypt_xml(contents, Some(viewer_js))
-        };
-        match decrypt_result {
-            Ok(decrypted) => {
-                debug!("krpano: decrypted XML = {} bytes", decrypted.len());
-                parse(&xml_uri, &decrypted)
-            }
+        match decrypt_xml(contents, (!viewer_js.is_empty()).then_some(viewer_js)) {
+            Ok(decrypted) => self.complete(&xml_uri, &decrypted),
             Err(error) => {
-                let Some(next_js_uri) = next_js_candidate(&mut remaining_js_uris) else {
-                    return Err(error.into());
+                let Some(viewer_uri) = next_js_candidate(&mut remaining_js_uris) else {
+                    return Err(DiscoveryError::Session(format!(
+                        "unable to decrypt krpano XML: {error}"
+                    )));
                 };
-                debug!("krpano: decrypt failed: {error}; trying next JS candidate {next_js_uri}");
-                self.state = ResolveState::NeedJsToDecrypt {
+                self.state = SessionState::NeedViewerJs {
                     xml_uri,
                     xml_contents: contents.to_vec(),
                     remaining_js_uris,
                 };
-                Err(DezoomerError::NeedsData { uri: next_js_uri })
+                Ok(need(&viewer_uri, ResourcePurpose::ViewerScript))
             }
         }
     }
 
-    fn handle_viewer_js<T>(
+    fn handle_viewer_js(
         &mut self,
         contents: &[u8],
         xml_uri: String,
         xml_contents: Vec<u8>,
         mut remaining_js_uris: Vec<String>,
-        parse: impl FnOnce(&str, &[u8]) -> Result<T, DezoomerError>,
-    ) -> Result<T, DezoomerError> {
-        debug!(
-            "krpano state=NeedJsToDecrypt → got potential viewer JS ({} bytes)",
-            contents.len()
-        );
-
+    ) -> Result<DiscoveryStep, DiscoveryError> {
         let viewer_js = extract_viewer_js(contents).unwrap_or_else(|| contents.to_vec());
         match decrypt_xml(&xml_contents, Some(&viewer_js)) {
-            Ok(decrypted) => {
-                debug!("krpano: decrypted XML = {} bytes", decrypted.len());
-                parse(&xml_uri, &decrypted)
-            }
+            Ok(decrypted) => self.complete(&xml_uri, &decrypted),
             Err(error) => {
-                let Some(next_js_uri) = next_js_candidate(&mut remaining_js_uris) else {
-                    return Err(error.into());
+                let Some(viewer_uri) = next_js_candidate(&mut remaining_js_uris) else {
+                    return Err(DiscoveryError::Session(format!(
+                        "unable to decrypt krpano XML: {error}"
+                    )));
                 };
-                debug!(
-                    "krpano: decrypt failed with candidate JS: {error}; trying next JS candidate {next_js_uri}"
-                );
-                self.state = ResolveState::NeedJsToDecrypt {
+                self.state = SessionState::NeedViewerJs {
                     xml_uri,
                     xml_contents,
                     remaining_js_uris,
                 };
-                Err(DezoomerError::NeedsData { uri: next_js_uri })
+                Ok(need(&viewer_uri, ResourcePurpose::ViewerScript))
             }
         }
     }
 
-    fn handle_initial_contents<T>(
-        &mut self,
-        uri: &str,
-        contents: &[u8],
-        parse: impl FnOnce(&str, &[u8]) -> Result<T, DezoomerError>,
-    ) -> Result<T, DezoomerError> {
-        // If the content is a krpano XML file, skip HTML/JS detection and go
-        // straight to encrypted/plain XML handling.  XML files may contain
-        // <script> or embedpano() in comments or data blocks, which would
-        // otherwise trigger false HTML detection.
-        if !looks_like_krpano_xml(contents) && looks_like_viewer_js(contents) {
-            let xml_uri = sibling_uri(uri, "tour.xml");
-            debug!(
-                "krpano: content looks like viewer JS ({} bytes), requesting XML: {xml_uri}",
-                contents.len()
-            );
-            // Store the viewer JS so it can be used to decrypt the XML if it
-            // turns out to be encrypted.
-            self.state = ResolveState::NeedXml {
-                xml_uri: xml_uri.clone(),
-                viewer_js: contents.to_vec(),
-                remaining_js_uris: Vec::new(),
-            };
-            return Err(DezoomerError::NeedsData { uri: xml_uri });
-        }
-
-        if !looks_like_krpano_xml(contents) && looks_like_krpano_html(contents) {
-            debug!("krpano: content looks like HTML ({} bytes)", contents.len());
-            let html = String::from_utf8_lossy(contents);
-            let js_uris = extract_js_candidates_from_html(&html, uri);
-            let xml_uri = extract_xml_from_embedpano(&html).map_or_else(
-                || sibling_uri(uri, "tour.xml"),
-                |rel| resolve_relative(uri, &rel),
-            );
-
-            // Request the XML first.  For plain-XML pages this avoids fetching
-            // the viewer JS at all; for encrypted pages the JS candidates are
-            // tried only after encryption is detected.
-            debug!("krpano HTML: js_uris={js_uris:?}, xml_uri={xml_uri}");
-            self.state = ResolveState::NeedXml {
-                xml_uri: xml_uri.clone(),
-                viewer_js: Vec::new(),
-                remaining_js_uris: js_uris,
-            };
-            return Err(DezoomerError::NeedsData { uri: xml_uri });
-        }
-
-        if is_encrypted_xml(contents) {
-            // Try decrypting without the viewer JS first — works for public
-            // ClassicZ / ClassicB payloads whose default keys are known.
-            // This avoids an unnecessary network round trip for the JS file.
-            if let Ok(decrypted) = decrypt_xml(contents, None) {
-                debug!(
-                    "krpano: encrypted XML decrypted without viewer JS ({} bytes)",
-                    decrypted.len()
-                );
-                return parse(uri, &decrypted);
-            }
-
-            // Needs the viewer JS to extract the wrapper key and engine.
-            // Derive JS candidate URIs from the XML filename, with
-            // tour.js and krpano.js as fallbacks.
-            let mut js_uris = viewer_js_candidates_for_xml(uri);
-            let js_uri =
-                next_js_candidate(&mut js_uris).unwrap_or_else(|| sibling_uri(uri, "tour.js"));
-            debug!("krpano: encrypted XML needs viewer JS, requesting: {js_uri}");
-            self.state = ResolveState::NeedJsToDecrypt {
-                xml_uri: uri.to_string(),
-                xml_contents: contents.to_vec(),
-                remaining_js_uris: js_uris,
-            };
-            return Err(DezoomerError::NeedsData { uri: js_uri });
-        }
-
-        // Plain (non-encrypted) krpano XML — parse directly.
-        debug!(
-            "krpano: trying to parse as plain XML ({} bytes)",
-            contents.len()
-        );
-        parse(uri, contents)
+    fn complete(&mut self, uri: &str, bytes: &[u8]) -> Result<DiscoveryStep, DiscoveryError> {
+        let catalog = load_catalog(uri, bytes)?;
+        self.state = SessionState::Complete;
+        Ok(DiscoveryStep::Complete(catalog))
     }
+}
+
+fn need(uri: &str, purpose: ResourcePurpose) -> DiscoveryStep {
+    DiscoveryStep::Need(ResourceRequest::new(uri, purpose))
 }
 
 /// True if the content looks like a krpano XML file rather than HTML.
-///
-/// Detects an XML prolog (`<?xml`) or a `<krpano` root element.  This prevents
-/// XML files that contain `<script>` or `embedpano()` in comments or data
-/// blocks from being misclassified as HTML.
 fn looks_like_krpano_xml(contents: &[u8]) -> bool {
-    // Strip optional UTF-8 BOM, then leading whitespace.
     let contents = contents.strip_prefix(b"\xef\xbb\xbf").unwrap_or(contents);
     let text = String::from_utf8_lossy(contents);
     let trimmed = text.trim_start();
-    if trimmed.starts_with("<?xml") {
-        return true;
-    }
-    trimmed.to_ascii_lowercase().starts_with("<krpano")
+    trimmed.starts_with("<?xml") || trimmed.to_ascii_lowercase().starts_with("<krpano")
 }
 
-/// True if the content looks like a krpano HTML page.
-///
-/// Requires krpano-specific evidence (an `embedpano` call, a
-/// `createPanoViewer` call, or a `<script>` reference to a krpano viewer)
-/// so that generic HTML pages from other dezoomers are not claimed in
-/// auto mode.  All checks are case-insensitive.
+/// True if the content has krpano-specific HTML evidence.
 fn looks_like_krpano_html(contents: &[u8]) -> bool {
     let text = String::from_utf8_lossy(contents);
     let lower = text.to_ascii_lowercase();
-    // Strongest signal: the krpano embedding API is called.
-    if lower.contains("embedpano(") || lower.contains("createpanoviewer(") {
-        return true;
-    }
-    // Weaker signal: a <script> tag referencing a krpano viewer file.
-    // This avoids claiming arbitrary HTML pages that merely contain <script>.
-    lower.contains("<script") && (lower.contains("krpano") || lower.contains("tour.js"))
+    lower.contains("embedpano(")
+        || lower.contains("createpanoviewer(")
+        || (lower.contains("<script") && (lower.contains("krpano") || lower.contains("tour.js")))
 }
 
 /// True if the content looks like a krpano viewer JavaScript file.
-///
-/// Krpano viewer JS files have a UTF-8 BOM followed by either:
-/// - A `/* krpano ... */` comment header (krpano 1.16+), or
-/// - `function createPanoViewer(` / `function embedpano(` (very old versions).
 fn looks_like_viewer_js(contents: &[u8]) -> bool {
-    // Strip optional UTF-8 BOM.
-    let contents = if contents.starts_with(b"\xef\xbb\xbf") {
-        &contents[3..]
-    } else {
-        contents
-    };
-
-    // Modern krpano viewer JS (1.16+) starts with "/* krpano ... */" comment.
-    // Require "krpano" within the first 512 bytes to avoid false positives
-    // from unrelated JS files that happen to start with a comment.
+    let contents = contents.strip_prefix(b"\xef\xbb\xbf").unwrap_or(contents);
     if contents.starts_with(b"/*") {
-        let window = &contents[..contents.len().min(512)];
-        return window.windows(6).any(|w| w == b"krpano");
+        return contents[..contents.len().min(512)]
+            .windows(6)
+            .any(|window| window == b"krpano");
     }
-
-    // Very old krpano viewer JS starts with "function ".
-    // Look for known viewer entry points or "krpano" in the first 8 KB to avoid
-    // false positives on random JS files that start with "function ".
     if contents.starts_with(b"function ") {
         let window = &contents[..contents.len().min(8192)];
-        return window.windows(6).any(|w| w == b"krpano")
-            || window.windows(9).any(|w| w == b"embedpano")
-            || window.windows(16).any(|w| w == b"createPanoViewer");
+        return window.windows(6).any(|part| part == b"krpano")
+            || window.windows(9).any(|part| part == b"embedpano")
+            || window.windows(16).any(|part| part == b"createPanoViewer");
     }
-
     false
 }
 
-/// Try to extract viewer JS candidates from an HTML page.
-///
-/// The candidates are ranked so krpano viewer filenames (`tour.js`,
-/// `krpano.js`, `*krpano*.js`) come before common library or analytics
-/// scripts.  Less likely scripts are retained as fallbacks for encrypted XML
-/// pages whose actual viewer has a non-standard filename.
+/// Extract and rank viewer JavaScript candidates from a krpano HTML page.
 fn extract_js_candidates_from_html(html: &str, html_uri: &str) -> Vec<String> {
-    debug!(
-        "extract_js_from_html: scanning {} bytes of HTML",
-        html.len()
-    );
-
     let mut candidates = Vec::new();
     let mut seen = HashSet::new();
-
     for (index, tag) in SCRIPT_TAG_RE.find_iter(html).enumerate() {
-        let tag = tag.as_str();
-        let Some(src) = extract_src_attr(tag) else {
+        let Some(src) = extract_src_attr(tag.as_str()) else {
             continue;
         };
         if !is_javascript_src(&src) {
-            debug!("extract_js_from_html: skipping non-JS src: {src}");
             continue;
         }
-
-        let resolved = resolve_relative(html_uri, &src);
-        if seen.insert(resolved.clone()) {
-            let score = viewer_script_score(&src);
-            debug!("extract_js_from_html: candidate {src} → {resolved}, score={score}");
+        let uri = resolve_relative(html_uri, &src);
+        if seen.insert(uri.clone()) {
             candidates.push(ScriptCandidate {
-                uri: resolved,
-                score,
+                uri,
+                score: viewer_script_score(&src),
                 index,
             });
         }
     }
-
-    candidates.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.index.cmp(&b.index)));
-    let uris = candidates
+    candidates.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| left.index.cmp(&right.index))
+    });
+    candidates
         .into_iter()
         .map(|candidate| candidate.uri)
-        .collect::<Vec<_>>();
-
-    if !uris.is_empty() {
-        debug!("extract_js_from_html: ranked candidates={uris:?}");
-        return uris;
-    }
-
-    debug!("extract_js_from_html: no <script src> found");
-    Vec::new()
+        .collect()
 }
 
-/// Extract the XML URL from an `embedpano({xml:"..."})` or
-/// `createPanoViewer({xml:"..."})` call in an HTML page.
-///
-/// Tolerates whitespace around the `xml:` separator (e.g. `xml : "..."`) and
-/// whitespace between the closing `}` and `)` (e.g. pretty-printed `}\n);`).
-/// The embedding call name is matched case-insensitively.
 fn extract_xml_from_embedpano(html: &str) -> Option<String> {
-    // Case-insensitive search for the embedding call.
     let lower = html.to_ascii_lowercase();
     let start = lower
         .find("embedpano(")
         .or_else(|| lower.find("createpanoviewer("))?;
-    debug!("extract_xml_from_embedpano: found embed call at offset {start}");
     let body = &html[start..];
     let end = EMBEDPANO_END_RE.find(body)?;
     let params = &body[..end.end()];
-    let caps = EMBEDPANO_XML_RE.captures(params)?;
-    let xml = &caps[1];
-    debug!("extract_xml_from_embedpano: found xml={xml:?}");
-    Some(xml.to_string())
+    EMBEDPANO_XML_RE
+        .captures(params)
+        .map(|captures| captures[1].to_owned())
 }
 
-/// Extract the `src` attribute value from a <script> tag.
-fn extract_src_attr(line: &str) -> Option<String> {
-    let captures = SCRIPT_SRC_RE.captures(line)?;
+fn extract_src_attr(tag: &str) -> Option<String> {
+    let captures = SCRIPT_SRC_RE.captures(tag)?;
     captures
         .get(1)
         .or_else(|| captures.get(2))
         .or_else(|| captures.get(3))
-        .map(|capture| capture.as_str().to_string())
+        .map(|capture| capture.as_str().to_owned())
 }
 
-/// Extract viewer JS from a data block — the content might be the JS itself,
-/// or an HTML wrapper.  Returns the JS bytes if found.
 fn extract_viewer_js(contents: &[u8]) -> Option<Vec<u8>> {
     if looks_like_viewer_js(contents) {
         return Some(contents.to_vec());
     }
-    // If wrapped in HTML, look for inline <script> blocks.
     let text = String::from_utf8_lossy(contents);
-    if let Some(start) = text.find("<script>") {
-        let body = &text[start + 8..];
-        if let Some(end) = body.find("</script>") {
-            let js = body[..end].trim();
-            if looks_like_viewer_js(js.as_bytes()) {
-                return Some(js.as_bytes().to_vec());
-            }
-        }
-    }
-    None
+    let start = text.find("<script>")?;
+    let body = &text[start + 8..];
+    let end = body.find("</script>")?;
+    let script = body[..end].trim();
+    looks_like_viewer_js(script.as_bytes()).then(|| script.as_bytes().to_vec())
 }
 
-/// Build a list of candidate viewer JS URIs for an encrypted XML file.
-///
-/// The primary candidate is derived from the XML filename (e.g. `map_core.xml`
-/// → `map_core.js`), with `tour.js` and `krpano.js` as fallbacks.
 fn viewer_js_candidates_for_xml(xml_uri: &str) -> Vec<String> {
-    // Strip query/fragment so cache-busting params don't corrupt the stem.
-    let path = xml_uri.split_once(['?', '#']).map_or(xml_uri, |(p, _)| p);
-    let xml_stem = path
+    let path = xml_uri
+        .split_once(['?', '#'])
+        .map_or(xml_uri, |(path, _)| path);
+    let stem = path
         .rsplit(['/', '\\'])
         .next()
         .and_then(|name| name.rsplit_once('.').map(|(stem, _)| stem))
         .filter(|stem| !stem.is_empty())
         .unwrap_or("tour");
-    let mut candidates = vec![sibling_uri(xml_uri, &format!("{xml_stem}.js"))];
-    // Add common fallbacks, avoiding duplicates.
+    let mut candidates = vec![sibling_uri(xml_uri, &format!("{stem}.js"))];
     for fallback in ["tour.js", "krpano.js"] {
-        let uri = sibling_uri(xml_uri, fallback);
-        if !candidates.contains(&uri) {
-            candidates.push(uri);
+        let candidate = sibling_uri(xml_uri, fallback);
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
         }
     }
     candidates
 }
 
-/// Replace the last path component of `uri` with `filename`.
-///
-/// Handles both `/` (URLs, Unix paths) and `\` (Windows paths) as separators.
-/// For URLs with a scheme (`https://`), separators inside the `://` authority
-/// prefix are skipped so that bare-origin URLs like `https://example.com`
-/// resolve to `https://example.com/filename` rather than `https://filename`.
-/// Query strings and fragments in the URI are stripped.
 fn sibling_uri(uri: &str, filename: &str) -> String {
-    // Strip query/fragment so they don't interfere with path resolution.
     let uri = uri.split_once(['?', '#']).map_or(uri, |(path, _)| path);
-    // Find the start of the path (after the "://" scheme prefix if present).
-    let scheme_end = uri.find("://").map(|i| i + 3);
-    let search_start = scheme_end.unwrap_or(0);
-    let after_scheme = &uri[search_start..];
-    match after_scheme.rfind(['/', '\\']) {
-        Some(rel_idx) => {
-            let idx = search_start + rel_idx;
-            format!("{}{}{filename}", &uri[..idx], &uri[idx..=idx])
+    let search_start = uri.find("://").map_or(0, |index| index + 3);
+    match uri[search_start..].rfind(['/', '\\']) {
+        Some(relative_index) => {
+            let index = search_start + relative_index;
+            format!("{}{}{filename}", &uri[..index], &uri[index..=index])
         }
-        None => {
-            if scheme_end.is_some() {
-                // URL with no path after the authority: append "/filename".
-                format!("{uri}/{filename}")
-            } else {
-                // Local path with no separator: just the filename.
-                filename.to_string()
-            }
-        }
+        None if search_start > 0 => format!("{uri}/{filename}"),
+        None => filename.to_owned(),
     }
 }
 
@@ -534,26 +395,22 @@ struct ScriptCandidate {
 }
 
 static SCRIPT_TAG_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?is)<script\b[^>]*>").unwrap());
-
+    LazyLock::new(|| Regex::new(r"(?is)<script\b[^>]*>").expect("constant script tag regex"));
 static SCRIPT_SRC_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?is)(?:^|[\s<])src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))"#).unwrap()
+    Regex::new(r#"(?is)(?:^|[\s<])src\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))"#)
+        .expect("constant script source regex")
+});
+static EMBEDPANO_END_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\}\s*\)").expect("constant embed closing regex"));
+static EMBEDPANO_XML_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)\bxml[\"']?\s*:\s*[\"']([^\"']+)[\"']"#).expect("constant embed XML regex")
 });
 
-/// Matches the end of an `embedpano({...})` call, tolerating whitespace
-/// between `}` and `)` (e.g. pretty-printed `}\n);`).
-static EMBEDPANO_END_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\}\s*\)").unwrap());
-
-/// Matches the `xml` key inside an embedpano options object, tolerating
-/// whitespace around the colon and optional quotes around the key.
-static EMBEDPANO_XML_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"(?i)\bxml["']?\s*:\s*["']([^"']+)["']"#).unwrap());
-
 fn is_javascript_src(src: &str) -> bool {
-    let without_query = src.split_once(['?', '#']).map_or(src, |(path, _)| path);
-    let filename = without_query.rsplit(['/', '\\']).next().unwrap_or_default();
-    filename
-        .rsplit_once('.')
+    let path = src.split_once(['?', '#']).map_or(src, |(path, _)| path);
+    path.rsplit(['/', '\\'])
+        .next()
+        .and_then(|name| name.rsplit_once('.'))
         .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case("js"))
 }
 
@@ -563,13 +420,12 @@ fn viewer_script_score(src: &str) -> i32 {
         .split_once(['?', '#'])
         .map_or(lower.as_str(), |(path, _)| path);
     let filename = path.rsplit(['/', '\\']).next().unwrap_or(path);
-    let mut score = 0;
-
-    if filename == "tour.js" {
-        score += 1_000;
-    } else if filename == "krpano.js" {
-        score += 950;
-    } else {
+    let mut score = match filename {
+        "tour.js" => 1_000,
+        "krpano.js" => 950,
+        _ => 0,
+    };
+    if filename != "tour.js" && filename != "krpano.js" {
         if filename.contains("krpano") {
             score += 850;
         }
@@ -583,11 +439,9 @@ fn viewer_script_score(src: &str) -> i32 {
             score += 250;
         }
     }
-
     if is_common_non_viewer_script(filename) || is_common_non_viewer_script(path) {
         score -= 1_000;
     }
-
     score
 }
 
@@ -614,141 +468,130 @@ fn is_common_non_viewer_script(value: &str) -> bool {
     .any(|needle| value.contains(needle))
 }
 
-fn next_js_candidate(js_uris: &mut Vec<String>) -> Option<String> {
-    if js_uris.is_empty() {
-        None
-    } else {
-        Some(js_uris.remove(0))
+fn next_js_candidate(candidates: &mut Vec<String>) -> Option<String> {
+    (!candidates.is_empty()).then(|| candidates.remove(0))
+}
+
+fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
+    let metadata = KrpanoMetadata::from_bytes(contents)
+        .map_err(|error| DiscoveryError::Session(format!("unable to parse krpano XML: {error}")))?;
+    let global_title = metadata.get_title().unwrap_or_default().to_owned();
+    let metadata_provenance = provenance(url);
+    let mut entries = Vec::new();
+
+    for (image_index, ImageInfo { image, name }) in metadata.into_image_iter().enumerate() {
+        let root_tile_size = image.tilesize.map(Vec2d::square);
+        let base_index = image.baseindex;
+        let image_title = joined_nonempty([global_title.as_str(), name.as_ref()]);
+        let mut levels = Vec::new();
+        let mut warnings = Vec::new();
+
+        for (source_index, source_level) in image.into_levels().enumerate() {
+            for description in source_level.level_descriptions(None, source_index) {
+                let LevelDesc {
+                    name: shape_name,
+                    size,
+                    tilesize,
+                    url: template,
+                    level_index,
+                } = match description {
+                    Ok(description) => description,
+                    Err(error) => {
+                        warnings.push(format!("bad krpano level: {error}"));
+                        continue;
+                    }
+                };
+                let Some(tile_size) = tilesize.or(root_tile_size) else {
+                    warnings.push("bad krpano level: missing tile size".into());
+                    continue;
+                };
+                let level_number = level_index + base_index as usize;
+                for (side_name, template) in template.all_sides(level_number) {
+                    let ordinal = levels.len();
+                    let id = StableId::new(format!(
+                        "krpano:{image_index}:{source_index}:{ordinal}:{side_name}"
+                    ));
+                    let source = KrpanoLevel {
+                        base_url: Arc::from(url),
+                        size,
+                        tile_size,
+                        base_index,
+                        template,
+                        label: format_level_label(shape_name, side_name, &name),
+                        id: id.clone(),
+                    };
+                    levels.push(LevelDescriptor {
+                        id,
+                        title: level_title(&global_title, &name),
+                        size: Some(size),
+                        tile_size: Some(tile_size),
+                        scale_factor: None,
+                        has_overlapping_tiles: false,
+                        plan: LevelPlan::Known(KnownTilePlan::rectangular(source)),
+                        provenance: metadata_provenance.clone(),
+                        warnings: Vec::new(),
+                    });
+                }
+            }
+        }
+
+        entries.push(CatalogEntry::Ready(ImageDescriptor {
+            id: StableId::new(format!("krpano:{image_index}")),
+            title: image_title,
+            format: StableId::new("krpano"),
+            levels,
+            provenance: metadata_provenance.clone(),
+            warnings,
+        }));
     }
+    Ok(ImageCatalog::new(entries))
 }
 
-custom_error! {pub KrpanoError
-    XmlError{source: serde_xml_rs::Error} = "Unable to parse the krpano xml file: {source}",
+fn provenance(uri: &str) -> Provenance {
+    Provenance(vec![ProvenanceStep {
+        id: StableId::new("krpano:metadata"),
+        description: format!("parsed krpano metadata from {uri}"),
+    }])
 }
 
-impl From<krpano_decrypt::KrpanoDecryptError> for DezoomerError {
-    fn from(err: krpano_decrypt::KrpanoDecryptError) -> Self {
-        DezoomerError::Other { source: err.into() }
-    }
+fn joined_nonempty<'a>(parts: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    let title = parts.into_iter().filter(|part| !part.is_empty()).join(" ");
+    (!title.is_empty()).then_some(title)
 }
 
-impl From<KrpanoError> for DezoomerError {
-    fn from(err: KrpanoError) -> Self {
-        DezoomerError::Other { source: err.into() }
-    }
+fn level_title(global: &str, scene: &str) -> Option<String> {
+    (!(global.is_empty() && scene.is_empty())).then(|| [global, scene].join(" "))
 }
 
-fn load_images_from_properties(
-    url: &str,
-    contents: &[u8],
-) -> Result<Vec<ResolvedImage>, DezoomerError> {
-    let decrypted;
-    let contents = if is_encrypted_xml(contents) {
-        decrypted = decrypt_xml(contents, None)?;
-        decrypted.as_slice()
-    } else {
-        contents
-    };
-    let image_properties = KrpanoMetadata::from_bytes(contents).map_err(KrpanoError::from)?;
-    let base_url = Arc::from(url);
-    let global_title = image_properties.get_title().unwrap_or("").to_string();
-
-    let images = image_properties
-        .into_image_iter()
-        .map(|ImageInfo { image, name }| {
-            let root_tile_size = image.tilesize.map(Vec2d::square);
-            let base_index = image.baseindex;
-            let base_url = Arc::clone(&base_url);
-            let global_title_for_levels = Arc::from(global_title.as_str());
-            let name_for_levels = Arc::clone(&name);
-
-            let levels: ZoomLevels = image
-                .into_levels()
-                .enumerate()
-                .flat_map(move |(level_index, level)| {
-                    let name = Arc::clone(&name_for_levels);
-                    let base_url = Arc::clone(&base_url);
-                    let global_title = Arc::clone(&global_title_for_levels);
-                    level
-                        .level_descriptions(None, level_index)
-                        .into_iter()
-                        .flat_map(move |level_desc| {
-                            let name = Arc::clone(&name);
-                            let base_url = Arc::clone(&base_url);
-                            let global_title = Arc::clone(&global_title);
-                            level_desc
-                                .map_err(|err| warn!("bad krpano level: {err}"))
-                                .into_iter()
-                                .flat_map(
-                                    move |LevelDesc {
-                                              name: shape_name,
-                                              size,
-                                              tilesize,
-                                              url,
-                                              level_index,
-                                          }| {
-                                        let level = level_index + base_index as usize;
-                                        let name = Arc::clone(&name);
-                                        let base_url = Arc::clone(&base_url);
-                                        let global_title = Arc::clone(&global_title);
-                                        url.all_sides(level).filter_map(
-                                            move |(side_name, template)| {
-                                                let base_url = Arc::clone(&base_url);
-                                                let name = Arc::clone(&name);
-                                                let global_title = Arc::clone(&global_title);
-                                                tilesize.or(root_tile_size).map(|tile_size| Level {
-                                                    base_url,
-                                                    size,
-                                                    tile_size,
-                                                    base_index,
-                                                    template,
-                                                    shape_name,
-                                                    side_name,
-                                                    name: Arc::clone(&name),
-                                                    title: Arc::clone(&global_title),
-                                                })
-                                            },
-                                        )
-                                    },
-                                )
-                        })
-                })
-                .into_zoom_levels();
-
-            let image_title = if name.is_empty() && global_title.is_empty() {
-                None
-            } else {
-                let title = [global_title.as_str(), name.as_ref()]
-                    .iter()
-                    .filter(|s| !s.is_empty())
-                    .copied()
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                Some(title)
-            };
-
-            ResolvedImage::new(levels, image_title)
-        })
-        .collect::<Vec<_>>();
-
-    Ok(images)
+fn format_level_label(shape: &str, side: &str, scene: &str) -> String {
+    ["Krpano", shape, side, scene]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .join(" ")
 }
 
-#[derive(PartialEq, Eq)]
-struct Level {
+struct KrpanoLevel {
     base_url: Arc<str>,
     size: Vec2d,
     tile_size: Vec2d,
     base_index: u32,
     template: TemplateString<XY>,
-    shape_name: &'static str,
-    side_name: &'static str,
-    name: Arc<str>,
-    title: Arc<str>,
+    label: String,
+    id: StableId,
 }
 
-impl TilesRect for Level {
-    fn size(&self) -> Vec2d {
+impl fmt::Debug for KrpanoLevel {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.label)
+    }
+}
+
+impl RectangularSource for KrpanoLevel {
+    fn level_id(&self) -> StableId {
+        self.id.clone()
+    }
+
+    fn image_size(&self) -> Vec2d {
         self.size
     }
 
@@ -756,516 +599,412 @@ impl TilesRect for Level {
         self.tile_size
     }
 
-    fn tile_url(&self, Vec2d { x, y }: Vec2d) -> String {
+    fn request(&self, cell: Vec2d) -> Request {
         use std::fmt::Write;
-        let mut result = String::new();
+        let mut relative = String::new();
         for part in &self.template.0 {
             match part {
-                TemplateStringPart::Literal(s) => result += s,
+                TemplateStringPart::Literal(value) => relative += value,
                 TemplateStringPart::Variable { padding, variable } => {
                     write!(
-                        result,
+                        relative,
                         "{value:0padding$}",
                         value = self.base_index
                             + match variable {
-                                XY::X => x,
-                                XY::Y => y,
+                                XY::X => cell.x,
+                                XY::Y => cell.y,
                             },
-                        padding = *padding
+                        padding = *padding,
                     )
-                    .unwrap();
+                    .expect("writing to String cannot fail");
                 }
             }
         }
-        resolve_relative(&self.base_url, &result)
+        Request::new(resolve_relative(&self.base_url, &relative))
     }
 
-    fn title(&self) -> Option<String> {
-        if self.title.is_empty() && self.name.is_empty() {
-            None
-        } else {
-            let title = [self.title.as_ref(), self.name.as_ref()].join(" ");
-            Some(title)
+    fn processing(&self) -> ProcessingRecipe {
+        ProcessingRecipe::None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn image(catalog: ImageCatalog) -> ImageDescriptor {
+        match catalog.into_entries().into_iter().next().unwrap() {
+            CatalogEntry::Ready(image) => image,
+            CatalogEntry::Deferred(_) => panic!("krpano XML is ready"),
         }
     }
 
-    fn tile_ref(&self, pos: Vec2d) -> TileReference {
-        TileReference {
-            url: self.tile_url(pos),
-            position: self.tile_size() * pos,
+    fn tile_requests(level: &LevelDescriptor, count: usize) -> Vec<(String, Vec2d)> {
+        let plan = match &level.plan {
+            LevelPlan::Known(plan) => plan,
+            LevelPlan::Adaptive(_) => panic!("krpano plans are known"),
+        };
+        plan.cursor()
+            .take_ready(count)
+            .unwrap()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|tile| (tile.request.uri, tile.destination))
+            .collect()
+    }
+
+    fn catalog_from_xml(uri: &str, contents: &[u8]) -> ImageCatalog {
+        load_catalog(uri, contents).unwrap()
+    }
+
+    fn discover_single_resource(uri: &str, bytes: Vec<u8>) -> ImageCatalog {
+        let input = DiscoveryInput::from(uri);
+        let mut session = KrpanoDezoomer.start(&input);
+        assert!(matches!(
+            session.advance(DiscoveryEvent::Start).unwrap(),
+            DiscoveryStep::Need(ResourceRequest { request, purpose: ResourcePurpose::InitialMetadata })
+                if request.uri == uri
+        ));
+        match session
+            .advance(DiscoveryEvent::Resource(&ResourceOutcome::Response(
+                crate::core::ResourceResponse {
+                    id: crate::core::RequestId(0),
+                    bytes,
+                    content_type: None,
+                },
+            )))
+            .unwrap()
+        {
+            DiscoveryStep::Complete(catalog) => catalog,
+            _ => panic!("plain XML completes discovery"),
         }
     }
-}
 
-impl std::fmt::Debug for Level {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let parts = ["Krpano", self.shape_name, self.side_name, &self.name];
-        write!(f, "{}", parts.iter().filter(|s| !s.is_empty()).join(" "))
-    }
-}
-
-#[test]
-fn test_cube() {
-    let image = expect_only(load_images_from_properties(
-        "http://test.com",
-        r#"<krpano showerrors="false" logkey="false">
-        <image type="cube" multires="true" tilesize="512" progressive="false" multiresthreshold="-0.3">
-            <level download="view" decode="view" tiledimagewidth="1000" tiledimageheight="100">
-                <cube url="http://example.com/%s/%r/%c.jpg"/>
-            </level>
-        </image>
-        </krpano>"#.as_bytes(),
-    ).unwrap());
-    let mut levels = image.into_zoom_levels();
-    assert_eq!(levels.len(), 6);
-    assert_eq!(levels[0].size_hint(), Some(Vec2d { x: 1000, y: 100 }));
-    assert_eq!(format!("{:?}", levels[0]), "Krpano Cube forward");
-    assert_eq!(
-        levels[0].next_tiles(None),
-        vec![
-            TileReference {
-                url: "http://example.com/f/1/1.jpg".to_string(),
-                position: Vec2d { x: 0, y: 0 }
-            },
-            TileReference {
-                url: "http://example.com/f/1/2.jpg".to_string(),
-                position: Vec2d { x: 512, y: 0 }
-            }
-        ]
-    );
-}
-
-#[test]
-fn test_flat_multires() {
-    let image = expect_only(
-        load_images_from_properties(
+    #[test]
+    fn test_cube() {
+        let image = image(catalog_from_xml(
             "http://test.com",
-            r#"<krpano>
-        <image>
-            <flat url="level=%l x=%0x y=%0y" multires="1,2x3,3x4x3"/>
-        </image>
-        </krpano>"#
-                .as_bytes(),
-        )
-        .unwrap(),
-    );
-    let mut levels = image.into_zoom_levels();
-    assert_eq!(levels.len(), 2);
-    assert_eq!(levels[1].size_hint(), Some(Vec2d { x: 3, y: 4 }));
-    assert_eq!(format!("{:?}", levels[0]), "Krpano Flat");
-    assert_eq!(
-        levels[1].next_tiles(None),
-        vec![
-            TileReference {
-                url: "http://test.com/level=2%20x=01%20y=01".to_string(),
-                position: Vec2d { x: 0, y: 0 }
-            },
-            TileReference {
-                url: "http://test.com/level=2%20x=01%20y=02".to_string(),
-                position: Vec2d { x: 0, y: 3 }
-            }
-        ]
-    );
-}
-
-#[cfg(test)]
-const BELLEGAMBE_XML_URL: &str =
-    "https://pba.lille.fr/gigapixels/Gigapixelweb/gigapixels_1515_bellegambe/gigapixels.xml";
-
-#[cfg(test)]
-fn assert_bellegambe_levels(levels: &ZoomLevels) {
-    let expected_sizes = [
-        Vec2d { x: 512, y: 342 },
-        Vec2d { x: 768, y: 514 },
-        Vec2d { x: 1536, y: 1026 },
-        Vec2d { x: 3072, y: 2052 },
-        Vec2d { x: 5888, y: 3930 },
-        Vec2d { x: 11904, y: 7946 },
-        Vec2d { x: 23808, y: 15892 },
-        Vec2d { x: 47616, y: 31782 },
-        Vec2d { x: 94976, y: 63392 },
-    ];
-    assert_eq!(levels.len(), expected_sizes.len());
-    assert_eq!(
-        levels
-            .iter()
-            .map(|level| level.size_hint())
-            .collect::<Vec<_>>(),
-        expected_sizes.into_iter().map(Some).collect::<Vec<_>>()
-    );
-
-    let selected_level = &levels[7];
-    assert_eq!(selected_level.tile_count_hint(), Some(5859));
-    assert_eq!(
-        selected_level
-            .http_headers()
-            .get("Referer")
-            .map(String::as_str),
-        Some(
-            "https://pba.lille.fr/gigapixels/Gigapixelweb/gigapixels_1515_bellegambe/gigapixels.tiles/l8/001/l8_001_001.jpg"
-        )
-    );
-}
-
-#[test]
-fn explicit_levels_expand_level_placeholder() {
-    let data = std::fs::read("testdata/krpano/pba_lille_gigapixels_1515_bellegambe.xml").unwrap();
-    let image = expect_only(load_images_from_properties(BELLEGAMBE_XML_URL, &data).unwrap());
-    let levels = image.into_zoom_levels();
-    assert_bellegambe_levels(&levels);
-}
-
-#[test]
-fn explicit_levels_expand_level_placeholder_in_image() {
-    let data = std::fs::read("testdata/krpano/pba_lille_gigapixels_1515_bellegambe.xml").unwrap();
-    let input = DezoomerInput {
-        uri: BELLEGAMBE_XML_URL.to_string(),
-        contents: PageContents::Success(data),
-    };
-    let image = expect_single_resolved(KrpanoDezoomer::default().images(&input).unwrap());
-    let levels = image.into_zoom_levels();
-    assert_bellegambe_levels(&levels);
-}
-
-#[test]
-fn test_single_image() {
-    let mut dezoomer = KrpanoDezoomer::default();
-    let data = r#"<krpano>
-        <image>
-            <flat url="level=%l x=%0x y=%0y" multires="1,2x3,3x4x3"/>
-        </image>
-        </krpano>"#
-        .as_bytes();
-
-    let input = DezoomerInput {
-        uri: "http://test.com".to_string(),
-        contents: PageContents::Success(data.to_vec()),
-    };
-
-    let image = expect_single_resolved(dezoomer.images(&input).unwrap());
-    assert_eq!(image.title(), None);
-    assert_eq!(image.levels().len(), 2);
-}
-
-#[test]
-fn test_cube_faces_form_one_image() {
-    let mut dezoomer = KrpanoDezoomer::default();
-    let data = r#"<krpano showerrors="false" logkey="false">
-        <image type="cube" multires="true" tilesize="512" progressive="false" multiresthreshold="-0.3">
-            <level download="view" decode="view" tiledimagewidth="1000" tiledimageheight="100">
-                <cube url="http://example.com/%s/%r/%c.jpg"/>
-            </level>
-        </image>
-        </krpano>"#.as_bytes();
-
-    let input = DezoomerInput {
-        uri: "http://test.com".to_string(),
-        contents: PageContents::Success(data.to_vec()),
-    };
-
-    let image = expect_single_resolved(dezoomer.images(&input).unwrap());
-    assert_eq!(image.title(), None);
-    assert_eq!(image.levels().len(), 6);
-}
-
-#[test]
-fn test_multiple_scenes_remain_separate() {
-    let mut dezoomer = KrpanoDezoomer::default();
-    let data = std::fs::read("testdata/krpano/krpano_scenes.xml").unwrap();
-
-    let input = DezoomerInput {
-        uri: "http://test.com/scenes.xml".to_string(),
-        contents: PageContents::Success(data),
-    };
-
-    let images = expect_resolved_images(dezoomer.images(&input).unwrap());
-    let titles = images.iter().map(ResolvedImage::title).collect::<Vec<_>>();
-    assert_eq!(
-        titles,
-        [
-            Some(
-                " Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_Color"
-            ),
-            Some(
-                " Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_3D"
-            ),
-            Some(
-                " Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_3Dcolor"
-            ),
-        ]
-    );
-}
-
-#[test]
-fn encrypted_xml_decrypted_without_js() {
-    // Public ClassicB (KENCPUBR) can be decrypted without viewer JS.
-    // This fixture has only the encrypted XML + expected plaintext (no JS).
-    let xml = std::fs::read("testdata/krpano/encrypted/2013-08-09-B/tour.xml").unwrap();
-    let expected = std::fs::read_to_string("testdata/krpano/encrypted/2013-08-09-B/plaintext.xml")
-        .unwrap()
-        .replace("\r\n", "\n"); // the decrypted XML may have CRLF line endings on Windows
-
-    let plaintext_bytes = krpano_decrypt::decrypt_xml(&xml, None).unwrap();
-    let plaintext = std::str::from_utf8(&plaintext_bytes).unwrap();
-    assert_eq!(
-        plaintext, expected,
-        "decrypted plaintext does not match expected plaintext.xml"
-    );
-}
-
-#[test]
-fn html_script_candidates_prefer_krpano_viewer() {
-    let html = r#"
-        <html>
-            <head>
-                <script src="/assets/jquery.min.js"></script>
-                <script src='https://www.googletagmanager.com/gtag/js?id=G-TEST'></script>
-                <script data-src="ignored.js" src = "assets/tour.js?cache=1"></script>
-            </head>
-        </html>
-    "#;
-
-    let candidates = extract_js_candidates_from_html(html, "http://example.com/pano/index.html");
-    assert_eq!(
-        candidates.first().map(String::as_str),
-        Some("http://example.com/pano/assets/tour.js?cache=1")
-    );
-}
-
-#[test]
-fn sibling_uri_handles_url_and_local_paths() {
-    // HTTP URL: last segment replaced, separator preserved.
-    assert_eq!(
-        sibling_uri("http://example.com/pano/tour.js", "tour.xml"),
-        "http://example.com/pano/tour.xml"
-    );
-    // Trailing-slash URL keeps the slash.
-    assert_eq!(
-        sibling_uri("http://example.com/pano/", "tour.xml"),
-        "http://example.com/pano/tour.xml"
-    );
-    // Unix local path.
-    assert_eq!(
-        sibling_uri("/home/user/tour.js", "tour.xml"),
-        "/home/user/tour.xml"
-    );
-    // Windows local path uses backslash separator.
-    assert_eq!(
-        sibling_uri("C:\\foo\\bar\\tour.js", "tour.xml"),
-        "C:\\foo\\bar\\tour.xml"
-    );
-    // UNC path.
-    assert_eq!(
-        sibling_uri("\\\\server\\share\\tour.js", "tour.xml"),
-        "\\\\server\\share\\tour.xml"
-    );
-    // No separator: just the filename.
-    assert_eq!(sibling_uri("tour.js", "tour.xml"), "tour.xml");
-    // Bare-origin URL (no path after authority): append "/filename".
-    assert_eq!(
-        sibling_uri("https://example.com", "tour.xml"),
-        "https://example.com/tour.xml"
-    );
-    assert_eq!(
-        sibling_uri("http://example.com", "tour.js"),
-        "http://example.com/tour.js"
-    );
-    // Bare-origin URL with query/fragment: strip query before appending.
-    assert_eq!(
-        sibling_uri("https://example.com?scene=1", "tour.xml"),
-        "https://example.com/tour.xml"
-    );
-    assert_eq!(
-        sibling_uri("https://example.com#section", "tour.xml"),
-        "https://example.com/tour.xml"
-    );
-    // URL with path and query: strip query, replace last segment.
-    assert_eq!(
-        sibling_uri("https://example.com/pano/tour.js?cache=1", "tour.xml"),
-        "https://example.com/pano/tour.xml"
-    );
-}
-
-#[test]
-fn viewer_js_candidates_derived_from_xml_filename() {
-    // Custom XML name → derived JS first, then fallbacks.
-    assert_eq!(
-        viewer_js_candidates_for_xml("https://example.com/panos/map_core.xml"),
-        vec![
-            "https://example.com/panos/map_core.js".to_string(),
-            "https://example.com/panos/tour.js".to_string(),
-            "https://example.com/panos/krpano.js".to_string(),
-        ]
-    );
-    // tour.xml → tour.js first, then krpano.js (no duplicate).
-    assert_eq!(
-        viewer_js_candidates_for_xml("https://example.com/tour.xml"),
-        vec![
-            "https://example.com/tour.js".to_string(),
-            "https://example.com/krpano.js".to_string(),
-        ]
-    );
-    // Query/fragment stripped before deriving the stem.
-    assert_eq!(
-        viewer_js_candidates_for_xml("https://example.com/panos/map_core.xml?v=1.2"),
-        vec![
-            "https://example.com/panos/map_core.js".to_string(),
-            "https://example.com/panos/tour.js".to_string(),
-            "https://example.com/panos/krpano.js".to_string(),
-        ]
-    );
-}
-
-#[test]
-fn extract_xml_from_embedpano_tolerates_whitespace() {
-    // Whitespace before the colon: `xml : "..."`.
-    let html = r#"<script>embedpano({ xml : "panos/tour.xml", target:"pano" });</script>"#;
-    assert_eq!(
-        extract_xml_from_embedpano(html),
-        Some("panos/tour.xml".to_string())
-    );
-
-    // Pretty-printed ending: `}\n);` with whitespace between } and ).
-    let html = r#"
-        embedpano({
-            xml: "panos/tour.xml"
-        }
+            br#"<krpano showerrors="false" logkey="false">
+            <image type="cube" multires="true" tilesize="512" progressive="false" multiresthreshold="-0.3">
+                <level download="view" decode="view" tiledimagewidth="1000" tiledimageheight="100">
+                    <cube url="http://example.com/%s/%r/%c.jpg"/>
+                </level>
+            </image>
+            </krpano>"#,
+        ));
+        assert_eq!(image.levels.len(), 6);
+        assert_eq!(image.levels[0].size, Some(Vec2d { x: 1000, y: 100 }));
+        assert_eq!(
+            format_level_label("Cube", "forward", ""),
+            "Krpano Cube forward"
         );
-    "#;
-    assert_eq!(
-        extract_xml_from_embedpano(html),
-        Some("panos/tour.xml".to_string())
-    );
+        assert_eq!(
+            tile_requests(&image.levels[0], 2),
+            vec![
+                ("http://example.com/f/1/1.jpg".into(), Vec2d { x: 0, y: 0 }),
+                (
+                    "http://example.com/f/1/2.jpg".into(),
+                    Vec2d { x: 512, y: 0 }
+                ),
+            ]
+        );
+    }
 
-    // Quoted key: `"xml": "..."`.
-    let html = r#"embedpano({ "xml": "panos/tour.xml" });"#;
-    assert_eq!(
-        extract_xml_from_embedpano(html),
-        Some("panos/tour.xml".to_string())
-    );
+    #[test]
+    fn test_flat_multires() {
+        let image = image(catalog_from_xml(
+            "http://test.com",
+            br#"<krpano><image><flat url="level=%l x=%0x y=%0y" multires="1,2x3,3x4x3"/></image></krpano>"#,
+        ));
+        assert_eq!(image.levels.len(), 2);
+        assert_eq!(image.levels[1].size, Some(Vec2d { x: 3, y: 4 }));
+        assert_eq!(format_level_label("Flat", "", ""), "Krpano Flat");
+        assert_eq!(
+            tile_requests(&image.levels[1], 2),
+            vec![
+                (
+                    "http://test.com/level=2%20x=01%20y=01".into(),
+                    Vec2d { x: 0, y: 0 }
+                ),
+                (
+                    "http://test.com/level=2%20x=01%20y=02".into(),
+                    Vec2d { x: 0, y: 3 }
+                ),
+            ]
+        );
+    }
 
-    // Older createPanoViewer API.
-    let html = r#"<script>createPanoViewer({ xml: "panos/tour.xml" });</script>"#;
-    assert_eq!(
-        extract_xml_from_embedpano(html),
-        Some("panos/tour.xml".to_string())
-    );
+    const BELLEGAMBE_XML_URL: &str =
+        "https://pba.lille.fr/gigapixels/Gigapixelweb/gigapixels_1515_bellegambe/gigapixels.xml";
 
-    // Case-insensitive embedding call lookup.
-    let html = r#"<script>EMBEDPANO({ xml: "panos/tour.xml" });</script>"#;
-    assert_eq!(
-        extract_xml_from_embedpano(html),
-        Some("panos/tour.xml".to_string())
-    );
-    let html = r#"<script>CreatePanoViewer({ xml: "panos/tour.xml" });</script>"#;
-    assert_eq!(
-        extract_xml_from_embedpano(html),
-        Some("panos/tour.xml".to_string())
-    );
-}
+    fn assert_bellegambe_levels(levels: &[LevelDescriptor]) {
+        let expected_sizes = [
+            Vec2d { x: 512, y: 342 },
+            Vec2d { x: 768, y: 514 },
+            Vec2d { x: 1536, y: 1026 },
+            Vec2d { x: 3072, y: 2052 },
+            Vec2d { x: 5888, y: 3930 },
+            Vec2d { x: 11904, y: 7946 },
+            Vec2d { x: 23808, y: 15892 },
+            Vec2d { x: 47616, y: 31782 },
+            Vec2d { x: 94976, y: 63392 },
+        ];
+        assert_eq!(levels.len(), expected_sizes.len());
+        assert_eq!(
+            levels.iter().map(|level| level.size).collect::<Vec<_>>(),
+            expected_sizes.into_iter().map(Some).collect::<Vec<_>>()
+        );
+        let plan = match &levels[7].plan {
+            LevelPlan::Known(plan) => plan,
+            LevelPlan::Adaptive(_) => unreachable!(),
+        };
+        assert_eq!(plan.len(), 5859);
+        assert_eq!(
+            plan.tile(0)
+                .unwrap()
+                .unwrap()
+                .request
+                .headers
+                .get("Referer")
+                .map(String::as_str),
+            Some(
+                "https://pba.lille.fr/gigapixels/Gigapixelweb/gigapixels_1515_bellegambe/gigapixels.tiles/l8/001/l8_001_001.jpg"
+            )
+        );
+    }
 
-#[test]
-fn looks_like_krpano_xml_detects_xml_roots() {
-    // XML prolog.
-    assert!(looks_like_krpano_xml(
-        b"<?xml version=\"1.0\"?><krpano></krpano>"
-    ));
-    // Direct <krpano> root.
-    assert!(looks_like_krpano_xml(b"<krpano><image></image></krpano>"));
-    // BOM + XML prolog.
-    assert!(looks_like_krpano_xml(
-        b"\xef\xbb\xbf<?xml version=\"1.0\"?><krpano/>"
-    ));
-    // XML with <script> inside should still be detected as XML, not HTML.
-    assert!(looks_like_krpano_xml(
-        b"<?xml version=\"1.0\"?><krpano><action><![CDATA[embedpano();]]></action></krpano>"
-    ));
-    // HTML is not XML.
-    assert!(!looks_like_krpano_xml(b"<html><body></body></html>"));
-    // Viewer JS is not XML.
-    assert!(!looks_like_krpano_xml(b"/* krpano */ function() {}"));
-}
+    #[test]
+    fn explicit_levels_expand_level_placeholder() {
+        let data =
+            std::fs::read("testdata/krpano/pba_lille_gigapixels_1515_bellegambe.xml").unwrap();
+        assert_bellegambe_levels(&image(catalog_from_xml(BELLEGAMBE_XML_URL, &data)).levels);
+    }
 
-#[test]
-fn viewer_js_is_detected_before_html_embed_markers() {
-    let mut dezoomer = KrpanoDezoomer::default();
-    let viewer_js = b"function embedpano(opts) { /* krpano viewer */ }";
-    let data = DezoomerInput {
-        uri: "https://example.com/krpano.js".to_string(),
-        contents: PageContents::Success(viewer_js.to_vec()),
-    };
+    #[test]
+    fn explicit_levels_expand_level_placeholder_in_discovery() {
+        let data =
+            std::fs::read("testdata/krpano/pba_lille_gigapixels_1515_bellegambe.xml").unwrap();
+        assert_bellegambe_levels(&image(discover_single_resource(BELLEGAMBE_XML_URL, data)).levels);
+    }
 
-    let err = dezoomer.images(&data).unwrap_err();
+    #[test]
+    fn test_single_image() {
+        let image = image(catalog_from_xml("http://test.com", br#"<krpano><image><flat url="level=%l x=%0x y=%0y" multires="1,2x3,3x4x3"/></image></krpano>"#));
+        assert_eq!(image.title, None);
+        assert_eq!(image.levels.len(), 2);
+    }
 
-    assert!(matches!(
-        err,
-        DezoomerError::NeedsData { ref uri } if uri == "https://example.com/tour.xml"
-    ));
-    assert!(matches!(
-        dezoomer.state,
-        ResolveState::NeedXml { ref viewer_js, ref remaining_js_uris, .. }
-            if viewer_js == b"function embedpano(opts) { /* krpano viewer */ }"
-                && remaining_js_uris.is_empty()
-    ));
-}
+    #[test]
+    fn test_cube_faces_form_one_image() {
+        let image = image(catalog_from_xml("http://test.com", br#"<krpano><image tilesize="512"><level tiledimagewidth="1000" tiledimageheight="100"><cube url="http://example.com/%s/%r/%c.jpg"/></level></image></krpano>"#));
+        assert_eq!(image.title, None);
+        assert_eq!(image.levels.len(), 6);
+    }
 
-#[test]
-fn old_create_pano_viewer_js_is_detected_as_viewer_js() {
-    let mut dezoomer = KrpanoDezoomer::default();
-    let viewer_js = b"function createPanoViewer(opts) { return buildViewer(opts); }";
-    let data = DezoomerInput {
-        uri: "https://example.com/viewer.js".to_string(),
-        contents: PageContents::Success(viewer_js.to_vec()),
-    };
+    #[test]
+    fn test_multiple_scenes_remain_separate() {
+        let data = std::fs::read("testdata/krpano/krpano_scenes.xml").unwrap();
+        let titles = catalog_from_xml("http://test.com/scenes.xml", &data)
+            .into_entries()
+            .into_iter()
+            .map(|entry| match entry {
+                CatalogEntry::Ready(image) => image.title,
+                CatalogEntry::Deferred(_) => unreachable!(),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(titles, [Some(" Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_Color".into()), Some(" Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_3D".into()), Some(" Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France) scene_3Dcolor".into())]);
+    }
 
-    let err = dezoomer.images(&data).unwrap_err();
+    #[test]
+    fn encrypted_xml_decrypted_without_js() {
+        let xml = std::fs::read("testdata/krpano/encrypted/2013-08-09-B/tour.xml").unwrap();
+        let expected =
+            std::fs::read_to_string("testdata/krpano/encrypted/2013-08-09-B/plaintext.xml")
+                .unwrap()
+                .replace("\r\n", "\n");
+        let plaintext = String::from_utf8(decrypt_xml(&xml, None).unwrap()).unwrap();
+        assert_eq!(
+            plaintext, expected,
+            "decrypted plaintext does not match expected plaintext.xml"
+        );
+    }
 
-    assert!(matches!(
-        err,
-        DezoomerError::NeedsData { ref uri } if uri == "https://example.com/tour.xml"
-    ));
-    assert!(matches!(
-        dezoomer.state,
-        ResolveState::NeedXml { ref viewer_js, ref remaining_js_uris, .. }
-            if viewer_js == b"function createPanoViewer(opts) { return buildViewer(opts); }"
-                && remaining_js_uris.is_empty()
-    ));
-}
+    #[test]
+    fn html_script_candidates_prefer_krpano_viewer() {
+        let html = r#"<html><head><script src="/assets/jquery.min.js"></script><script src='https://www.googletagmanager.com/gtag/js?id=G-TEST'></script><script data-src="ignored.js" src = "assets/tour.js?cache=1"></script></head></html>"#;
+        assert_eq!(
+            extract_js_candidates_from_html(html, "http://example.com/pano/index.html")
+                .first()
+                .map(String::as_str),
+            Some("http://example.com/pano/assets/tour.js?cache=1")
+        );
+    }
 
-#[test]
-fn looks_like_krpano_html_requires_krpano_evidence() {
-    // embedpano call — strongest signal.
-    assert!(looks_like_krpano_html(
-        b"<html><script>embedpano({xml:'tour.xml'})</script></html>"
-    ));
-    // Uppercase tags + embedpano (case-insensitive).
-    assert!(looks_like_krpano_html(
-        b"<HTML><BODY><SCRIPT>EMBEDPANO({xml:'tour.xml'})</SCRIPT></BODY></HTML>"
-    ));
-    // createPanoViewer — older API.
-    assert!(looks_like_krpano_html(
-        b"<script>createPanoViewer({xml:'tour.xml'});</script>"
-    ));
-    // <script> with krpano viewer reference.
-    assert!(looks_like_krpano_html(
-        b"<html><script src='krpano.js'></script></html>"
-    ));
-    // <script> with tour.js reference.
-    assert!(looks_like_krpano_html(
-        b"<html><script src='tour.js'></script></html>"
-    ));
-    // Uppercase <SCRIPT> with tour.js.
-    assert!(looks_like_krpano_html(
-        b"<HTML><SCRIPT SRC='tour.js'></SCRIPT></HTML>"
-    ));
-    // Generic HTML with <script> but no krpano evidence — should NOT match.
-    assert!(!looks_like_krpano_html(
-        b"<html><script src='jquery.min.js'></script></html>"
-    ));
-    // Generic HTML with uppercase <SCRIPT> — should NOT match.
-    assert!(!looks_like_krpano_html(
-        b"<HTML><SCRIPT src='analytics.js'></SCRIPT></HTML>"
-    ));
-    // Plain HTML, no scripts at all.
-    assert!(!looks_like_krpano_html(b"<html><body>Hello</body></html>"));
+    #[test]
+    fn sibling_uri_handles_url_and_local_paths() {
+        assert_eq!(
+            sibling_uri("http://example.com/pano/tour.js", "tour.xml"),
+            "http://example.com/pano/tour.xml"
+        );
+        assert_eq!(
+            sibling_uri("http://example.com/pano/", "tour.xml"),
+            "http://example.com/pano/tour.xml"
+        );
+        assert_eq!(
+            sibling_uri("/home/user/tour.js", "tour.xml"),
+            "/home/user/tour.xml"
+        );
+        assert_eq!(
+            sibling_uri("C:\\foo\\bar\\tour.js", "tour.xml"),
+            "C:\\foo\\bar\\tour.xml"
+        );
+        assert_eq!(
+            sibling_uri("\\\\server\\share\\tour.js", "tour.xml"),
+            "\\\\server\\share\\tour.xml"
+        );
+        assert_eq!(sibling_uri("tour.js", "tour.xml"), "tour.xml");
+        assert_eq!(
+            sibling_uri("https://example.com", "tour.xml"),
+            "https://example.com/tour.xml"
+        );
+        assert_eq!(
+            sibling_uri("http://example.com", "tour.js"),
+            "http://example.com/tour.js"
+        );
+        assert_eq!(
+            sibling_uri("https://example.com?scene=1", "tour.xml"),
+            "https://example.com/tour.xml"
+        );
+        assert_eq!(
+            sibling_uri("https://example.com#section", "tour.xml"),
+            "https://example.com/tour.xml"
+        );
+        assert_eq!(
+            sibling_uri("https://example.com/pano/tour.js?cache=1", "tour.xml"),
+            "https://example.com/pano/tour.xml"
+        );
+    }
+
+    #[test]
+    fn viewer_js_candidates_derived_from_xml_filename() {
+        assert_eq!(
+            viewer_js_candidates_for_xml("https://example.com/panos/map_core.xml"),
+            vec![
+                "https://example.com/panos/map_core.js",
+                "https://example.com/panos/tour.js",
+                "https://example.com/panos/krpano.js"
+            ]
+        );
+        assert_eq!(
+            viewer_js_candidates_for_xml("https://example.com/tour.xml"),
+            vec![
+                "https://example.com/tour.js",
+                "https://example.com/krpano.js"
+            ]
+        );
+        assert_eq!(
+            viewer_js_candidates_for_xml("https://example.com/panos/map_core.xml?v=1.2"),
+            vec![
+                "https://example.com/panos/map_core.js",
+                "https://example.com/panos/tour.js",
+                "https://example.com/panos/krpano.js"
+            ]
+        );
+    }
+
+    #[test]
+    fn extract_xml_from_embedpano_tolerates_whitespace() {
+        for html in [
+            r#"<script>embedpano({ xml : "panos/tour.xml", target:"pano" });</script>"#,
+            r#"embedpano({ "xml": "panos/tour.xml" });"#,
+            r#"<script>createPanoViewer({ xml: "panos/tour.xml" });</script>"#,
+            r#"<script>EMBEDPANO({ xml: "panos/tour.xml" });</script>"#,
+            r#"<script>CreatePanoViewer({ xml: "panos/tour.xml" });</script>"#,
+        ] {
+            assert_eq!(
+                extract_xml_from_embedpano(html),
+                Some("panos/tour.xml".into())
+            );
+        }
+        assert_eq!(
+            extract_xml_from_embedpano("embedpano({\n xml: \"panos/tour.xml\"\n}\n);"),
+            Some("panos/tour.xml".into())
+        );
+    }
+
+    #[test]
+    fn looks_like_krpano_xml_detects_xml_roots() {
+        assert!(looks_like_krpano_xml(
+            b"<?xml version=\"1.0\"?><krpano></krpano>"
+        ));
+        assert!(looks_like_krpano_xml(b"<krpano><image></image></krpano>"));
+        assert!(looks_like_krpano_xml(
+            b"\xef\xbb\xbf<?xml version=\"1.0\"?><krpano/>"
+        ));
+        assert!(looks_like_krpano_xml(
+            b"<?xml version=\"1.0\"?><krpano><action><![CDATA[embedpano();]]></action></krpano>"
+        ));
+        assert!(!looks_like_krpano_xml(b"<html><body></body></html>"));
+        assert!(!looks_like_krpano_xml(b"/* krpano */ function() {}"));
+    }
+
+    #[test]
+    fn viewer_js_is_detected_before_html_embed_markers() {
+        let mut session =
+            KrpanoDezoomer.start(&DiscoveryInput::from("https://example.com/krpano.js"));
+        let _ = session.advance(DiscoveryEvent::Start).unwrap();
+        let step = session
+            .advance(DiscoveryEvent::Resource(&ResourceOutcome::Response(
+                crate::core::ResourceResponse {
+                    id: crate::core::RequestId(0),
+                    bytes: b"function embedpano(opts) { /* krpano viewer */ }".to_vec(),
+                    content_type: None,
+                },
+            )))
+            .unwrap();
+        assert!(
+            matches!(step, DiscoveryStep::Need(ResourceRequest { request, purpose: ResourcePurpose::Metadata }) if request.uri == "https://example.com/tour.xml")
+        );
+    }
+
+    #[test]
+    fn old_create_pano_viewer_js_is_detected_as_viewer_js() {
+        let mut session =
+            KrpanoDezoomer.start(&DiscoveryInput::from("https://example.com/viewer.js"));
+        let _ = session.advance(DiscoveryEvent::Start).unwrap();
+        let step = session
+            .advance(DiscoveryEvent::Resource(&ResourceOutcome::Response(
+                crate::core::ResourceResponse {
+                    id: crate::core::RequestId(0),
+                    bytes: b"function createPanoViewer(opts) { return buildViewer(opts); }"
+                        .to_vec(),
+                    content_type: None,
+                },
+            )))
+            .unwrap();
+        assert!(
+            matches!(step, DiscoveryStep::Need(ResourceRequest { request, purpose: ResourcePurpose::Metadata }) if request.uri == "https://example.com/tour.xml")
+        );
+    }
+
+    #[test]
+    fn looks_like_krpano_html_requires_krpano_evidence() {
+        for html in [
+            b"<html><script>embedpano({xml:'tour.xml'})</script></html>".as_slice(),
+            b"<HTML><BODY><SCRIPT>EMBEDPANO({xml:'tour.xml'})</SCRIPT></BODY></HTML>".as_slice(),
+            b"<script>createPanoViewer({xml:'tour.xml'});</script>".as_slice(),
+            b"<html><script src='krpano.js'></script></html>".as_slice(),
+            b"<html><script src='tour.js'></script></html>".as_slice(),
+            b"<HTML><SCRIPT SRC='tour.js'></SCRIPT></HTML>".as_slice(),
+        ] {
+            assert!(looks_like_krpano_html(html));
+        }
+        for html in [
+            b"<html><script src='jquery.min.js'></script></html>".as_slice(),
+            b"<HTML><SCRIPT src='analytics.js'></SCRIPT></HTML>".as_slice(),
+            b"<html><body>Hello</body></html>".as_slice(),
+        ] {
+            assert!(!looks_like_krpano_html(html));
+        }
+    }
 }

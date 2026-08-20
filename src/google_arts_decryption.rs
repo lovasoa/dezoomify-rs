@@ -1,3 +1,5 @@
+//! Native processing for Google Arts & Culture encrypted tile payloads.
+
 use crate::binary_display::display_bytes;
 use aes::cipher::{BlockModeDecrypt, KeyIvInit, block_padding::NoPadding};
 use custom_error::custom_error;

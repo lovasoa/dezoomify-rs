@@ -28,32 +28,15 @@ native: ResourceNeed -> acquire/retry/cache/decode/write/present
 `Registry::start` creates a fresh, resumable `DiscoveryOperation`. A registry
 can be shared, but parser state, request IDs, supplied metadata, diagnostics,
 and provenance belong to that one operation. The application drives it without
-an async runtime requirement in core:
+an async runtime requirement in core: repeatedly inspect `missing_resources`,
+supply each result with `provide` or `provide_failure`, then call `finish`.
 
-```rust,ignore
-let mut operation = registry.start(input_uri)?;
-while !operation.is_complete() {
-    for need in operation.missing_resources()? {
-        match application.load(&need).await {
-            Ok((bytes, content_type)) => operation.provide(ResourceResponse {
-                id: need.id,
-                bytes,
-                content_type,
-            })?,
-            Err(error) => operation.provide_failure(ResourceFailure {
-                id: need.id,
-                message: error.to_string(),
-            })?,
-        }
-    }
-}
-let catalog = operation.finish()?;
-```
-
-Requests are deduplicated by URI and portable request requirements within one
-operation. A response fans out to every candidate waiting for it. Request IDs
-are stable within an operation and the registry rejects duplicate stable IDs or
-ambiguous format/rule precedence.
+Requests are deduplicated by canonical `Request` (URI, ordered headers, and
+accepted content types) within one operation. A response fans out to every
+candidate waiting for it. Request IDs are stable within an operation and the
+registry rejects duplicate stable IDs or ambiguous format/rule precedence.
+Candidate-local parse errors reject only that candidate, allowing automatic
+discovery to continue.
 
 A catalog may contain `CatalogEntry::Deferred` values. This deliberately
 preserves current manifest and bulk behavior: the application can select one
@@ -64,102 +47,53 @@ driver may retain a resource cache across child operations.
 ## Tile programs
 
 A known level uses `KnownTilePlan`: it is immutable, canonical, and replayable.
-The rectangular helper supplies row-major request and placement geometry:
-
-```rust,ignore
-let plan = KnownTilePlan::rectangular_grid(
-    StableId::from("example/full"),
-    Dimensions::new(1_000, 700),
-    Dimensions::new(256, 256),
-    Point::new(0, 0),
-    |Point { x, y }| RequestSpec::new(format!("https://tiles.example/{x}_{y}.jpg")),
-)?;
-```
+`KnownTilePlan::rectangular` accepts a `RectangularSource` describing the level
+ID, image and tile sizes, overlap, processing recipe, and request generation;
+the helper supplies row-major request and placement geometry.
 
 The application can create independent cursors with `plan.cursor()` and pull
-bounded batches using `take_ready`. A `TileSpec` states the request, source and
-destination regions, expected dimensions, and processing recipe; it never
+bounded batches using `take_ready`. A `TileSpec` states the request, optional
+source region, destination origin, optional expected dimensions, and processing recipe; it never
 commands the application to fetch or decode.
 
 Adaptive formats use an operation-owned adaptive `TileProgram` instead. The
 application requests a bounded ready batch and submits observations keyed by
-tile ID. Probe tiles are marked `TileRole::Probe`; their expected misses are
-discovery information, not missing output pixels. Output tiles use
-`TileRole::Output` and determine output completeness.
+tile ID. Pure probes use `TileRole::Probe`; `TileRole::ProbeAndOutput` means a
+successful probe is also an output tile, while an expected miss is discovery
+information rather than a missing output pixel. `TileRole::Output` tiles always
+participate in output completeness.
 
 ## Extension paths
 
 All registrations have a stable ID and an explicit `Priority` (lower runs
-first). The three extension mechanisms deliberately remain separate.
+first). The core registry knows nothing about concrete formats. The application
+composes built-in programs and applies the CLI's established URL hints. The
+three extension mechanisms deliberately remain separate.
 
 ### 1. New format
 
-Implement a pure `FormatHandler` and `FormatSession`; parse only bytes supplied
+Implement a pure `DiscoveryProgram` and `DiscoverySession`; parse only bytes supplied
 through `ResourceOutcome`, then return an `ImageCatalog`. Fixed-grid formats
-should use `KnownTilePlan::rectangular_grid` rather than implement scheduling.
-
-```rust,ignore
-struct ExampleFormat;
-
-impl FormatHandler for ExampleFormat {
-    fn id(&self) -> &'static str { "example" }
-    fn start(&self, _: &DiscoveryInput) -> Box<dyn FormatSession> {
-        Box::new(ExampleSession)
-    }
-}
-
-impl FormatSession for ExampleSession {
-    fn start(&mut self, _: &DiscoveryInput) -> Result<SessionStep, DiscoveryError> {
-        Ok(SessionStep::Need(ResourceRequest::new(
-            "memory://example-metadata", ResourcePurpose::Metadata,
-        )))
-    }
-    fn provide(&mut self, metadata: &ResourceOutcome) -> Result<SessionStep, DiscoveryError> {
-        let catalog = parse_example(metadata)?; // builds descriptors and a KnownTilePlan
-        Ok(SessionStep::Complete(catalog))
-    }
-}
-
-registry.register_format("example", Priority(20), std::sync::Arc::new(ExampleFormat));
-```
+should use `KnownTilePlan::rectangular` rather than implement scheduling.
 
 ### 2. Site-specific discovery for an existing format
 
-A `DiscoveryRule` may parse a supplied page or JSON resource, request one more
+A `DiscoveryProgram` may parse a supplied page or JSON resource, request one more
 resource, then delegate the resulting candidate to an existing format ID. It
 must not copy that format's metadata parser or tile logic.
 
-```rust,ignore
-// A rule session extracted `info_json` from supplied page bytes.
-Ok(SessionStep::Delegate(Delegation {
-    format_id: "iiif".into(),
-    input: DiscoveryInput::from(info_json),
-}))
-
-registry.register_rule("example-site-page", Priority(10), Arc::new(ExampleSiteRule));
-```
-
-The operation records `ProvenanceEvent::RuleDelegated`, so callers can explain
-how an endpoint was discovered.
+Accepted delegation steps are attached to catalog provenance so callers can
+explain how an endpoint was discovered.
 
 ### 3. Deployment profile for an existing format
 
-A `Profile` adapts the catalog returned by a base format. Keep the change
-narrow: repair a known metadata quirk, adjust a URI or request requirement, or
-select a protocol-specific tile recipe. Do not replace the base parser.
+A `Profile` is a narrow, pure transformation around a delegated base format.
+It may adapt the delegated input, a described resource request, the supplied
+resource outcome, or the completed catalog. This lets a deployment repair
+malformed metadata before the base parser sees it, adjust URI or header
+requirements, and adapt a tile scheme without replacing the base parser.
 
-```rust,ignore
-struct ExampleProfile;
-impl Profile for ExampleProfile {
-    fn id(&self) -> &'static str { "example-profile" }
-    fn apply(&self, catalog: ImageCatalog) -> Result<ImageCatalog, DiscoveryError> {
-        Ok(repair_known_deployment_quirk(catalog))
-    }
-}
-
-registry.register_profile("example-profile", Priority(30), Arc::new(ExampleProfile));
-```
-
-Applied profiles are recorded as `ProvenanceEvent::ProfileApplied`. Registry
-validation makes duplicate IDs and equal-precedence registrations actionable
-errors instead of source-order accidents.
+Profile chains are inherited by nested delegation and applied in declaration
+order at every boundary. Applied profiles are attached to the returned catalog.
+Registry validation makes duplicate IDs and equal-precedence registrations
+actionable errors instead of source-order accidents.

@@ -8,12 +8,12 @@ use serde::{Deserialize, Deserializer, de};
 use custom_error::custom_error;
 use evalexpr::DefaultNumericTypes;
 
-use crate::{TileReference, Vec2d};
+use crate::Vec2d;
 
 use super::variable::{BadVariableError, Variables};
 
-#[derive(Deserialize, Debug)]
-pub struct TileSet {
+#[derive(Clone, Deserialize, Debug)]
+pub(crate) struct TileSet {
     variables: Variables,
     url_template: UrlTemplate,
 
@@ -31,25 +31,44 @@ fn default_y_template() -> IntTemplate {
     "y".parse().unwrap()
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TileEntry {
+    pub(crate) uri: String,
+    pub(crate) position: Vec2d,
+}
+
 impl<'a> IntoIterator for &'a TileSet {
-    type Item = Result<TileReference, UrlTemplateError>;
+    type Item = Result<TileEntry, UrlTemplateError>;
     type IntoIter = Box<dyn Iterator<Item = Self::Item> + 'a>;
 
     fn into_iter(self) -> Self::IntoIter {
-        Box::new(self.variables.iter_contexts().map(move |ctx| {
-            let ctx = ctx?;
-            Ok(TileReference {
-                url: self.url_template.eval(&ctx)?,
-                position: Vec2d {
-                    x: self.x_template.eval(&ctx)?,
-                    y: self.y_template.eval(&ctx)?,
-                },
-            })
-        }))
+        Box::new(
+            (0..self.variables.cardinality().unwrap_or(0)).map(move |index| self.tile_at(index)),
+        )
     }
 }
 
-#[derive(Debug)]
+impl TileSet {
+    pub(crate) fn len(&self) -> Result<u64, BadVariableError> {
+        self.variables.cardinality()
+    }
+
+    pub(crate) fn tile_at(&self, ordinal: u64) -> Result<TileEntry, UrlTemplateError> {
+        let context = self
+            .variables
+            .context_at(ordinal)
+            .map_err(|source| UrlTemplateError::BadVariable { source })?;
+        Ok(TileEntry {
+            uri: self.url_template.eval(&context)?,
+            position: Vec2d {
+                x: self.x_template.eval(&context)?,
+                y: self.y_template.eval(&context)?,
+            },
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
 struct IntTemplate(evalexpr::Node);
 
 impl IntTemplate {
@@ -70,7 +89,7 @@ impl FromStr for IntTemplate {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct StrTemplate(evalexpr::Node);
 
 impl StrTemplate {
@@ -119,7 +138,7 @@ impl<'de> Deserialize<'de> for IntTemplate {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct UrlTemplate {
     parts: Vec<UrlPart>,
 }
@@ -168,7 +187,7 @@ impl<'de> Deserialize<'de> for UrlTemplate {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum UrlPart {
     Constant(String),
     Expression {
@@ -218,10 +237,9 @@ mod tests {
 
     use evalexpr::ContextWithMutableVariables;
 
-    use crate::TileReference;
-
-    use super::super::tile_set::{IntTemplate, TileSet, UrlTemplate, UrlTemplateError};
+    use super::super::tile_set::{IntTemplate, TileEntry, TileSet, UrlTemplate, UrlTemplateError};
     use super::super::variable::{VarOrConst, Variables};
+    use crate::Vec2d;
 
     #[test]
     fn url_template_evaluation() -> Result<(), UrlTemplateError> {
@@ -255,11 +273,24 @@ mod tests {
             y_template: IntTemplate::from_str("y").unwrap(),
         };
         let tile_refs: Vec<_> = ts.into_iter().collect::<Result<_, _>>().unwrap();
-        let expected: Vec<_> = vec!["0 0 0/0", "0 1 0/1", "1 0 1/0", "1 1 1/1"]
-            .into_iter()
-            .map(TileReference::from_str)
-            .collect::<Result<_, _>>()
-            .unwrap();
+        let expected = vec![
+            TileEntry {
+                uri: "0/0".into(),
+                position: Vec2d { x: 0, y: 0 },
+            },
+            TileEntry {
+                uri: "0/1".into(),
+                position: Vec2d { x: 0, y: 1 },
+            },
+            TileEntry {
+                uri: "1/0".into(),
+                position: Vec2d { x: 1, y: 0 },
+            },
+            TileEntry {
+                uri: "1/1".into(),
+                position: Vec2d { x: 1, y: 1 },
+            },
+        ];
         assert_eq!(expected, tile_refs);
     }
 
@@ -279,11 +310,24 @@ url_template: "{{x*tile_size}}/{{y*tile_size}}"
         "#;
         let ts: TileSet = serde_yaml::from_str(serialized).unwrap();
         let tile_refs: Vec<_> = ts.into_iter().collect::<Result<_, _>>().unwrap();
-        let expected: Vec<_> = vec!["0 0 0/0", "0 1 0/100", "1 0 100/0", "1 1 100/100"]
-            .into_iter()
-            .map(TileReference::from_str)
-            .collect::<Result<_, _>>()
-            .unwrap();
+        let expected = vec![
+            TileEntry {
+                uri: "0/0".into(),
+                position: Vec2d { x: 0, y: 0 },
+            },
+            TileEntry {
+                uri: "0/100".into(),
+                position: Vec2d { x: 0, y: 1 },
+            },
+            TileEntry {
+                uri: "100/0".into(),
+                position: Vec2d { x: 1, y: 0 },
+            },
+            TileEntry {
+                uri: "100/100".into(),
+                position: Vec2d { x: 1, y: 1 },
+            },
+        ];
         assert_eq!(expected, tile_refs);
     }
 }

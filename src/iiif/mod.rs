@@ -1,25 +1,26 @@
 use std::sync::Arc;
 
 use custom_error::custom_error;
-use log::{debug, warn};
-
 use tile_info::ImageInfo;
 
-use crate::dezoomer::{
-    Dezoomer, DezoomerError, DezoomerInput, ImageUrl, Images, IntoZoomLevels, ResolvedImage,
-    TilesRect, Vec2d, ZoomLevel, ZoomLevels,
+use crate::Vec2d;
+use crate::core::discovery::DiscoveryEvent;
+use crate::core::tile_plan::RectangularSource;
+use crate::core::{
+    CatalogEntry, DeferredImage, DiscoveryError, DiscoveryInput, DiscoveryProgram,
+    DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
+    LevelPlan, Provenance, Request, ResourceOutcome, ResourcePurpose, ResourceRequest, StableId,
 };
 use crate::iiif::tile_info::TileSizeFormat;
 use crate::json_utils::all_json;
-use crate::max_size_in_rect;
 
 pub mod manifest_types;
 pub mod tile_info;
 
-/// Dezoomer for the International Image Interoperability Framework.
+/// IIIF discovery program.
 /// See <https://iiif.io/>
 #[derive(Default)]
-pub struct IIIF;
+pub struct IiifDezoomer;
 
 /// Determines the best title for an image from IIIF manifest metadata
 #[must_use]
@@ -54,171 +55,240 @@ custom_error! {pub IIIFError
     ManifestParseError{description: String} = "Could not parse IIIF manifest: {description}",
 }
 
-impl From<IIIFError> for DezoomerError {
+impl From<IIIFError> for DiscoveryError {
     fn from(err: IIIFError) -> Self {
-        DezoomerError::Other { source: err.into() }
+        Self::Session(err.to_string())
     }
 }
 
-impl Dezoomer for IIIF {
-    fn name(&self) -> &'static str {
-        "iiif"
+impl DiscoveryProgram for IiifDezoomer {
+    fn start(&self, input: &DiscoveryInput) -> Box<dyn DiscoverySession> {
+        Box::new(IiifSession {
+            uri: input.uri.clone(),
+            requested: false,
+        })
     }
+}
 
-    fn images(&mut self, data: &DezoomerInput) -> Result<Images, DezoomerError> {
-        let with_contents = data.with_contents()?;
-        let contents = with_contents.contents;
-        let uri = with_contents.uri;
+struct IiifSession {
+    uri: String,
+    requested: bool,
+}
 
-        // First, try to determine what type of IIIF content this is by doing a quick parse
-        // to check the "type" field without generating warnings
-        if let Ok(quick_check) = serde_json::from_slice::<serde_json::Value>(contents)
-            && let Some(type_value) = quick_check.get("type").or_else(|| quick_check.get("@type"))
-            && let Some(type_str) = type_value.as_str()
-        {
-            match type_str {
-                "ImageService2" | "ImageService3" | "iiif:ImageProfile" => {
-                    // This is clearly an Image Service info.json, try parsing it directly
-                    let levels = zoom_levels(uri, contents)?;
-                    let image = ResolvedImage::new(levels, None);
-                    return Ok(image.into());
-                }
-                "Manifest" | "sc:Manifest" => {
-                    // This is clearly a manifest, try parsing it as such
-                    match parse_iiif_manifest_from_bytes(contents, uri) {
-                        Ok(image_infos) if !image_infos.is_empty() => {
-                            return Ok(images_from_manifest_info(image_infos));
-                        }
-                        Ok(_) => {
-                            // Empty image_infos, fall through to heuristic approach
-                        }
-                        Err(e) => return Err(e.into()),
+impl DiscoverySession for IiifSession {
+    fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
+        match event {
+            DiscoveryEvent::Start if !self.requested => {
+                self.requested = true;
+                Ok(DiscoveryStep::Need(ResourceRequest::new(
+                    self.uri.clone(),
+                    ResourcePurpose::InitialMetadata,
+                )))
+            }
+            DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
+                catalog(&self.uri, &response.bytes).map(DiscoveryStep::Complete)
+            }
+            DiscoveryEvent::Resource(ResourceOutcome::Failure(failure)) => {
+                Err(DiscoveryError::Session(failure.message.clone()))
+            }
+            DiscoveryEvent::Start => {
+                Err(DiscoveryError::Session("IIIF session started twice".into()))
+            }
+        }
+    }
+}
+
+fn catalog(uri: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
+    // First, try to determine what type of IIIF content this is by doing a quick parse
+    // to check the "type" field without generating warnings
+    if let Ok(quick_check) = serde_json::from_slice::<serde_json::Value>(contents)
+        && let Some(type_value) = quick_check.get("type").or_else(|| quick_check.get("@type"))
+        && let Some(type_str) = type_value.as_str()
+    {
+        match type_str {
+            "ImageService2" | "ImageService3" | "iiif:ImageProfile" => {
+                // This is clearly an Image Service info.json, try parsing it directly
+                return catalog_from_info(uri, contents);
+            }
+            "Manifest" | "sc:Manifest" => {
+                // This is clearly a manifest, try parsing it as such
+                match parse_iiif_manifest_from_bytes(contents, uri) {
+                    Ok(image_infos) if !image_infos.is_empty() => {
+                        return Ok(catalog_from_manifest_info(image_infos, None));
                     }
+                    Ok(_) => {
+                        // Empty image_infos, fall through to heuristic approach
+                    }
+                    Err(e) => return Err(e.into()),
                 }
-                _ => {
-                    // Unknown type, fall through to heuristic detection below
-                }
-            }
-        }
-
-        // If type detection didn't work or type is unknown, use heuristic approach
-        // Check if URL suggests it's an info.json file
-        if uri.ends_with("/info.json") {
-            // Likely an Image Service, try parsing as info.json first
-            if let Ok(levels) = zoom_levels(uri, contents) {
-                let image = ResolvedImage::new(levels, None);
-                return Ok(image.into());
-            }
-            // Fall through to try as manifest
-        }
-
-        // Try to parse as IIIF manifest
-        match parse_iiif_manifest_from_bytes(contents, uri) {
-            Ok(image_infos) if !image_infos.is_empty() => {
-                // Successfully parsed as manifest with images
-                Ok(images_from_manifest_info(image_infos))
             }
             _ => {
-                // Not a manifest or failed to parse as manifest, try as info.json
-                match zoom_levels(uri, contents) {
-                    Ok(levels) => {
-                        let image = ResolvedImage::new(levels, None);
-                        Ok(image.into())
-                    }
-                    Err(e) => Err(e.into()),
-                }
+                // Unknown type, fall through to heuristic detection below
+            }
+        }
+    }
+
+    // If type detection didn't work or type is unknown, use heuristic approach
+    // Check if URL suggests it's an info.json file
+    if uri.ends_with("/info.json") {
+        // Likely an Image Service, try parsing as info.json first
+        if let Ok(catalog) = catalog_from_info(uri, contents) {
+            return Ok(catalog);
+        }
+        // Fall through to try as manifest
+    }
+
+    // Try to parse as IIIF manifest
+    let manifest_warning = manifest_type_warning(contents);
+    match parse_iiif_manifest_from_bytes(contents, uri) {
+        Ok(image_infos) if !image_infos.is_empty() => {
+            // Successfully parsed as manifest with images
+            Ok(catalog_from_manifest_info(image_infos, manifest_warning))
+        }
+        _ => {
+            // Not a manifest or failed to parse as manifest, try as info.json
+            match catalog_from_info(uri, contents) {
+                Ok(catalog) => Ok(catalog),
+                Err(e) => Err(e),
             }
         }
     }
 }
 
-fn images_from_manifest_info(image_infos: Vec<manifest_types::ExtractedImageInfo>) -> Images {
-    let image_urls: Vec<ImageUrl> = image_infos
+fn catalog_from_manifest_info(
+    image_infos: Vec<manifest_types::ExtractedImageInfo>,
+    warning: Option<String>,
+) -> ImageCatalog {
+    let warnings: Vec<String> = warning.into_iter().collect();
+    let entries: Vec<_> = image_infos
         .into_iter()
-        .map(|image_info| {
+        .enumerate()
+        .map(|(ordinal, image_info)| {
             let title = determine_title(&image_info);
-            ImageUrl {
-                url: image_info.image_uri,
+            CatalogEntry::Deferred(DeferredImage {
+                id: StableId::new(format!(
+                    "iiif:manifest:{}:{ordinal}",
+                    image_info.canvas_index
+                )),
+                uri: image_info.image_uri,
                 title,
-            }
+                provenance: Provenance::default(),
+                warnings: warnings.clone(),
+            })
         })
         .collect();
-
-    image_urls.into()
+    ImageCatalog::new(entries)
 }
 
-fn zoom_levels(url: &str, raw_info: &[u8]) -> Result<ZoomLevels, IIIFError> {
+fn catalog_from_info(url: &str, raw_info: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
+    let mut levels = levels(url, raw_info)?;
+    let mut warnings = Vec::new();
+    for level in &mut levels {
+        for warning in level.warnings.drain(..) {
+            if !warnings.contains(&warning) {
+                warnings.push(warning);
+            }
+        }
+    }
+    Ok(ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
+        id: StableId::new("iiif:image"),
+        title: None,
+        format: StableId::new("iiif"),
+        levels,
+        provenance: Provenance::default(),
+        warnings,
+    })]))
+}
+
+fn manifest_type_warning(contents: &[u8]) -> Option<String> {
+    let value = serde_json::from_slice::<serde_json::Value>(contents).ok()?;
+    let type_value = value.get("type").or_else(|| value.get("@type"))?;
+    let type_name = type_value.as_str()?;
+    (!matches!(
+        type_name,
+        "Manifest" | "sc:Manifest" | "ImageService2" | "ImageService3" | "iiif:ImageProfile"
+    ))
+    .then(|| format!("IIIF manifest has unexpected type '{type_name}'; attempting lenient parsing"))
+}
+
+fn levels(url: &str, raw_info: &[u8]) -> Result<Vec<LevelDescriptor>, IIIFError> {
     match serde_json::from_slice(raw_info) {
-        Ok(info) => Ok(zoom_levels_from_info(url, info)),
+        Ok(info) => Ok(levels_from_info(url, info)),
         Err(e) => {
             // Due to the very fault-tolerant way we parse iiif manifests, a single javascript
             // object with a 'width' and a 'height' field is enough to be detected as an IIIF level
             // See https://github.com/lovasoa/dezoomify-rs/issues/80
-            let levels: Vec<ZoomLevel> = all_json::<ImageInfo>(raw_info)
-                .filter(|info| {
-                    let keep = info.has_distinctive_iiif_properties();
-                    if keep {
-                        debug!(
-                            "keeping image info {info:?} because it has distinctive IIIF properties"
-                        );
-                    } else {
-                        debug!("dropping level {info:?}");
-                    }
-                    keep
-                })
-                .flat_map(|info| zoom_levels_from_info(url, info))
+            let levels: Vec<LevelDescriptor> = all_json::<ImageInfo>(raw_info)
+                .filter(ImageInfo::has_distinctive_iiif_properties)
+                .flat_map(|info| levels_from_info(url, info))
                 .collect();
             if levels.is_empty() {
                 Err(e.into())
             } else {
-                debug!(
-                    "No normal info.json parsing failed ({}), \
-                but {} inline json5 zoom level(s) were found.",
-                    e,
-                    levels.len()
-                );
                 Ok(levels)
             }
         }
     }
 }
 
-fn zoom_levels_from_info(url: &str, mut image_info: ImageInfo) -> ZoomLevels {
-    image_info.remove_test_id();
+fn levels_from_info(url: &str, mut image_info: ImageInfo) -> Vec<LevelDescriptor> {
+    let removed_test_id = image_info.remove_test_id();
     image_info.resolve_relative_urls(url);
+    let mut warnings = image_info.warnings();
+    if removed_test_id {
+        warnings.push("Removed probably invalid IIIF image identifier".into());
+    }
     let img = Arc::new(image_info);
     let tiles = img.tiles();
     let base_url = &Arc::from(url.replace("/info.json", ""));
 
-    tiles
-        .iter()
-        .flat_map(|tile_info| {
-            let tile_size = tile_info.size();
-            let quality = Arc::from(img.best_quality());
-            let format = Arc::from(img.best_format());
-            let size_format = img.preferred_size_format();
-            debug!(
-                "Chose the following image parameters: tile_size=({tile_size}) quality={quality} format={format}"
-            );
-            let page_info = &img; // Required to allow the move
-            tile_info.scale_factors.iter().map(move |&scale_factor| {
-                let zoom_level = IIIFZoomLevel {
-                    scale_factor,
-                    tile_size,
-                    page_info: Arc::clone(page_info),
-                    base_url: Arc::clone(base_url),
-                    quality: Arc::clone(&quality),
-                    format: Arc::clone(&format),
-                    size_format,
-                };
-                debug!("Found zoom level {zoom_level:?}: page_info: {page_info:?}, tile_size: {tile_size:?}, scale_factor: {scale_factor}, base_url: {base_url}, quality: {quality}, format: {format}, size_format: {size_format:?}");
-                zoom_level
+    let mut levels: Vec<_> =
+        tiles
+            .iter()
+            .enumerate()
+            .flat_map(|(tile_ordinal, tile_info)| {
+                let tile_size = tile_info.size();
+                let quality = Arc::from(img.best_quality());
+                let format = Arc::from(img.best_format());
+                let size_format = img.preferred_size_format();
+                let page_info = &img; // Required to allow the move
+                let warnings = warnings.clone();
+                tile_info.scale_factors.iter().enumerate().map(
+                    move |(scale_ordinal, &scale_factor)| {
+                        let id = StableId::new(format!(
+                            "iiif:level:{tile_ordinal}:{scale_factor}:{scale_ordinal}"
+                        ));
+                        let source = IIIFLevel {
+                            id: id.clone(),
+                            scale_factor,
+                            tile_size,
+                            page_info: Arc::clone(page_info),
+                            base_url: Arc::clone(base_url),
+                            quality: Arc::clone(&quality),
+                            format: Arc::clone(&format),
+                            size_format,
+                        };
+                        LevelDescriptor {
+                            id,
+                            title: None,
+                            size: Some(source.image_size()),
+                            tile_size: Some(tile_size),
+                            scale_factor: Some(scale_factor),
+                            has_overlapping_tiles: false,
+                            plan: LevelPlan::Known(KnownTilePlan::rectangular(source)),
+                            provenance: Provenance::default(),
+                            warnings: warnings.clone(),
+                        }
+                    },
+                )
             })
-        })
-        .into_zoom_levels()
+            .collect();
+    levels.sort_by_key(|level| level.size.map_or(0, Vec2d::area));
+    levels
 }
 
-struct IIIFZoomLevel {
+struct IIIFLevel {
+    id: StableId,
     scale_factor: u32,
     tile_size: Vec2d,
     page_info: Arc<ImageInfo>,
@@ -228,8 +298,12 @@ struct IIIFZoomLevel {
     size_format: TileSizeFormat,
 }
 
-impl TilesRect for IIIFZoomLevel {
-    fn size(&self) -> Vec2d {
+impl RectangularSource for IIIFLevel {
+    fn level_id(&self) -> StableId {
+        self.id.clone()
+    }
+
+    fn image_size(&self) -> Vec2d {
         self.page_info.size() / self.scale_factor
     }
 
@@ -237,12 +311,12 @@ impl TilesRect for IIIFZoomLevel {
         self.tile_size
     }
 
-    fn tile_url(&self, col_and_row_pos: Vec2d) -> String {
+    fn request(&self, col_and_row_pos: Vec2d) -> Request {
         let scaled_tile_size = self.tile_size * self.scale_factor;
         let xy_pos = col_and_row_pos * scaled_tile_size;
-        let scaled_tile_size = max_size_in_rect(xy_pos, scaled_tile_size, self.page_info.size());
+        let scaled_tile_size = (xy_pos + scaled_tile_size).min(self.page_info.size()) - xy_pos;
         let tile_size = scaled_tile_size / self.scale_factor;
-        format!(
+        Request::new(format!(
             "{base}/{x},{y},{img_w},{img_h}/{tile_size}/{rotation}/{quality}.{format}",
             base = self
                 .page_info
@@ -261,11 +335,7 @@ impl TilesRect for IIIFZoomLevel {
             rotation = 0,
             quality = self.quality,
             format = self.format,
-        )
-    }
-
-    fn scale_factor_hint(&self) -> Option<u32> {
-        Some(self.scale_factor)
+        ))
     }
 }
 
@@ -284,7 +354,7 @@ impl std::fmt::Display for TileSizeFormatter {
     }
 }
 
-impl std::fmt::Debug for IIIFZoomLevel {
+impl std::fmt::Debug for IIIFLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let name = self
             .page_info
@@ -369,21 +439,6 @@ fn parse_presentation3_manifest(
     let manifest: manifest_types::Manifest =
         serde_json::from_slice(bytes).map_err(|e| IIIFError::JsonError { source: e })?;
 
-    if manifest.manifest_type != "Manifest" {
-        // Don't warn for known IIIF Image Service types, as these are valid but not manifests
-        if !matches!(
-            manifest.manifest_type.as_str(),
-            "ImageService2" | "ImageService3" | "iiif:ImageProfile"
-        ) {
-            // While we could be more lenient, the Presentation API spec says this should be "Manifest".
-            // If it's something else, it's likely not what we expect, or a different IIIF spec.
-            warn!(
-                "Attempted to parse IIIF manifest from {} but 'type' field was '{}' instead of 'Manifest'. Proceeding, but this may indicate an incorrect file type.",
-                manifest_url, manifest.manifest_type
-            );
-        }
-    }
-
     Ok(manifest.extract_image_infos(manifest_url))
 }
 
@@ -432,12 +487,8 @@ fn test_tiles() {
            "supports" : ["regionByPct","sizeByForcedWh","sizeByWh","sizeAboveFull","rotationBy90s","mirroring","gray"] }
       ]
     }"#;
-    let mut levels = zoom_levels("test.com", data).unwrap();
-    let tiles: Vec<String> = levels[6]
-        .next_tiles(None)
-        .into_iter()
-        .map(|t| t.url)
-        .collect();
+    let levels = levels("test.com", data).unwrap();
+    let tiles = tile_urls(level_with_scale(&levels, 64));
     assert_eq!(
         tiles,
         vec![
@@ -457,12 +508,8 @@ fn test_tiles_max_area_filter() {
       "tiles" : [{ "width" : 1024, "scaleFactors" : [ 1 ] }],
       "profile" :  [ { "maxArea": 262144 } ]
     }"#;
-    let mut levels = zoom_levels("http://ophir.dev/info.json", data).unwrap();
-    let tiles: Vec<String> = levels[0]
-        .next_tiles(None)
-        .into_iter()
-        .map(|t| t.url)
-        .collect();
+    let levels = levels("http://ophir.dev/info.json", data).unwrap();
+    let tiles = tile_urls(level_with_scale(&levels, 1));
     assert_eq!(
         tiles,
         vec![
@@ -480,12 +527,8 @@ fn test_missing_id() {
       "width" : 600,
       "height" : 350
     }"#;
-    let mut levels = zoom_levels("http://test.com/info.json", data).unwrap();
-    let tiles: Vec<String> = levels[0]
-        .next_tiles(None)
-        .into_iter()
-        .map(|t| t.url)
-        .collect();
+    let levels = levels("http://test.com/info.json", data).unwrap();
+    let tiles = tile_urls(level_with_scale(&levels, 1));
     assert_eq!(
         tiles,
         vec![
@@ -505,7 +548,7 @@ fn test_false_positive() {
         tilesUrl:   "./ORIONFINAL/"
     };
     "#;
-    let res = zoom_levels("https://orion2020v5b.spaceforeverybody.com/", data);
+    let res = levels("https://orion2020v5b.spaceforeverybody.com/", data);
     assert!(
         res.is_err(),
         "openseadragon zoomify image should not be misdetected"
@@ -526,10 +569,10 @@ fn test_qualities() {
         "formats" : [ "png", "zorglub" ],
         "scale_factors": [ 10 ]
     }"#;
-    let mut levels = zoom_levels("test.com", data).unwrap();
-    let level = &mut levels[0];
-    assert_eq!(level.size_hint(), Some(Vec2d { x: 515, y: 381 })); // 5156/10, 3816/10
-    let tiles: Vec<String> = level.next_tiles(None).into_iter().map(|t| t.url).collect();
+    let levels = levels("test.com", data).unwrap();
+    let level = level_with_scale(&levels, 10);
+    assert_eq!(level.size, Some(Vec2d { x: 515, y: 381 })); // 5156/10, 3816/10
+    let tiles = tile_urls(level);
     assert_eq!(
         tiles,
         vec![
@@ -539,12 +582,77 @@ fn test_qualities() {
 }
 
 #[cfg(test)]
+fn level_with_scale(levels: &[LevelDescriptor], scale_factor: u32) -> &LevelDescriptor {
+    levels
+        .iter()
+        .find(|level| level.scale_factor == Some(scale_factor))
+        .expect("expected IIIF scale factor")
+}
+
+#[cfg(test)]
+fn tile_urls(level: &LevelDescriptor) -> Vec<String> {
+    let LevelPlan::Known(plan) = &level.plan else {
+        panic!("IIIF levels have known tile plans");
+    };
+    plan.cursor()
+        .take_ready(usize::MAX)
+        .unwrap()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|tile| tile.request.uri)
+        .collect()
+}
+
+#[test]
+fn discovery_requests_metadata_then_returns_normalized_replayable_levels() {
+    let input = DiscoveryInput::from("https://example.com/image/info.json");
+    let mut session = IiifDezoomer.start(&input);
+    let DiscoveryStep::Need(need) = session.advance(DiscoveryEvent::Start).unwrap() else {
+        panic!("IIIF must request its metadata");
+    };
+    assert_eq!(need.request.uri, input.uri);
+    assert_eq!(need.purpose, ResourcePurpose::InitialMetadata);
+
+    let response = ResourceOutcome::Response(crate::core::ResourceResponse {
+        id: crate::core::RequestId(0),
+        bytes: br#"{
+          "type":"ImageService3", "id":"https://images.example/item",
+          "width":1000, "height":1500,
+          "tiles":[{"width":512,"height":512,"scaleFactors":[1,2,4]}]
+        }"#
+        .to_vec(),
+        content_type: Some("application/json".into()),
+    });
+    let DiscoveryStep::Complete(catalog) = session
+        .advance(DiscoveryEvent::Resource(&response))
+        .unwrap()
+    else {
+        panic!("valid info.json must complete discovery");
+    };
+    let [CatalogEntry::Ready(image)] = catalog.entries() else {
+        panic!("info.json must be ready, not deferred");
+    };
+    assert!(
+        image
+            .levels
+            .windows(2)
+            .all(|pair| pair[0].size.unwrap().area() <= pair[1].size.unwrap().area())
+    );
+    let level = level_with_scale(&image.levels, 1);
+    let LevelPlan::Known(plan) = &level.plan else {
+        panic!("IIIF tile geometry is fixed");
+    };
+    let first = plan.cursor().take_ready(1).unwrap().unwrap().pop().unwrap();
+    assert_eq!(first.id.level, level.id);
+    assert_eq!(
+        first.request.headers.get("Referer").map(String::as_str),
+        Some("https://images.example/item/0,0,512,512/512,512/0/default.jpg")
+    );
+}
+
+#[cfg(test)]
 mod manifest_parsing_tests {
     use super::*;
-    use crate::dezoomer::{
-        PageContents,
-        test_utils::{expect_single_resolved, expect_single_url},
-    };
     use crate::iiif::manifest_types::ExtractedImageInfo;
 
     fn legacy_manifest_data() -> &'static [u8] {
@@ -695,16 +803,30 @@ mod manifest_parsing_tests {
     #[test]
     fn test_parse_json_not_a_manifest_type() {
         let manifest_url = "https://example.com/not_a_manifest.json";
-        let json_data = r#"{ "id": "test", "type": "NotAManifest", "items": [] }"#;
-        // This should parse fine based on struct leniency, but we log a warning.
+        let json_data = r#"{
+          "id": "test", "type": "NotAManifest",
+          "items": [{"id":"canvas","type":"Canvas","items":[{"items":[{
+            "motivation":"painting","body":{"id":"image.jpg","type":"Image",
+            "service":[{"id":"https://example.com/iiif/page1","type":"ImageService3"}]}
+          }]}]}]
+        }"#;
+        // The parser remains lenient, while the application-facing catalog carries the warning.
         // The function itself should succeed if the structure is parsable into Manifest.
         let infos = parse_iiif_manifest_from_bytes(json_data.as_bytes(), manifest_url).unwrap();
-        assert!(infos.is_empty());
+        assert_eq!(infos.len(), 1);
+
+        let catalog = catalog(manifest_url, json_data.as_bytes()).unwrap();
+        let [CatalogEntry::Deferred(image)] = catalog.entries() else {
+            panic!("lenient manifest parsing should produce one deferred image");
+        };
+        assert_eq!(
+            image.warnings,
+            ["IIIF manifest has unexpected type 'NotAManifest'; attempting lenient parsing"]
+        );
     }
 
     #[test]
     fn test_images_with_manifest() {
-        let mut dezoomer = IIIF;
         let manifest_data = r#"
         {
           "@context": "http://iiif.io/api/presentation/3/context.json",
@@ -745,32 +867,26 @@ mod manifest_parsing_tests {
         "#
         .as_bytes();
 
-        let input = DezoomerInput {
-            uri: "https://example.com/manifest.json".to_string(),
-            contents: PageContents::Success(manifest_data.to_vec()),
+        let catalog = catalog("https://example.com/manifest.json", manifest_data).unwrap();
+        let [CatalogEntry::Deferred(image)] = catalog.entries() else {
+            panic!("manifest should produce one deferred image");
         };
-
-        let url = expect_single_url(dezoomer.images(&input).unwrap());
-        assert_eq!(url.url, "https://example.com/iiif/page1/info.json");
-        assert_eq!(url.title.as_deref(), Some("Test Book - Page 1"));
+        assert_eq!(image.uri, "https://example.com/iiif/page1/info.json");
+        assert_eq!(image.title.as_deref(), Some("Test Book - Page 1"));
     }
 
     #[test]
     fn test_images_with_legacy_manifest() {
-        let mut dezoomer = IIIF;
-        let input = DezoomerInput {
-            uri: "https://example.com/manifest.json".to_string(),
-            contents: PageContents::Success(legacy_manifest_data().to_vec()),
+        let catalog = catalog("https://example.com/manifest.json", legacy_manifest_data()).unwrap();
+        let [CatalogEntry::Deferred(image)] = catalog.entries() else {
+            panic!("manifest should produce one deferred image");
         };
-
-        let url = expect_single_url(dezoomer.images(&input).unwrap());
-        assert_eq!(url.url, "https://example.com/iiif/page1/info.json");
-        assert_eq!(url.title.as_deref(), Some("Legacy Book - Page 1"));
+        assert_eq!(image.uri, "https://example.com/iiif/page1/info.json");
+        assert_eq!(image.title.as_deref(), Some("Legacy Book - Page 1"));
     }
 
     #[test]
     fn test_images_with_info_json() {
-        let mut dezoomer = IIIF;
         let info_data = r#"{
           "@context" : "http://iiif.io/api/image/2/context.json",
           "@id" : "https://example.com/image",
@@ -783,13 +899,49 @@ mod manifest_parsing_tests {
         }"#
         .as_bytes();
 
-        let input = DezoomerInput {
-            uri: "https://example.com/image/info.json".to_string(),
-            contents: PageContents::Success(info_data.to_vec()),
+        let catalog = catalog("https://example.com/image/info.json", info_data).unwrap();
+        let [CatalogEntry::Ready(image)] = catalog.entries() else {
+            panic!("info.json should produce one ready image");
         };
+        assert_eq!(image.title, None);
+        assert_eq!(image.levels.len(), 3);
+    }
 
-        let image = expect_single_resolved(dezoomer.images(&input).unwrap());
-        assert_eq!(image.title(), None);
-        assert_eq!(image.levels().len(), 3);
+    #[test]
+    fn invalid_image_id_warning_is_attached_to_image() {
+        let info_data = br#"{
+          "@id": "https://www.example.org/image",
+          "width": 1000,
+          "height": 1500,
+          "tiles": [{"width": 512, "scaleFactors": [1]}]
+        }"#;
+        let catalog = catalog("https://example.com/image/info.json", info_data).unwrap();
+        let [CatalogEntry::Ready(image)] = catalog.entries() else {
+            panic!("info.json should produce one ready image");
+        };
+        assert_eq!(
+            image.warnings,
+            ["Removed probably invalid IIIF image identifier"]
+        );
+    }
+
+    #[test]
+    fn unknown_profile_warning_is_attached_to_image() {
+        let info_data = br#"{
+          "width": 1000,
+          "height": 1500,
+          "profile": ["https://example.com/unknown-profile"],
+          "tiles": [{"width": 512, "scaleFactors": [1]}]
+        }"#;
+        let catalog = catalog("https://example.com/image/info.json", info_data).unwrap();
+        let [CatalogEntry::Ready(image)] = catalog.entries() else {
+            panic!("info.json should produce one ready image");
+        };
+        assert_eq!(
+            image.warnings,
+            [
+                "Unknown IIIF profile reference 'https://example.com/unknown-profile'; using default capabilities"
+            ]
+        );
     }
 }

@@ -1,14 +1,20 @@
+//! Neutral values shared by discovery and tile planning.
+
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::sync::Arc;
 
-use super::tile_plan::KnownTilePlan;
+use crate::Vec2d;
 
-/// A stable identifier assigned by one discovery or planning operation.
+use super::tile_plan::LevelPlan;
+
+/// A deterministic identifier within one discovery/planning operation.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct StableId(String);
+pub struct StableId(Arc<str>);
 
 impl StableId {
     #[must_use]
-    pub fn new(value: impl Into<String>) -> Self {
+    pub fn new(value: impl Into<Arc<str>>) -> Self {
         Self(value.into())
     }
 
@@ -20,13 +26,13 @@ impl StableId {
 
 impl From<&str> for StableId {
     fn from(value: &str) -> Self {
-        Self::new(value)
+        Self::new(Arc::<str>::from(value))
     }
 }
 
 impl From<String> for StableId {
     fn from(value: String) -> Self {
-        Self::new(value)
+        Self::new(Arc::<str>::from(value))
     }
 }
 
@@ -36,217 +42,119 @@ impl fmt::Display for StableId {
     }
 }
 
-/// A two-dimensional coordinate in an image or tile grid.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct Point {
-    pub x: u32,
-    pub y: u32,
-}
-
-impl Point {
-    #[must_use]
-    pub const fn new(x: u32, y: u32) -> Self {
-        Self { x, y }
-    }
-
-    #[must_use]
-    pub const fn saturating_sub(self, other: Self) -> Self {
-        Self {
-            x: self.x.saturating_sub(other.x),
-            y: self.y.saturating_sub(other.y),
-        }
-    }
-}
-
-/// Pixel dimensions.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct Dimensions {
-    pub width: u32,
-    pub height: u32,
-}
-
-impl Dimensions {
-    #[must_use]
-    pub const fn new(width: u32, height: u32) -> Self {
-        Self { width, height }
-    }
-
-    #[must_use]
-    pub const fn area(self) -> u64 {
-        self.width as u64 * self.height as u64
-    }
-
-    #[must_use]
-    pub const fn is_empty(self) -> bool {
-        self.width == 0 || self.height == 0
-    }
-}
-
-/// A rectangular image region.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct Region {
-    pub origin: Point,
-    pub size: Dimensions,
-}
-
-impl Region {
-    #[must_use]
-    pub const fn new(origin: Point, size: Dimensions) -> Self {
-        Self { origin, size }
-    }
-}
-
-/// A portable requirement attached to a resource request.
-///
-/// The application decides how to implement these requirements.  In
-/// particular, this type does not contain a reqwest header map.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum RequestRequirement {
-    Header { name: String, value: String },
-    AcceptContentType(String),
-    Method(String),
-}
-
-/// A description of a resource request, not an instruction to perform I/O.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RequestSpec {
+/// One portable resource description, used for both metadata and tiles.
+#[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct Request {
     pub uri: String,
-    pub requirements: Vec<RequestRequirement>,
+    pub headers: BTreeMap<String, String>,
+    pub accepted_content_types: BTreeSet<String>,
 }
 
-impl RequestSpec {
+impl Request {
     #[must_use]
     pub fn new(uri: impl Into<String>) -> Self {
         Self {
             uri: uri.into(),
-            requirements: Vec::new(),
+            ..Self::default()
         }
     }
 
     #[must_use]
-    pub fn with_requirements(
-        uri: impl Into<String>,
-        requirements: impl IntoIterator<Item = RequestRequirement>,
-    ) -> Self {
-        Self {
-            uri: uri.into(),
-            requirements: requirements.into_iter().collect(),
-        }
+    pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.insert(name.into(), value.into());
+        self
     }
 }
 
-/// A named operation that the application may apply to downloaded bytes.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum ProcessingRecipe {
-    None,
-    GoogleArtsDecrypt,
+/// A rectangle in source-tile or destination-image coordinates.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct Region {
+    pub origin: Vec2d,
+    pub size: Vec2d,
 }
 
-/// Distinguishes discovery probes from tiles which belong to the output.
+impl Region {
+    #[must_use]
+    pub const fn new(origin: Vec2d, size: Vec2d) -> Self {
+        Self { origin, size }
+    }
+}
+
+/// A byte-processing operation named by the core and implemented by an application.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ProcessingRecipe {
+    None,
+    Named(StableId),
+}
+
+/// How an acquired tile participates in adaptive probing and final output.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum TileRole {
     Probe,
     Output,
+    /// A successful probe is output; a missing probe is not an output failure.
+    ProbeAndOutput,
 }
 
-/// A deterministic tile identity within a level.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TileId {
     pub level: StableId,
-    pub role: TileRole,
     pub ordinal: u64,
 }
 
 impl TileId {
     #[must_use]
-    pub const fn new(level: StableId, role: TileRole, ordinal: u64) -> Self {
-        Self {
-            level,
-            role,
-            ordinal,
-        }
+    pub const fn new(level: StableId, ordinal: u64) -> Self {
+        Self { level, ordinal }
     }
 }
 
-/// A complete description of one tile, ready for an application to acquire.
+/// A logical tile. `source_region == None` means the complete decoded source.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TileSpec {
     pub id: TileId,
-    pub request: RequestSpec,
-    pub source_region: Region,
-    pub destination_region: Region,
-    pub expected_size: Option<Dimensions>,
+    pub request: Request,
+    pub source_region: Option<Region>,
+    /// Top-left output position. The extent is deliberately optional because
+    /// probe and custom-layout tiles may only reveal it after decoding.
+    pub destination: Vec2d,
+    pub expected_size: Option<Vec2d>,
     pub processing: ProcessingRecipe,
     pub role: TileRole,
 }
 
-/// A provenance step recorded while recognizing or adapting an image.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProvenanceStep {
     pub id: StableId,
     pub description: String,
 }
 
-impl ProvenanceStep {
-    #[must_use]
-    pub fn new(id: impl Into<StableId>, description: impl Into<String>) -> Self {
-        Self {
-            id: id.into(),
-            description: description.into(),
-        }
-    }
-}
-
-/// Ordered, deterministic provenance attached to a catalog item.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Provenance {
-    pub steps: Vec<ProvenanceStep>,
-}
+pub struct Provenance(pub Vec<ProvenanceStep>);
 
-impl Provenance {
-    #[must_use]
-    pub fn new(steps: impl IntoIterator<Item = ProvenanceStep>) -> Self {
-        Self {
-            steps: steps.into_iter().collect(),
-        }
-    }
-}
-
-/// A tile program descriptor.  Adaptive execution state belongs to a separate
-/// operation-owned value; this descriptor records that a level is adaptive.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum TileProgram {
-    Known(KnownTilePlan),
-    Adaptive { id: StableId, description: String },
-}
-
-/// Immutable description of a resolution level.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct LevelDescriptor {
     pub id: StableId,
     pub title: Option<String>,
-    pub dimensions: Option<Dimensions>,
-    pub tile_size: Option<Dimensions>,
+    pub size: Option<Vec2d>,
+    pub tile_size: Option<Vec2d>,
     pub scale_factor: Option<u32>,
     pub has_overlapping_tiles: bool,
-    pub program: TileProgram,
+    pub plan: LevelPlan,
     pub provenance: Provenance,
     pub warnings: Vec<String>,
 }
 
-/// Immutable image descriptor with normalized levels.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct ImageDescriptor {
     pub id: StableId,
     pub title: Option<String>,
-    pub dimensions: Option<Dimensions>,
-    pub format: Option<String>,
+    pub format: StableId,
     pub levels: Vec<LevelDescriptor>,
     pub provenance: Provenance,
     pub warnings: Vec<String>,
 }
 
-/// A logical image whose metadata has not yet been supplied.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeferredImage {
     pub id: StableId,
@@ -256,44 +164,159 @@ pub struct DeferredImage {
     pub warnings: Vec<String>,
 }
 
-/// One catalog entry, either resolved or deferred for later discovery.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum CatalogEntry {
-    Resolved(ImageDescriptor),
+    Ready(ImageDescriptor),
     Deferred(DeferredImage),
 }
 
-/// Immutable ordered catalog produced by discovery.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ImageCatalog {
-    entries: Vec<CatalogEntry>,
+#[derive(Clone, Debug, Default)]
+pub struct ImageCatalog(pub Vec<CatalogEntry>);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CatalogError {
+    DuplicateEntryId(StableId),
+    DuplicateLevelId {
+        image_id: StableId,
+        level_id: StableId,
+    },
 }
+
+impl fmt::Display for CatalogError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateEntryId(id) => write!(f, "duplicate catalog entry id: {id}"),
+            Self::DuplicateLevelId { image_id, level_id } => {
+                write!(f, "duplicate level id {level_id} in image {image_id}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for CatalogError {}
 
 impl ImageCatalog {
     #[must_use]
     pub fn new(entries: impl IntoIterator<Item = CatalogEntry>) -> Self {
-        Self {
-            entries: entries.into_iter().collect(),
-        }
+        Self(entries.into_iter().collect())
     }
 
     #[must_use]
     pub fn entries(&self) -> &[CatalogEntry] {
-        &self.entries
-    }
-
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.entries.len()
+        &self.0
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.0.is_empty()
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
     }
 
     #[must_use]
     pub fn into_entries(self) -> Vec<CatalogEntry> {
-        self.entries
+        self.0
+    }
+
+    /// Enforce deterministic catalog ordering and stable identifier uniqueness.
+    pub fn normalize(mut self) -> Result<Self, CatalogError> {
+        let mut entry_ids = BTreeSet::new();
+        for entry in &mut self.0 {
+            let id = match entry {
+                CatalogEntry::Ready(image) => {
+                    let mut level_ids = BTreeSet::new();
+                    for level in &image.levels {
+                        if !level_ids.insert(level.id.clone()) {
+                            return Err(CatalogError::DuplicateLevelId {
+                                image_id: image.id.clone(),
+                                level_id: level.id.clone(),
+                            });
+                        }
+                    }
+                    if image.levels.iter().all(|level| level.size.is_some()) {
+                        image
+                            .levels
+                            .sort_by_key(|level| level.size.expect("all sizes checked").area());
+                    }
+                    image.id.clone()
+                }
+                CatalogEntry::Deferred(image) => image.id.clone(),
+            };
+            if !entry_ids.insert(id.clone()) {
+                return Err(CatalogError::DuplicateEntryId(id));
+            }
+        }
+        Ok(self)
+    }
+
+    pub fn append_provenance(&mut self, provenance: &Provenance) {
+        for entry in &mut self.0 {
+            match entry {
+                CatalogEntry::Ready(image) => image.provenance.0.extend(provenance.0.clone()),
+                CatalogEntry::Deferred(image) => image.provenance.0.extend(provenance.0.clone()),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::{KnownTilePlan, LevelPlan};
+
+    fn level(id: &str, size: u32) -> LevelDescriptor {
+        LevelDescriptor {
+            id: StableId::new(id),
+            title: None,
+            size: Some(Vec2d::square(size)),
+            tile_size: None,
+            scale_factor: None,
+            has_overlapping_tiles: false,
+            plan: LevelPlan::Known(KnownTilePlan::explicit(Vec::new()).unwrap()),
+            provenance: Provenance::default(),
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn normalization_orders_levels_and_rejects_duplicate_stable_ids() {
+        let catalog = ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
+            id: StableId::new("image"),
+            title: None,
+            format: StableId::new("test"),
+            levels: vec![level("large", 300), level("small", 100)],
+            provenance: Provenance::default(),
+            warnings: Vec::new(),
+        })])
+        .normalize()
+        .unwrap();
+        let CatalogEntry::Ready(image) = &catalog.entries()[0] else {
+            unreachable!()
+        };
+        assert_eq!(image.levels[0].id.as_str(), "small");
+
+        let duplicate = ImageCatalog::new([
+            CatalogEntry::Deferred(DeferredImage {
+                id: StableId::new("same"),
+                uri: "memory://one".into(),
+                title: None,
+                provenance: Provenance::default(),
+                warnings: Vec::new(),
+            }),
+            CatalogEntry::Deferred(DeferredImage {
+                id: StableId::new("same"),
+                uri: "memory://two".into(),
+                title: None,
+                provenance: Provenance::default(),
+                warnings: Vec::new(),
+            }),
+        ]);
+        assert!(matches!(
+            duplicate.normalize(),
+            Err(CatalogError::DuplicateEntryId(id)) if id.as_str() == "same"
+        ));
     }
 }
