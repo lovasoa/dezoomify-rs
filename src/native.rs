@@ -48,10 +48,7 @@ impl NativeDiscoveryDriver {
     }
 
     /// Resolve one canonical resource request.
-    pub(crate) async fn resolve(
-        &self,
-        request: &Request,
-    ) -> Result<FetchedResource, ZoomError> {
+    pub(crate) async fn resolve(&self, request: &Request) -> Result<FetchedResource, ZoomError> {
         let headers = request_headers(request);
         fetch_resource(
             &request.uri,

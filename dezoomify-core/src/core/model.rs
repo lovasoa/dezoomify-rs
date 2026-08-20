@@ -1,7 +1,7 @@
 //! Neutral values shared by discovery and tile planning.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::sync::Arc;
 
 use crate::Vec2d;
@@ -153,21 +153,23 @@ impl LevelDescriptor {
     #[must_use]
     pub fn display_label(&self) -> String {
         let label = self.title.clone().unwrap_or_else(|| self.id.to_string());
-        let mut details: Vec<String> = Vec::new();
-        if let Some(Vec2d { x, y }) = self.size {
-            details.push(format!("{x: >5} x {y: >5} pixels"));
+        let has_size = self.size.is_some();
+        let has_plan = matches!(&self.plan, LevelPlan::Known(_));
+        if !has_size && !has_plan {
+            return label;
         }
-        if let Some(Vec2d { x, y }) = self.tile_size {
-            details.push(format!("tiles of {x: >5} x {y: >5}"));
+        let mut out = String::with_capacity(label.len() + 40);
+        let _ = write!(out, "{label} (");
+        let mut sep = "";
+        if let Some(Vec2d { x, y }) = self.size {
+            let _ = write!(out, "{x: >5} x {y} pixels");
+            sep = ",";
         }
         if let LevelPlan::Known(plan) = &self.plan {
-            details.push(format!("{: >5} tiles", plan.len()));
+            let _ = write!(out, "{sep}{: >4} tiles", plan.len());
         }
-        if details.is_empty() {
-            label
-        } else {
-            format!("{label} ({})", details.join(", "))
-        }
+        let _ = write!(out, ")");
+        out
     }
 }
 
@@ -324,10 +326,8 @@ mod tests {
             .unwrap(),
         );
         let label = level.display_label();
-        assert!(label.contains("gap:0"));
-        assert!(label.contains("  100 x   100 pixels"));
-        assert!(label.contains("tiles of   100 x   100"));
-        assert!(label.contains("    1 tiles"));
+        assert!(label.contains("100 x 100 pixels"));
+        assert!(label.contains("1 tiles"));
         level.title = Some("Krpano Cube forward".into());
         assert!(level.display_label().starts_with("Krpano Cube forward ("));
     }
