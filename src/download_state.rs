@@ -1,13 +1,13 @@
 // download_state.rs
 use crate::arguments::Arguments;
-use crate::core::{TileObservation, TileRole, TileSpec};
 use crate::encoder::tile_buffer::TileBuffer;
 use crate::errors::ZoomError;
 use crate::max_size_in_rect;
 use crate::network::{TileDownloader, client as network_client};
 use crate::throttler::Throttler;
 use crate::tile::{EncodedTile, Tile, load_encoded_tile, load_tile_with_metadata};
-use crate::vec2d::Vec2d; // This is a public function from lib.rs
+use dezoomify_core::Vec2d;
+use dezoomify_core::core::{TileObservation, TileRole, TileSpec};
 
 use futures::stream::StreamExt;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -348,9 +348,9 @@ fn output_tile_count(tile_specs: &[TileSpec]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{empty_tile_for, output_tile_count};
-    use crate::core::{ProcessingRecipe, Request, StableId, TileId, TileRole, TileSpec};
     use crate::max_size_in_rect;
-    use crate::vec2d::Vec2d;
+    use dezoomify_core::Vec2d;
+    use dezoomify_core::core::{ProcessingRecipe, Request, StableId, TileId, TileRole, TileSpec};
 
     #[test]
     fn empty_tiles_are_clipped_to_canvas() {

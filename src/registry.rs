@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::core::{DiscoveryProgram, Priority, Registry};
+use dezoomify_core::core::{DiscoveryProgram, Priority, Registry};
 
 fn preferred_program(uri: &str) -> Option<&'static str> {
     [
@@ -41,16 +41,16 @@ const BUILTINS: &[(&str, &str, i32)] = &[
 
 fn program(id: &str) -> Arc<dyn DiscoveryProgram> {
     match id {
-        "custom" => Arc::new(crate::custom_yaml::CustomDezoomer),
-        "google_arts_and_culture" => Arc::new(crate::google_arts_and_culture::GAPDezoomer),
-        "zoomify" => Arc::new(crate::zoomify::ZoomifyDezoomer),
-        "iiif" => Arc::new(crate::iiif::IiifDezoomer),
-        "deepzoom" => Arc::new(crate::dzi::DziDezoomer),
-        "generic" => Arc::new(crate::generic::GenericDezoomer),
-        "krpano" => Arc::new(crate::krpano::KrpanoDezoomer),
-        "iipimage" => Arc::new(crate::iipimage::IIPImage),
-        "nypl" => Arc::new(crate::nypl::NYPLImage),
-        "bulk_text" => Arc::new(crate::bulk_text::BulkTextDezoomer),
+        "custom" => Arc::new(dezoomify_core::custom_yaml::CustomDezoomer),
+        "google_arts_and_culture" => Arc::new(dezoomify_core::google_arts_and_culture::GAPDezoomer),
+        "zoomify" => Arc::new(dezoomify_core::zoomify::ZoomifyDezoomer),
+        "iiif" => Arc::new(dezoomify_core::iiif::IiifDezoomer),
+        "deepzoom" => Arc::new(dezoomify_core::dzi::DziDezoomer),
+        "generic" => Arc::new(dezoomify_core::generic::GenericDezoomer),
+        "krpano" => Arc::new(dezoomify_core::krpano::KrpanoDezoomer),
+        "iipimage" => Arc::new(dezoomify_core::iipimage::IIPImage),
+        "nypl" => Arc::new(dezoomify_core::nypl::NYPLImage),
+        "bulk_text" => Arc::new(dezoomify_core::bulk_text::BulkTextDezoomer),
         _ => unreachable!("built-in table contains only known IDs"),
     }
 }
@@ -84,11 +84,11 @@ pub(crate) fn registry_for_cli(name: &str, uri: &str) -> Option<Registry> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::discovery::{
+    use dezoomify_core::core::discovery::{
         Delegation, DiscoveryEvent, DiscoveryInput, DiscoverySession, DiscoveryStep, Profile,
         ResourceOutcome, ResourceResponse,
     };
-    use crate::core::{CatalogEntry, DiscoveryError, StableId};
+    use dezoomify_core::core::{CatalogEntry, DiscoveryError, StableId};
 
     #[test]
     fn cli_names_and_url_hints_are_explicit() {
@@ -164,7 +164,11 @@ mod tests {
     fn profile_customizes_existing_dzi_without_replacing_its_parser() {
         let mut registry = Registry::new();
         registry.register("profiled-dzi-rule", Priority(0), Arc::new(ProfiledDziRule));
-        registry.register("deepzoom", Priority(1), Arc::new(crate::dzi::DziDezoomer));
+        registry.register(
+            "deepzoom",
+            Priority(1),
+            Arc::new(dezoomify_core::dzi::DziDezoomer),
+        );
         registry.register_profile("repair-dzi", Arc::new(RepairDzi));
 
         let mut operation = registry.start("memory://deployment/viewer").unwrap();

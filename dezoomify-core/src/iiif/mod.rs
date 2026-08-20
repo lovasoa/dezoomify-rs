@@ -17,6 +17,9 @@ use crate::json_utils::all_json;
 pub mod manifest_types;
 pub mod tile_info;
 
+#[cfg(test)]
+mod title_tests;
+
 /// IIIF discovery program.
 /// See <https://iiif.io/>
 #[derive(Default)]

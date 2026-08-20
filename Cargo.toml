@@ -11,7 +11,13 @@ homepage = "https://lovasoa.github.io/dezoomify-rs/"
 readme = "README.md"
 keywords = ["image", "download"]
 
+[workspace]
+members = ["dezoomify-core"]
+# Root-level `cargo build`/`test`/`clippy`/`bench` cover both crates.
+default-members = [".", "dezoomify-core"]
+
 [dependencies]
+dezoomify-core = { path = "dezoomify-core" }
 image = "0.25"
 png = "0.18"
 tokio = { version = "1", features = ["full"] }

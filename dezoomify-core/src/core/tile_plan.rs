@@ -35,6 +35,11 @@ impl Error for PlanError {}
 pub trait ReplayablePlan: fmt::Debug + Send + Sync {
     fn len(&self) -> u64;
     fn tile(&self, ordinal: u64) -> Result<Option<TileSpec>, PlanError>;
+
+    /// Whether the plan contains no tiles.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 #[derive(Clone)]

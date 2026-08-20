@@ -14,25 +14,24 @@ use log::{debug, error, info, warn};
 
 pub use arguments::Arguments;
 pub use binary_display::{BinaryDisplay, display_bytes};
+pub use dezoomify_core::Vec2d;
 pub use errors::ZoomError;
 use network::client;
 use output_file::get_outname;
 use tile::Tile;
-pub use vec2d::Vec2d;
 
-use crate::core::{
-    CatalogEntry, DeferredImage, ImageCatalog, ImageDescriptor, LevelDescriptor, LevelPlan,
-};
 use crate::encoder::SourceLevel;
 use crate::encoder::tile_buffer::TileBuffer;
 
 use crate::native::NativeDiscoveryDriver;
 use crate::output_file::reserve_output_file;
+use dezoomify_core::core::{
+    CatalogEntry, DeferredImage, ImageCatalog, ImageDescriptor, LevelDescriptor, LevelPlan,
+};
 
 mod arguments;
 mod binary_display;
 
-mod core;
 pub(crate) mod download_state;
 mod encoder;
 mod errors;
@@ -40,21 +39,8 @@ mod native;
 mod network;
 mod output_file;
 mod registry;
-pub mod tile;
-mod vec2d;
-
-mod bulk_text;
-mod custom_yaml;
-mod dzi;
-mod generic;
-mod google_arts_and_culture;
-mod iiif;
-mod iipimage;
-mod json_utils;
-mod krpano;
-mod nypl;
 mod throttler;
-mod zoomify;
+pub mod tile;
 
 fn stdin_line() -> Result<String, ZoomError> {
     let stdin = std::io::stdin();
@@ -263,7 +249,7 @@ fn inherit_deferred_context(catalog: ImageCatalog, parent: &DeferredImage) -> Im
 
 async fn discover_images(
     driver: &mut NativeDiscoveryDriver,
-    registry: &crate::core::Registry,
+    registry: &dezoomify_core::core::Registry,
     uri: &str,
 ) -> Result<ImageCatalog, String> {
     let catalog = driver
@@ -902,9 +888,10 @@ mod tests {
             scale_factor: None,
             has_overlapping_tiles: overlaps,
             plan: LevelPlan::Known(
-                crate::core::KnownTilePlan::explicit(Vec::new()).expect("empty plan is valid"),
+                dezoomify_core::core::KnownTilePlan::explicit(Vec::new())
+                    .expect("empty plan is valid"),
             ),
-            provenance: crate::core::Provenance::default(),
+            provenance: dezoomify_core::core::Provenance::default(),
             warnings: Vec::new(),
         }
     }
@@ -929,10 +916,12 @@ mod tests {
             id: "manifest-entry".into(),
             uri: "memory://image/info.json".into(),
             title: Some("Manifest title".into()),
-            provenance: crate::core::Provenance(vec![crate::core::ProvenanceStep {
-                id: "manifest-rule".into(),
-                description: "found image service".into(),
-            }]),
+            provenance: dezoomify_core::core::Provenance(vec![
+                dezoomify_core::core::ProvenanceStep {
+                    id: "manifest-rule".into(),
+                    description: "found image service".into(),
+                },
+            ]),
             warnings: vec!["manifest warning".into()],
         };
         let child = ImageDescriptor {
@@ -940,10 +929,12 @@ mod tests {
             title: None,
             format: "iiif".into(),
             levels: Vec::new(),
-            provenance: crate::core::Provenance(vec![crate::core::ProvenanceStep {
-                id: "iiif".into(),
-                description: "parsed info.json".into(),
-            }]),
+            provenance: dezoomify_core::core::Provenance(vec![
+                dezoomify_core::core::ProvenanceStep {
+                    id: "iiif".into(),
+                    description: "parsed info.json".into(),
+                },
+            ]),
             warnings: vec!["image warning".into()],
         };
 
@@ -1346,176 +1337,6 @@ mod tests {
         assert_eq!(
             args.bulk_output_file(),
             Some(PathBuf::from("from-option.jpg"))
-        );
-    }
-}
-
-#[cfg(test)]
-mod iiif_title_tests {
-    use crate::iiif::determine_title;
-    use crate::iiif::manifest_types::ExtractedImageInfo;
-
-    #[test]
-    fn test_determine_title_all_components() {
-        let image_info = ExtractedImageInfo {
-            image_uri: "https://example.com/image.json".to_string(),
-            manifest_label: Some("Manifest Title".to_string()),
-            metadata_title: Some("Metadata Title".to_string()),
-            canvas_label: Some("Canvas Label".to_string()),
-            canvas_index: 0,
-        };
-
-        let result = determine_title(&image_info);
-        assert_eq!(
-            result,
-            Some("Manifest Title - Metadata Title - Canvas Label".to_string())
-        );
-    }
-
-    #[test]
-    fn test_determine_title_manifest_and_canvas_only() {
-        let image_info = ExtractedImageInfo {
-            image_uri: "https://example.com/image.json".to_string(),
-            manifest_label: Some("Book Title".to_string()),
-            metadata_title: None,
-            canvas_label: Some("Page 1".to_string()),
-            canvas_index: 0,
-        };
-
-        let result = determine_title(&image_info);
-        assert_eq!(result, Some("Book Title - Page 1".to_string()));
-    }
-
-    #[test]
-    fn test_determine_title_canvas_only() {
-        let image_info = ExtractedImageInfo {
-            image_uri: "https://example.com/image.json".to_string(),
-            manifest_label: None,
-            metadata_title: None,
-            canvas_label: Some("Single Page".to_string()),
-            canvas_index: 0,
-        };
-
-        let result = determine_title(&image_info);
-        assert_eq!(result, Some("Single Page".to_string()));
-    }
-
-    #[test]
-    fn test_determine_title_no_duplicates() {
-        // Test that duplicate titles are not repeated
-        let image_info = ExtractedImageInfo {
-            image_uri: "https://example.com/image.json".to_string(),
-            manifest_label: Some("Same Title".to_string()),
-            metadata_title: Some("Same Title".to_string()), // Duplicate
-            canvas_label: Some("Different Label".to_string()),
-            canvas_index: 0,
-        };
-
-        let result = determine_title(&image_info);
-        assert_eq!(result, Some("Same Title - Different Label".to_string()));
-    }
-
-    #[test]
-    fn test_determine_title_empty() {
-        let image_info = ExtractedImageInfo {
-            image_uri: "https://example.com/image.json".to_string(),
-            manifest_label: None,
-            metadata_title: None,
-            canvas_label: None,
-            canvas_index: 0,
-        };
-
-        let result = determine_title(&image_info);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_determine_title_metadata_only() {
-        let image_info = ExtractedImageInfo {
-            image_uri: "https://example.com/image.json".to_string(),
-            manifest_label: None,
-            metadata_title: Some("Metadata Only".to_string()),
-            canvas_label: None,
-            canvas_index: 0,
-        };
-
-        let result = determine_title(&image_info);
-        assert_eq!(result, Some("Metadata Only".to_string()));
-    }
-
-    #[test]
-    fn test_determine_title_special_characters() {
-        let image_info = ExtractedImageInfo {
-            image_uri: "https://example.com/image.json".to_string(),
-            manifest_label: Some("Ms. Smith's \"Book\" & Notes (1850-1900)".to_string()),
-            metadata_title: None,
-            canvas_label: Some("Page #1: Introduction/Overview".to_string()),
-            canvas_index: 0,
-        };
-
-        let result = determine_title(&image_info);
-        assert_eq!(
-            result,
-            Some(
-                "Ms. Smith's \"Book\" & Notes (1850-1900) - Page #1: Introduction/Overview"
-                    .to_string()
-            )
-        );
-    }
-
-    #[test]
-    fn test_determine_title_very_long() {
-        let long_manifest = "A".repeat(100);
-        let long_canvas = "B".repeat(100);
-
-        let image_info = ExtractedImageInfo {
-            image_uri: "https://example.com/image.json".to_string(),
-            manifest_label: Some(long_manifest.clone()),
-            metadata_title: None,
-            canvas_label: Some(long_canvas.clone()),
-            canvas_index: 0,
-        };
-
-        let result = determine_title(&image_info);
-        let expected = format!("{long_manifest} - {long_canvas}");
-        assert_eq!(result, Some(expected));
-    }
-
-    #[test]
-    fn test_determine_title_unicode() {
-        let image_info = ExtractedImageInfo {
-            image_uri: "https://example.com/image.json".to_string(),
-            manifest_label: Some("古典文学作品集".to_string()),
-            metadata_title: Some("詩經選讀".to_string()),
-            canvas_label: Some("第一章：關雎".to_string()),
-            canvas_index: 0,
-        };
-
-        let result = determine_title(&image_info);
-        assert_eq!(
-            result,
-            Some("古典文学作品集 - 詩經選讀 - 第一章：關雎".to_string())
-        );
-    }
-
-    #[test]
-    fn test_determine_title_whitespace_handling() {
-        let image_info = ExtractedImageInfo {
-            image_uri: "https://example.com/image.json".to_string(),
-            manifest_label: Some("  Manifest with spaces  ".to_string()),
-            metadata_title: Some("\tTabbed metadata\t".to_string()),
-            canvas_label: Some("Canvas\nwith\nnewlines".to_string()),
-            canvas_index: 0,
-        };
-
-        let result = determine_title(&image_info);
-        // Note: The function doesn't currently trim whitespace, it preserves what's in the manifest
-        assert_eq!(
-            result,
-            Some(
-                "  Manifest with spaces   - \tTabbed metadata\t - Canvas\nwith\nnewlines"
-                    .to_string()
-            )
         );
     }
 }

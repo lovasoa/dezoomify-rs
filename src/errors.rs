@@ -1,9 +1,9 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::core::TileSpec;
 use crate::encoder::tile_buffer::TileBufferMsg;
 use custom_error::custom_error;
+use dezoomify_core::core::TileSpec;
 use reqwest::{self, header};
 use tokio::sync::mpsc::error::SendError;
 

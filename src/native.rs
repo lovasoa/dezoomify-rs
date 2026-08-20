@@ -1,21 +1,21 @@
 //! Native application driver for the pure discovery core.
 //!
-//! The types in [`crate::core`] only describe resources.  This module is the
-//! boundary which interprets those descriptions using reqwest or the local
-//! filesystem.  Keeping the loop here also lets tests drive discovery with a
-//! different resolver without pulling a runtime into the core.
+//! The types in [`dezoomify_core::core`] only describe resources.  This module
+//! is the boundary which interprets those descriptions using reqwest or the
+//! local filesystem.  Keeping the loop here also lets tests drive discovery
+//! with a different resolver without pulling a runtime into the core.
 
 use std::collections::HashMap;
 use std::error::Error;
 
 use crate::ZoomError;
-use crate::core::discovery::{
-    DiscoveryError, DiscoveryOperation, ResourceFailure, ResourceNeed, ResourceResponse,
-};
-use crate::core::model::{ImageCatalog, Request};
-use crate::core::registry::{Registry, RegistryError};
 use crate::network::{FetchedResource, fetch_resource, request_headers};
 use custom_error::custom_error;
+use dezoomify_core::core::discovery::{
+    DiscoveryError, DiscoveryOperation, ResourceFailure, ResourceNeed, ResourceResponse,
+};
+use dezoomify_core::core::model::{ImageCatalog, Request};
+use dezoomify_core::core::registry::{Registry, RegistryError};
 
 #[path = "google_arts_decryption.rs"]
 mod google_arts_decryption;

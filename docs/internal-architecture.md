@@ -1,16 +1,22 @@
 # Internal architecture
 
-The program is split into a pure core and a native application driver. This is
-an internal boundary: it does not change the command-line interface or the
+The program is split into two workspace crates: a pure library
+(`dezoomify-core`) and the native application (`dezoomify-rs`). This is an
+internal boundary: it does not change the command-line interface or the
 formats that dezoomify-rs supports.
 
 ## Dependency direction
 
-`src/core` transforms supplied values into catalogs and tile descriptions. It
-does not acquire resources, decode pixels, open an output, schedule tasks,
-sleep, display progress, or select a filename. In particular, core modules may
-not depend on HTTP clients, Tokio, filesystem or path APIs, image decoders,
-clap, or terminal progress libraries.
+`dezoomify-core` transforms supplied values into catalogs and tile
+descriptions. It does not acquire resources, decode pixels, open an output,
+schedule tasks, sleep, display progress, or select a filename. In particular,
+core modules may not depend on HTTP clients, Tokio, filesystem or path APIs,
+image decoders, clap, or terminal progress libraries.
+
+The pure crate's `Cargo.toml` lists only pure libraries, so the compiler and
+cargo enforce the boundary: a runtime crate cannot be imported where it is not
+a dependency. `dezoomify-core/tests/dependency_architecture.rs` walks the
+resolved dependency closure to make a regression in `Cargo.toml` visible.
 
 The native driver owns all of those choices. It pulls a `ResourceNeed`, obtains
 the bytes through HTTP, a local-file loader, cache, or another application

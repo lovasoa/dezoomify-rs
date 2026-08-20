@@ -688,6 +688,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "dezoomify-core"
+version = "2.18.1"
+dependencies = [
+ "base64",
+ "custom_error",
+ "evalexpr",
+ "hmac",
+ "itertools 0.15.0",
+ "json5",
+ "krpano-decrypt",
+ "regex",
+ "serde",
+ "serde-xml-rs",
+ "serde_json",
+ "serde_yaml",
+ "sha1",
+ "url",
+]
+
+[[package]]
 name = "dezoomify-rs"
 version = "2.18.1"
 dependencies = [
@@ -698,6 +718,7 @@ dependencies = [
  "colour",
  "criterion",
  "custom_error",
+ "dezoomify-core",
  "env_logger",
  "evalexpr",
  "fixedbitset",

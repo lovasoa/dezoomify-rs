@@ -14,9 +14,9 @@ use tokio::time::Duration;
 
 use crate::arguments::Arguments;
 use crate::binary_display::display_bytes;
-use crate::core::{ProcessingRecipe, Request, TileSpec};
 use crate::errors::BufferToImageError;
 use crate::errors::{TileDownloadError, ZoomError};
+use dezoomify_core::core::{ProcessingRecipe, Request, TileSpec};
 
 /// Bytes and portable response metadata acquired by the native application.
 #[derive(Clone, Debug, Eq, PartialEq)]

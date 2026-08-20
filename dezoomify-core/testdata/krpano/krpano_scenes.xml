@@ -1,0 +1,98 @@
+<krpano version="1.18">
+
+    <!-- Source details: Pano size in mm and pixels, dpi and title  -->
+
+    <source_details
+            size_mm_h="974.3"
+            size_mm_v="754.3"
+            size_pixel_h="9743"
+            size_pixel_v="7543"
+            resolution_dpi="254"
+            subject=" Saint Thomas (1618 - 1620) - Diego Velazquez - Museum of Fine Arts, Orleans ( France)"
+    />
+
+    <plugin name="thumb_index0" onclick="mainloadpano(scene_Color,name);" html="Color" parent="thumbArray"
+            url="%SWFPATH%/plugins/textfield.swf" visible="false" onloaded="thumbloaded();"/>
+    <scene name="scene_Color">
+        <view hlookat="0" vlookat="0" maxpixelzoom="1.0" fovmax="150" limitview="fullrange" fovtype="MFOV"/>
+
+        <preview url="01_Velazquez_Santo_Tomas_sRGB_8bits_254ppi_COLOR.tiles/preview.jpg"/>
+
+        <image type="CYLINDER" hfov="1.00" vfov="1.291661" voffset="0.00" multires="true" tilesize="512">
+            <level tiledimagewidth="7424" tiledimageheight="9590">
+                <cylinder url="01_Velazquez_Santo_Tomas_sRGB_8bits_254ppi_COLOR.tiles/l5/%0v/l5_%0v_%0h.jpg"/>
+            </level>
+            <level tiledimagewidth="3712" tiledimageheight="4796">
+                <cylinder url="01_Velazquez_Santo_Tomas_sRGB_8bits_254ppi_COLOR.tiles/l4/%0v/l4_%0v_%0h.jpg"/>
+            </level>
+            <level tiledimagewidth="1792" tiledimageheight="2316">
+                <cylinder url="01_Velazquez_Santo_Tomas_sRGB_8bits_254ppi_COLOR.tiles/l3/%0v/l3_%0v_%0h.jpg"/>
+            </level>
+            <level tiledimagewidth="1024" tiledimageheight="1324">
+                <cylinder url="01_Velazquez_Santo_Tomas_sRGB_8bits_254ppi_COLOR.tiles/l2/%0v/l2_%0v_%0h.jpg"/>
+            </level>
+            <level tiledimagewidth="512" tiledimageheight="662">
+                <cylinder url="01_Velazquez_Santo_Tomas_sRGB_8bits_254ppi_COLOR.tiles/l1/%0v/l1_%0v_%0h.jpg"/>
+            </level>
+        </image>
+
+    </scene>
+
+
+    <plugin name="thumb_index1" onclick="mainloadpano(scene_3D,name);" html="3D" parent="thumbArray"
+            url="%SWFPATH%/plugins/textfield.swf" visible="false" onloaded="thumbloaded();"/>
+    <scene name="scene_3D">
+        <view hlookat="0" vlookat="0" maxpixelzoom="1.0" fovmax="150" limitview="fullrange" fovtype="MFOV"/>
+
+        <preview url="03_Velazquez_Santo_Tomas_sRGB_8bits_254ppi_3D.tiles/preview.jpg"/>
+
+        <image type="CYLINDER" hfov="1.00" vfov="1.291661" voffset="0.00" multires="true" tilesize="512">
+            <level tiledimagewidth="7424" tiledimageheight="9590">
+                <cylinder url="03_Velazquez_Santo_Tomas_sRGB_8bits_254ppi_3D.tiles/l5/%0v/l5_%0v_%0h.jpg"/>
+            </level>
+            <level tiledimagewidth="3712" tiledimageheight="4796">
+                <cylinder url="03_Velazquez_Santo_Tomas_sRGB_8bits_254ppi_3D.tiles/l4/%0v/l4_%0v_%0h.jpg"/>
+            </level>
+            <level tiledimagewidth="1792" tiledimageheight="2316">
+                <cylinder url="03_Velazquez_Santo_Tomas_sRGB_8bits_254ppi_3D.tiles/l3/%0v/l3_%0v_%0h.jpg"/>
+            </level>
+            <level tiledimagewidth="1024" tiledimageheight="1324">
+                <cylinder url="03_Velazquez_Santo_Tomas_sRGB_8bits_254ppi_3D.tiles/l2/%0v/l2_%0v_%0h.jpg"/>
+            </level>
+            <level tiledimagewidth="512" tiledimageheight="662">
+                <cylinder url="03_Velazquez_Santo_Tomas_sRGB_8bits_254ppi_3D.tiles/l1/%0v/l1_%0v_%0h.jpg"/>
+            </level>
+        </image>
+
+    </scene>
+
+
+    <plugin name="thumb_index2" onclick="mainloadpano(scene_3Dcolor,name);" html="Color + 3D" parent="thumbArray"
+            url="%SWFPATH%/plugins/textfield.swf" visible="false" onloaded="thumbloaded();"/>
+    <scene name="scene_3Dcolor">
+        <view hlookat="0" vlookat="0" fovtype="MFOV" fov="120" maxpixelzoom="1.0" limitview="fullrange"/>
+
+        <preview url="02_Velazquez_Santo_Tomas_sRGB_8bits_254ppi_OVERLAY.tiles/preview.jpg"/>
+
+        <image type="CYLINDER" hfov="1.00" vfov="1.291661" voffset="0.00" multires="true" tilesize="512">
+            <level tiledimagewidth="7424" tiledimageheight="9590">
+                <cylinder url="02_Velazquez_Santo_Tomas_sRGB_8bits_254ppi_OVERLAY.tiles/l5/%0v/l5_%0v_%0h.jpg"/>
+            </level>
+            <level tiledimagewidth="3712" tiledimageheight="4796">
+                <cylinder url="02_Velazquez_Santo_Tomas_sRGB_8bits_254ppi_OVERLAY.tiles/l4/%0v/l4_%0v_%0h.jpg"/>
+            </level>
+            <level tiledimagewidth="1792" tiledimageheight="2316">
+                <cylinder url="02_Velazquez_Santo_Tomas_sRGB_8bits_254ppi_OVERLAY.tiles/l3/%0v/l3_%0v_%0h.jpg"/>
+            </level>
+            <level tiledimagewidth="1024" tiledimageheight="1324">
+                <cylinder url="02_Velazquez_Santo_Tomas_sRGB_8bits_254ppi_OVERLAY.tiles/l2/%0v/l2_%0v_%0h.jpg"/>
+            </level>
+            <level tiledimagewidth="512" tiledimageheight="662">
+                <cylinder url="02_Velazquez_Santo_Tomas_sRGB_8bits_254ppi_OVERLAY.tiles/l1/%0v/l1_%0v_%0h.jpg"/>
+            </level>
+        </image>
+
+
+    </scene>
+
+</krpano>
