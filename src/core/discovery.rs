@@ -919,12 +919,12 @@ mod tests {
         registry.register(
             "rejecting",
             Priority(0),
-            need_program("rejecting", "memory://shared", NeedResult::Reject),
+            need_program("memory://shared", NeedResult::Reject),
         );
         registry.register(
             "accepting",
             Priority(1),
-            need_program("accepting", "memory://shared", NeedResult::Complete),
+            need_program("memory://shared", NeedResult::Complete),
         );
 
         let mut operation = registry.start("memory://root").unwrap();
@@ -939,12 +939,12 @@ mod tests {
         registry.register(
             "broken",
             Priority(0),
-            need_program("broken", "memory://unused", NeedResult::Session),
+            need_program("memory://unused", NeedResult::Session),
         );
         registry.register(
             "working",
             Priority(1),
-            need_program("working", "memory://working", NeedResult::Complete),
+            need_program("memory://working", NeedResult::Complete),
         );
 
         let mut operation = registry.start("memory://root").unwrap();
@@ -960,7 +960,7 @@ mod tests {
         registry.register(
             "one",
             Priority(0),
-            need_program("one", "memory://metadata", NeedResult::Complete),
+            need_program("memory://metadata", NeedResult::Complete),
         );
         let mut first = registry.start("memory://first").unwrap();
         let mut second = registry.start("memory://second").unwrap();
@@ -1075,22 +1075,22 @@ mod tests {
         registry.register(
             "root",
             Priority(0),
-            Arc::new(DelegateProgram {
-                target_program: "middle",
+            Arc::new(ScriptProgram(Script::Delegate {
+                program: "middle",
                 target: "memory://middle",
                 profile: Some("outer"),
-            }),
+            })),
         );
         registry.register(
             "middle",
             Priority(1),
-            Arc::new(DelegateProgram {
-                target_program: "target",
+            Arc::new(ScriptProgram(Script::Delegate {
+                program: "target",
                 target: "memory://target",
                 profile: Some("inner"),
-            }),
+            })),
         );
-        registry.register("target", Priority(2), Arc::new(TargetProgram));
+        registry.register("target", Priority(2), Arc::new(ScriptProgram(Script::Target)));
         registry.register_profile("outer", Arc::new(WarningProfile { warning: "outer" }));
         registry.register_profile("inner", Arc::new(WarningProfile { warning: "inner" }));
 
