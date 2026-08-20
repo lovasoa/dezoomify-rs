@@ -155,18 +155,20 @@ fn test_generic_dezoomer() {
 
     let mut zoom_level_iter = crate::dezoomer::ZoomLevelIter::new(&mut lvl);
     let mut tries = 0;
-    while let Some(tiles) = zoom_level_iter.next_tile_references() {
+    while let Some(tiles) = zoom_level_iter.next_tile_references().unwrap() {
         let count = tiles.len() as u64;
 
         let successes: Vec<_> = tiles
             .into_iter()
             .filter(|t| existing_tiles.contains(&t.url.as_str()))
             .collect();
-        zoom_level_iter.set_fetch_result(TileFetchResult {
-            count,
-            successes: successes.len() as u64,
-            tile_size: Some(Vec2d { x: 4, y: 5 }),
-        });
+        zoom_level_iter
+            .set_fetch_result(TileFetchResult {
+                count,
+                successes: successes.len() as u64,
+                tile_size: Some(Vec2d { x: 4, y: 5 }),
+            })
+            .unwrap();
         all_tiles.extend(successes);
         tries += 1;
         assert!(tries <= 10);

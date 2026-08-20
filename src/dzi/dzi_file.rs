@@ -3,8 +3,8 @@ use std::fmt::Debug;
 use serde::Deserialize;
 
 use crate::Vec2d;
+use crate::core::resolve_relative;
 use crate::json_utils::number_or_string;
-use crate::network::resolve_relative;
 use url::Url;
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]

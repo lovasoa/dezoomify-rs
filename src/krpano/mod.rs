@@ -9,12 +9,12 @@ use regex::Regex;
 
 use krpano_metadata::{KrpanoMetadata, TemplateString, TemplateStringPart, XY};
 
+use crate::core::resolve_relative;
 use crate::dezoomer::{
     Dezoomer, DezoomerError, DezoomerInput, DezoomerInputWithContents, Images, IntoZoomLevels,
     PageContents, ResolvedImage, TileReference, TilesRect, Vec2d, ZoomLevels,
 };
 use crate::krpano::krpano_metadata::{ImageInfo, LevelDesc};
-use crate::network::resolve_relative;
 use krpano_decrypt::{decrypt_xml, is_encrypted_xml};
 
 #[cfg(test)]
@@ -649,7 +649,7 @@ fn load_images_from_properties(
     } else {
         contents
     };
-    let image_properties = KrpanoMetadata::from_reader(contents).map_err(KrpanoError::from)?;
+    let image_properties = KrpanoMetadata::from_bytes(contents).map_err(KrpanoError::from)?;
     let base_url = Arc::from(url);
     let global_title = image_properties.get_title().unwrap_or("").to_string();
 

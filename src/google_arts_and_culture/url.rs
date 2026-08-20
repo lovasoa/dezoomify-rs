@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::fmt::Write;
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use hmac::{KeyInit, Mac, SimpleHmac};
@@ -12,12 +12,11 @@ type HmacSha1 = SimpleHmac<Sha1>;
 pub fn compute_url(page: &PageInfo, x: u32, y: u32, z: usize) -> String {
     let mut url = format!("{}=x{}-y{}-z{}-t", page.base_url, x, y, z);
 
-    let mut sign_path: Vec<u8> = Vec::new();
-    sign_path.extend_from_slice(page.path().as_bytes());
+    let mut sign_path = page.path().to_owned();
     write!(sign_path, "=x{x}-y{y}-z{z}-t").unwrap();
-    sign_path.extend_from_slice(page.token.as_bytes());
+    sign_path.push_str(&page.token);
 
-    let digest = mac_digest(&sign_path);
+    let digest = mac_digest(sign_path.as_bytes());
     url.push_str(&custom_base64(&digest));
     url
 }

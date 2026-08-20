@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use crate::network::resolve_relative;
+use crate::core::resolve_relative;
 
 // Helper for potentially multilingual labels
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]

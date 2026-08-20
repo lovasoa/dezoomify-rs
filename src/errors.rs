@@ -11,6 +11,7 @@ custom_error! {
     pub ZoomError
     Networking{source: reqwest::Error, details: String} = "{details}",
     Dezoomer{source: DezoomerError} = "Dezoomer error: {source}",
+    TileSequence{source: crate::dezoomer::TileSequenceError} = "Tile sequence error: {source}",
     NoLevels = "A zoomable image was found, but it did not contain any zoom level",
     NoBulkUrl { bulk_file_path: String } = "No url found in bulk file {bulk_file_path}",
     NoTile = "Could not get any tile for the image. See https://dezoomify-rs.ophir.dev/no-tile-error",

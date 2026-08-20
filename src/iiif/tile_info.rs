@@ -9,7 +9,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::Vec2d;
-use crate::network::resolve_relative;
+use crate::core::resolve_relative;
 
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ImageInfo {

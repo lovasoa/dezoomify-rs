@@ -4,7 +4,8 @@ use crate::dezoomer::{
 use custom_error::custom_error;
 
 custom_error! {pub BulkTextError
-    InvalidUrlOrPath{line_number: usize, input: String} = "On line {line_number}: '{input}' is not a valid URL or file path"
+    InvalidUrlOrPath{line_number: usize, input: String} = "On line {line_number}: '{input}' is not a valid URL or file path",
+    NoValidUrls = "No valid URLs found in text file"
 }
 
 impl From<BulkTextError> for DezoomerError {
@@ -46,29 +47,33 @@ impl Dezoomer for BulkTextDezoomer {
         let urls = parse_text_urls(content)?;
 
         if urls.is_empty() {
-            return Err(DezoomerError::Other {
-                source: Box::new(std::io::Error::other("No valid URLs found in text file")),
-            });
+            return Err(BulkTextError::NoValidUrls.into());
         }
 
         Ok(urls.into())
     }
 }
 
-/// Validate that a string is either a valid URL or an existing file path
+/// Validate that a string is either a URL, template, or syntactic local path.
 fn validate_url_or_path(input: &str, line_number: usize) -> Result<(), BulkTextError> {
     // Try parsing as URL first
     if url::Url::parse(input).is_ok() {
         return Ok(());
     }
 
-    // If not a valid URL, check if it's an existing file path
-    if std::path::Path::new(input).exists() {
+    // If it is an URL template, check if it is valid
+    if input.contains("{{X}}") || input.contains("{{Y}}") {
         return Ok(());
     }
 
-    // If it is an URL template, check if it is valid
-    if input.contains("{{X}}") || input.contains("{{Y}}") {
+    // Existence is application policy. Discovery recognizes portable local
+    // path syntax without consulting the filesystem.
+    if input.starts_with(['/', '.', '\\'])
+        || input.contains(['/', '\\'])
+        || (input.len() >= 2
+            && input.as_bytes()[1] == b':'
+            && input.as_bytes()[0].is_ascii_alphabetic())
+    {
         return Ok(());
     }
 

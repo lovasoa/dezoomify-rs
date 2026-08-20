@@ -144,7 +144,7 @@ impl Images {
         self.0.iter()
     }
 
-    fn with_fallback_title(self, title: Option<String>) -> Self {
+    pub(crate) fn with_fallback_title(self, title: Option<String>) -> Self {
         let Some(title) = title.filter(|title| !title.trim().is_empty()) else {
             return self;
         };
@@ -245,37 +245,6 @@ impl ZoomableImage {
         match self {
             ZoomableImage::Resolved(image) => image.title(),
             ZoomableImage::Url(url) => url.title.as_deref(),
-        }
-    }
-
-    /// Resolves a deferred image URL, if necessary.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if metadata cannot be downloaded or interpreted by any dezoomer.
-    pub async fn resolve(self, http: &reqwest::Client) -> Result<Images, DezoomerError> {
-        let mut resolver = crate::auto::MetadataResolver::new(http);
-        self.resolve_with(&mut resolver).await
-    }
-
-    pub(crate) async fn resolve_with(
-        self,
-        resolver: &mut crate::auto::MetadataResolver<'_>,
-    ) -> Result<Images, DezoomerError> {
-        match self {
-            ZoomableImage::Resolved(image) => Ok(image.into()),
-            ZoomableImage::Url(url) => {
-                use crate::auto::AutoDezoomer;
-                use log::debug;
-
-                let ImageUrl { url, title } = url;
-
-                debug!("Resolving image URL: {url}");
-                let mut dezoomer = AutoDezoomer::default();
-                let images = resolver.resolve(&mut dezoomer, &url).await?;
-                debug!("Successfully extracted {} images", images.len());
-                Ok(images.with_fallback_title(title))
-            }
         }
     }
 }
@@ -449,6 +418,26 @@ pub struct ZoomLevelIter<'a> {
     waiting_results: bool,
 }
 
+/// Invalid sequencing while adapting a native tile consumer to a tile program.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TileSequenceError {
+    PreviousBatchPending,
+    NoPendingBatch,
+}
+
+impl fmt::Display for TileSequenceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PreviousBatchPending => {
+                f.write_str("the previous tile batch still needs an observation")
+            }
+            Self::NoPendingBatch => f.write_str("there is no pending tile batch to observe"),
+        }
+    }
+}
+
+impl Error for TileSequenceError {}
+
 impl<'a> ZoomLevelIter<'a> {
     pub fn new(zoom_level: &'a mut ZoomLevel) -> Self {
         ZoomLevelIter {
@@ -459,24 +448,38 @@ impl<'a> ZoomLevelIter<'a> {
     }
     /// Returns the next batch of tile references.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the previous batch has not been followed by [`Self::set_fetch_result`].
-    pub fn next_tile_references(&mut self) -> Option<Vec<TileReference>> {
-        assert!(!self.waiting_results);
+    /// Returns [`TileSequenceError::PreviousBatchPending`] when the caller has
+    /// not submitted the previous batch's observation.
+    pub fn next_tile_references(
+        &mut self,
+    ) -> Result<Option<Vec<TileReference>>, TileSequenceError> {
+        if self.waiting_results {
+            return Err(TileSequenceError::PreviousBatchPending);
+        }
         self.waiting_results = true;
         let tiles = self.zoom_level.next_tiles(self.previous);
-        if tiles.is_empty() { None } else { Some(tiles) }
+        if tiles.is_empty() {
+            self.waiting_results = false;
+            Ok(None)
+        } else {
+            Ok(Some(tiles))
+        }
     }
     /// Records the result of fetching the previous batch.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if [`Self::next_tile_references`] has not produced a pending batch.
-    pub fn set_fetch_result(&mut self, result: TileFetchResult) {
-        assert!(self.waiting_results);
+    /// Returns [`TileSequenceError::NoPendingBatch`] when no batch is awaiting
+    /// an observation.
+    pub fn set_fetch_result(&mut self, result: TileFetchResult) -> Result<(), TileSequenceError> {
+        if !self.waiting_results {
+            return Err(TileSequenceError::NoPendingBatch);
+        }
         self.waiting_results = false;
         self.previous = Some(result);
+        Ok(())
     }
     #[must_use]
     pub fn size_hint(&self) -> Option<Vec2d> {
@@ -665,13 +668,15 @@ mod tests {
         let mut lvl: ZoomLevel = Box::<FakeLvl>::default();
         let mut all_tiles = vec![];
         let mut zoom_level_iter = ZoomLevelIter::new(&mut lvl);
-        while let Some(tiles) = zoom_level_iter.next_tile_references() {
+        while let Some(tiles) = zoom_level_iter.next_tile_references().unwrap() {
             all_tiles.extend(tiles);
-            zoom_level_iter.set_fetch_result(TileFetchResult {
-                count: 0,
-                successes: 0,
-                tile_size: None,
-            });
+            zoom_level_iter
+                .set_fetch_result(TileFetchResult {
+                    count: 0,
+                    successes: 0,
+                    tile_size: None,
+                })
+                .unwrap();
         }
         assert_eq!(
             all_tiles,
@@ -693,6 +698,25 @@ mod tests {
                     position: Vec2d { x: 60, y: 60 },
                 }
             ]
+        );
+    }
+
+    #[test]
+    fn tile_sequence_misuse_returns_errors() {
+        let mut level: ZoomLevel = Box::<FakeLvl>::default();
+        let mut program = ZoomLevelIter::new(&mut level);
+        assert_eq!(
+            program.set_fetch_result(TileFetchResult {
+                count: 0,
+                successes: 0,
+                tile_size: None,
+            }),
+            Err(TileSequenceError::NoPendingBatch)
+        );
+        assert!(program.next_tile_references().unwrap().is_some());
+        assert_eq!(
+            program.next_tile_references(),
+            Err(TileSequenceError::PreviousBatchPending)
         );
     }
 

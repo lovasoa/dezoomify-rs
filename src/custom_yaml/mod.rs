@@ -7,10 +7,14 @@ use crate::dezoomer::{
     Dezoomer, DezoomerError, DezoomerInput, Images, TileFetchResult, TileProvider, Vec2d,
     single_level,
 };
-use crate::network::default_headers;
 
 mod tile_set;
 mod variable;
+
+fn default_headers() -> HashMap<String, String> {
+    serde_yaml::from_str(include_str!("../default_headers.yaml"))
+        .expect("bundled default headers must be valid YAML")
+}
 
 /// A dezoomer that takes a yaml file indicating the tile layout
 #[derive(Default)]

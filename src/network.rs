@@ -9,7 +9,6 @@ use reqwest::{Client, header};
 use sanitize_filename_reader_friendly::sanitize;
 use tokio::fs;
 use tokio::time::Duration;
-use url::Url;
 
 use crate::arguments::Arguments;
 use crate::binary_display::display_bytes;
@@ -22,8 +21,32 @@ use crate::errors::{TileDownloadError, ZoomError};
 /// to a local file
 // TODO: return Bytes
 pub async fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
+    Ok(fetch_resource(uri, http, std::iter::empty()).await?.bytes)
+}
+
+/// Bytes and portable response metadata acquired by the native application.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FetchedResource {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) content_type: Option<String>,
+}
+
+/// Fetch a described resource with request-specific headers.
+///
+/// Header strings remain neutral in the core and are converted to reqwest
+/// values only at this native boundary.  Local files intentionally ignore HTTP
+/// requirements while preserving the same URI behavior as [`fetch_uri`].
+pub(crate) async fn fetch_resource<'a>(
+    uri: &str,
+    http: &Client,
+    headers: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Result<FetchedResource, ZoomError> {
     if uri.starts_with("http://") || uri.starts_with("https://") {
-        let req = http.get(uri).build()?;
+        let mut request = http.get(uri);
+        for (name, value) in headers {
+            request = request.header(name, value);
+        }
+        let req = request.build()?;
         debug!(
             "Making http request to {uri} with headers '{:?}'",
             req.headers()
@@ -35,6 +58,11 @@ pub async fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
             response.headers()
         );
         let response = response.error_for_status()?;
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
         let mut contents = Vec::new();
         let bytes = response.bytes().await?;
         contents.extend(bytes);
@@ -44,7 +72,10 @@ pub async fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
             contents.len(),
             display_bytes(&contents[..contents.len().min(256)])
         );
-        Ok(contents)
+        Ok(FetchedResource {
+            bytes: contents,
+            content_type,
+        })
     } else {
         debug!("Loading file: '{uri}'");
         let result = fs::read(uri).await?;
@@ -54,7 +85,10 @@ pub async fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
             result.len(),
             display_bytes(&result[..result.len().min(256)])
         );
-        Ok(result)
+        Ok(FetchedResource {
+            bytes: result,
+            content_type: None,
+        })
     }
 }
 
@@ -205,68 +239,4 @@ pub fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
 
 pub fn default_headers() -> HashMap<String, String> {
     serde_yaml::from_str(include_str!("default_headers.yaml")).unwrap()
-}
-
-pub fn resolve_relative(base: &str, path: &str) -> String {
-    if Url::parse(path).is_ok() {
-        return path.to_string();
-    } else if let Ok(url) = Url::parse(base)
-        && let Ok(r) = url.join(path)
-    {
-        return r.to_string();
-    }
-    // Local-path fallback: drop the last component of `base` and append `path`.
-    // Recognize both `/` and `\` so that Windows local paths resolve correctly
-    // (a bare `C:\foo\bar\tour.js` has no `/`, so the old `/`-only split treated
-    // the entire string as the directory and appended instead of replacing).
-    //
-    // Absolute paths (starting with `/` or a Windows drive prefix) replace the
-    // base entirely, matching `PathBuf::push` semantics.
-    if path.starts_with('/')
-        || path.starts_with('\\')
-        || (path.len() >= 2
-            && path.as_bytes()[1] == b':'
-            && path.as_bytes()[0].is_ascii_alphabetic())
-    {
-        return path.to_string();
-    }
-    let dir = base.rfind(['/', '\\']).map_or("", |idx| &base[..idx]);
-    let dir = dir.trim_end_matches(['/', '\\']);
-    if dir.is_empty() {
-        path.to_string()
-    } else {
-        format!("{dir}/{path}")
-    }
-}
-
-#[test]
-fn test_resolve_relative() {
-    assert_eq!(resolve_relative("/a/b", "c/d"), "/a/c/d");
-    // Windows local path: the last component must be replaced, not appended.
-    assert_eq!(resolve_relative("C:\\\\foo\\\\bar", "c/d"), "C:\\\\foo/c/d");
-    assert_eq!(
-        resolve_relative("C:\\\\foo\\\\bar\\\\tour.js", "tour.xml"),
-        "C:\\\\foo\\\\bar/tour.xml"
-    );
-    assert_eq!(
-        resolve_relative("/a/b", "http://example.com/x"),
-        "http://example.com/x"
-    );
-    assert_eq!(
-        resolve_relative("http://a.b", "http://example.com/x"),
-        "http://example.com/x"
-    );
-    assert_eq!(resolve_relative("http://a.b", "c/d"), "http://a.b/c/d");
-    assert_eq!(resolve_relative("http://a.b/x", "c/d"), "http://a.b/c/d");
-    assert_eq!(resolve_relative("http://a.b/x/", "c/d"), "http://a.b/x/c/d");
-    // Absolute local paths replace the base entirely.
-    assert_eq!(
-        resolve_relative("/metadata/tour.xml", "/tiles/0_0.jpg"),
-        "/tiles/0_0.jpg"
-    );
-    // Absolute Windows paths replace the base entirely.
-    assert_eq!(
-        resolve_relative("C:\\metadata\\tour.xml", "C:\\tiles\\0_0.jpg"),
-        "C:\\tiles\\0_0.jpg"
-    );
 }

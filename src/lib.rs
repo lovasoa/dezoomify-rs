@@ -14,7 +14,6 @@ use log::{debug, error, info};
 
 pub use arguments::Arguments;
 pub use binary_display::{BinaryDisplay, display_bytes};
-use dezoomer::Dezoomer;
 use dezoomer::TileReference;
 use dezoomer::{ZoomLevel, ZoomLevelIter};
 pub use errors::ZoomError;
@@ -23,20 +22,23 @@ use output_file::get_outname;
 use tile::Tile;
 pub use vec2d::Vec2d;
 
-use crate::auto::MetadataResolver;
 use crate::dezoomer::{Images, ResolvedImage, ZoomableImage};
 use crate::encoder::SourceLevel;
 use crate::encoder::tile_buffer::TileBuffer;
 
+use crate::native::NativeDiscoveryDriver;
 use crate::output_file::reserve_output_file;
 
 mod arguments;
 mod binary_display;
 
+pub mod core;
 pub mod dezoomer;
 pub(crate) mod download_state;
 mod encoder;
 mod errors;
+pub mod format_adapter;
+mod native;
 mod network;
 mod output_file;
 pub mod tile;
@@ -66,26 +68,20 @@ fn stdin_line() -> Result<String, ZoomError> {
     Ok(first_line?)
 }
 
-/// Resolve all metadata requested by a dezoomer.
-async fn get_images(
-    dezoomer: &mut dyn Dezoomer,
-    resolver: &mut MetadataResolver<'_>,
-    uri: &str,
-) -> Result<Images, ZoomError> {
-    resolver.resolve(dezoomer, uri).await.map_err(Into::into)
-}
-
 /// Process an input URI to extract zoomable images
 async fn get_images_from_uri(
     args: &Arguments,
-    resolver: &mut MetadataResolver<'_>,
+    resolver: &mut NativeDiscoveryDriver,
     uri: &str,
 ) -> Result<Vec<ZoomableImage>, ZoomError> {
-    let mut dezoomer = args.find_dezoomer()?;
-    Ok(get_images(dezoomer.as_mut(), resolver, uri)
-        .await?
-        .into_iter()
-        .collect())
+    let registry =
+        crate::format_adapter::legacy_registry_for(args.dezoomer_name()).map_err(|_| {
+            ZoomError::NoSuchDezoomer {
+                name: args.dezoomer_name().to_owned(),
+            }
+        })?;
+    let images = discover_images(resolver, &registry, uri).await?;
+    Ok(images.into_iter().collect())
 }
 
 /// Validates a user input line as a level index
@@ -224,20 +220,43 @@ fn choose_image(
 async fn resolve_selected_image(
     mut image: ZoomableImage,
     args: &Arguments,
-    resolver: &mut MetadataResolver<'_>,
+    resolver: &mut NativeDiscoveryDriver,
 ) -> Result<ResolvedImage, ZoomError> {
     loop {
         match image {
             ZoomableImage::Resolved(image) => return Ok(image),
             ZoomableImage::Url(image_url) => {
-                let images = ZoomableImage::Url(image_url)
-                    .resolve_with(resolver)
+                let images = resolve_deferred_images(image_url, resolver)
                     .await
                     .map_err(|source| ZoomError::Dezoomer { source })?;
                 image = choose_image(images.into_iter().collect(), args)?;
             }
         }
     }
+}
+
+async fn resolve_deferred_images(
+    image_url: crate::dezoomer::ImageUrl,
+    resolver: &mut NativeDiscoveryDriver,
+) -> Result<Images, crate::dezoomer::DezoomerError> {
+    let crate::dezoomer::ImageUrl { url, title } = image_url;
+    discover_images(resolver, &crate::format_adapter::legacy_registry(), &url)
+        .await
+        .map(|images| images.with_fallback_title(title))
+}
+
+async fn discover_images(
+    driver: &mut NativeDiscoveryDriver,
+    registry: &crate::core::Registry,
+    uri: &str,
+) -> Result<Images, crate::dezoomer::DezoomerError> {
+    let catalog = driver.discover(registry, uri).await.map_err(|error| {
+        crate::dezoomer::DezoomerError::DownloadError {
+            msg: error.to_string(),
+        }
+    })?;
+    crate::format_adapter::catalog_to_legacy_images(catalog)
+        .map_err(crate::dezoomer::DezoomerError::wrap)
 }
 
 /// Prepares the output file path for saving
@@ -376,7 +395,7 @@ fn level_area(size: Option<Vec2d>) -> u64 {
 pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
     let uri = args.choose_input_uri()?;
     let http_client = client(args.headers(), args, Some(&uri))?;
-    let mut resolver = MetadataResolver::new(&http_client);
+    let mut resolver = NativeDiscoveryDriver::new(http_client);
     debug!("Trying to locate a zoomable image...");
     let images = get_images_from_uri(args, &mut resolver, &uri).await?;
     debug!("Found {} zoomable images", images.len());
@@ -473,9 +492,16 @@ pub async fn process_bulk(args: &Arguments) -> Result<BulkStats, ZoomError> {
 
     // Discover images from the bulk source.
     let http = client(std::iter::empty(), args, None)?;
-    let mut resolver = MetadataResolver::new(&http);
-    let mut dezoomer = args.find_dezoomer()?;
-    let images = get_images(dezoomer.as_mut(), &mut resolver, bulk_uri).await?;
+    let mut resolver = NativeDiscoveryDriver::new(http);
+    let registry =
+        crate::format_adapter::legacy_registry_for(args.dezoomer_name()).map_err(|_| {
+            ZoomError::NoSuchDezoomer {
+                name: args.dezoomer_name().to_owned(),
+            }
+        })?;
+    let images = discover_images(&mut resolver, &registry, bulk_uri)
+        .await
+        .map_err(|source| ZoomError::Dezoomer { source })?;
 
     let mut stats = BulkStats::new();
     let base_dir = current_dir()?;
@@ -515,7 +541,7 @@ pub async fn process_bulk(args: &Arguments) -> Result<BulkStats, ZoomError> {
 async fn process_bulk_zoomable_images(
     images: Vec<ZoomableImage>,
     args: &Arguments,
-    resolver: &mut MetadataResolver<'_>,
+    resolver: &mut NativeDiscoveryDriver,
     stats: &mut BulkStats,
     base_dir: &Path,
 ) -> Result<(), ZoomError> {
@@ -532,37 +558,39 @@ async fn process_bulk_zoomable_images(
 
         let resolved_image = match zoomable_image {
             ZoomableImage::Resolved(image) => image,
-            image @ ZoomableImage::Url(_) => match image.resolve_with(resolver).await {
-                Ok(images) if !images.is_empty() => {
-                    let images = images.into_iter().collect::<Vec<_>>();
-                    stats.total_images += images.len() - 1;
-                    for image in images.into_iter().rev() {
-                        pending.push_front(image);
+            ZoomableImage::Url(image_url) => {
+                match resolve_deferred_images(image_url, resolver).await {
+                    Ok(images) if !images.is_empty() => {
+                        let images = images.into_iter().collect::<Vec<_>>();
+                        stats.total_images += images.len() - 1;
+                        for image in images.into_iter().rev() {
+                            pending.push_front(image);
+                        }
+                        continue;
                     }
-                    continue;
+                    Ok(_) => {
+                        log::warn!(
+                            "No images found for image {} ('{}')",
+                            index + 1,
+                            image_title
+                        );
+                        stats.record_failure();
+                        index += 1;
+                        continue;
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to resolve image {} ('{}'): {}",
+                            index + 1,
+                            image_title,
+                            e
+                        );
+                        stats.record_failure();
+                        index += 1;
+                        continue;
+                    }
                 }
-                Ok(_) => {
-                    log::warn!(
-                        "No images found for image {} ('{}')",
-                        index + 1,
-                        image_title
-                    );
-                    stats.record_failure();
-                    index += 1;
-                    continue;
-                }
-                Err(e) => {
-                    log::warn!(
-                        "Failed to resolve image {} ('{}'): {}",
-                        index + 1,
-                        image_title,
-                        e
-                    );
-                    stats.record_failure();
-                    index += 1;
-                    continue;
-                }
-            },
+            }
         };
 
         process_bulk_image(
@@ -764,12 +792,12 @@ async fn dezoomify_level_into_buffer(
 
     let mut zoom_level_iter = ZoomLevelIter::new(&mut zoom_level);
 
-    while let Some(tile_refs) = zoom_level_iter.next_tile_references() {
+    while let Some(tile_refs) = zoom_level_iter.next_tile_references()? {
         coordinator
             .download_batch(tile_refs, canvas, &mut state, &progress, &zoom_level_iter)
             .await?;
 
-        zoom_level_iter.set_fetch_result(state.create_fetch_result());
+        zoom_level_iter.set_fetch_result(state.create_fetch_result())?;
     }
 
     progress.finish();

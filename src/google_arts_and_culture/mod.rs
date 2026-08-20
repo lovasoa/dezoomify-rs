@@ -8,7 +8,6 @@ use crate::dezoomer::{
     TilesRect, Vec2d, ZoomLevels,
 };
 
-mod decryption;
 mod tile_info;
 mod url;
 
@@ -128,11 +127,11 @@ impl TilesRect for GAPZoomLevel {
     }
 }
 
-fn post_process_tile(
+pub(crate) fn post_process_tile(
     _tile: &TileReference,
     data: Vec<u8>,
 ) -> Result<Vec<u8>, Box<dyn Error + Send + 'static>> {
-    decryption::decrypt(data).map_err(|e| Box::new(e) as Box<dyn Error + Send + 'static>)
+    crate::native::decrypt_google_arts_tile(data)
 }
 
 impl std::fmt::Debug for GAPZoomLevel {

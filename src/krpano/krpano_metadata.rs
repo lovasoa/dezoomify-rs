@@ -61,10 +61,10 @@ impl KrpanoMetadata {
             .from_str(s)
     }
 
-    pub fn from_reader<R: std::io::Read>(reader: R) -> Result<Self, serde_xml_rs::Error> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, serde_xml_rs::Error> {
         serde_xml_rs::SerdeXml::new()
             .overlapping_sequences(true)
-            .from_reader(reader)
+            .from_reader(bytes)
     }
 
     fn into_image_iter_with_name(self, parent_name: &str) -> Box<dyn Iterator<Item = ImageInfo>> {
@@ -719,8 +719,8 @@ mod test {
     #[test]
     fn parse_factum_arte() {
         // See https://github.com/lovasoa/dezoomify-rs/issues/100#issuecomment-767048175
-        let f = std::fs::File::open("testdata/krpano/krpano_scenes.xml").unwrap();
-        let parsed = KrpanoMetadata::from_reader(f).unwrap();
+        let bytes = std::fs::read("testdata/krpano/krpano_scenes.xml").unwrap();
+        let parsed = KrpanoMetadata::from_bytes(&bytes).unwrap();
         let infos: Vec<ImageInfo> = parsed.into_image_iter().collect();
         assert_eq!(infos.len(), 3);
         let names: Vec<String> = infos
@@ -733,8 +733,8 @@ mod test {
     #[test]
     fn parse_360cities() {
         // title: St George Hotel Dubai Tip Top English Disco by 360emirates
-        let f = std::fs::File::open("testdata/krpano/krpano_360cities.xml").unwrap();
-        let parsed = KrpanoMetadata::from_reader(f).unwrap();
+        let bytes = std::fs::read("testdata/krpano/krpano_360cities.xml").unwrap();
+        let parsed = KrpanoMetadata::from_bytes(&bytes).unwrap();
         let infos: Vec<ImageInfo> = parsed.into_image_iter().collect();
         assert_eq!(infos.len(), 1);
         assert_eq!(infos[0].image.level.len(), 4);
@@ -742,8 +742,8 @@ mod test {
 
     #[test]
     fn parse_geografiche_panotour() {
-        let f = std::fs::File::open("testdata/krpano/geografiche.xml").unwrap();
-        let parsed = KrpanoMetadata::from_reader(f).unwrap();
+        let bytes = std::fs::read("testdata/krpano/geografiche.xml").unwrap();
+        let parsed = KrpanoMetadata::from_bytes(&bytes).unwrap();
         let infos: Vec<ImageInfo> = parsed.into_image_iter().collect();
         assert_eq!(infos.len(), 13);
         assert_eq!(infos[0].name.as_ref(), "pano23128");

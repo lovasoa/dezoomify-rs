@@ -1,72 +1,16 @@
-//! Automatic format detection and metadata resolution.
+//! Legacy automatic format detection.
 //!
 //! Each candidate dezoomer is advanced independently and records the exact URI
 //! it is waiting for. Requests for the same URI are queued only once, so one
 //! fetched response is delivered to every candidate waiting for it. Candidates
 //! waiting for another URI remain paused and never see unrelated metadata.
 //!
-//! `MetadataResolver` drives the `NeedsData` state machine and caches fetched
-//! metadata by its exact URI. Repeated requests, including requests made by a
-//! later deferred-image resolution, therefore reuse the first response instead
-//! of performing another download.
-
-use std::collections::HashMap;
-
 use log::debug;
 
-use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, Images, PageContents};
+#[cfg(test)]
+use crate::dezoomer::PageContents;
+use crate::dezoomer::{Dezoomer, DezoomerError, DezoomerInput, Images};
 use crate::errors::DezoomerError::NeedsData;
-use crate::network::fetch_uri;
-
-pub(crate) struct MetadataResolver<'a> {
-    http: &'a reqwest::Client,
-    cache: HashMap<String, Vec<u8>>,
-}
-
-impl<'a> MetadataResolver<'a> {
-    pub(crate) fn new(http: &'a reqwest::Client) -> Self {
-        Self {
-            http,
-            cache: HashMap::new(),
-        }
-    }
-
-    pub(crate) async fn resolve(
-        &mut self,
-        dezoomer: &mut dyn Dezoomer,
-        uri: &str,
-    ) -> Result<Images, DezoomerError> {
-        let mut input = DezoomerInput {
-            uri: uri.to_string(),
-            contents: PageContents::Unknown,
-        };
-
-        loop {
-            match dezoomer.images(&input) {
-                Ok(images) => return Ok(images),
-                Err(DezoomerError::NeedsData { uri }) => {
-                    let contents = if let Some(contents) = self.cache.get(&uri) {
-                        debug!("Using cached metadata for {uri}");
-                        contents.clone()
-                    } else {
-                        let contents = fetch_uri(&uri, self.http).await.map_err(|error| {
-                            DezoomerError::DownloadError {
-                                msg: error.to_string(),
-                            }
-                        })?;
-                        self.cache.insert(uri.clone(), contents.clone());
-                        contents
-                    };
-                    input = DezoomerInput {
-                        uri,
-                        contents: PageContents::Success(contents),
-                    };
-                }
-                Err(error) => return Err(error),
-            }
-        }
-    }
-}
 
 /// Reorder dezoomers to prioritize those most likely to handle the given URL
 #[must_use]
@@ -522,13 +466,27 @@ mod tests {
             metadata_uri,
             calls: 0,
         };
-        let http = reqwest::Client::new();
-        let mut resolver = MetadataResolver::new(&http);
-
-        resolver
-            .resolve(&mut dezoomer, "root")
-            .await
-            .expect("the cached response should satisfy the repeated request");
+        let mut driver = crate::native::NativeDiscoveryDriver::new(reqwest::Client::new());
+        let mut input = DezoomerInput {
+            uri: "root".into(),
+            contents: PageContents::Unknown,
+        };
+        loop {
+            match dezoomer.images(&input) {
+                Ok(_) => break,
+                Err(DezoomerError::NeedsData { uri }) => {
+                    let resource = driver
+                        .resolve_uri(&uri, &crate::core::RequestRequirements::default())
+                        .await
+                        .expect("the cached response should satisfy the repeated request");
+                    input = DezoomerInput {
+                        uri,
+                        contents: PageContents::Success(resource.bytes),
+                    };
+                }
+                Err(error) => panic!("unexpected resolver error: {error}"),
+            }
+        }
         assert_eq!(dezoomer.calls, 3);
     }
 }

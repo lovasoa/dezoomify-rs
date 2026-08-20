@@ -240,6 +240,10 @@ impl Arguments {
                 name: self.dezoomer.clone(),
             })
     }
+
+    pub(crate) fn dezoomer_name(&self) -> &str {
+        &self.dezoomer
+    }
     pub fn best_size<I: Iterator<Item = Vec2d>>(&self, sizes: I) -> Option<Vec2d> {
         if self.should_use_largest() {
             sizes.max_by_key(|s| s.area())
