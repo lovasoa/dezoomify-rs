@@ -84,11 +84,6 @@ pub(crate) fn registry_for_cli(name: &str, uri: &str) -> Option<Registry> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dezoomify_core::core::discovery::{
-        Delegation, DiscoveryEvent, DiscoveryInput, DiscoverySession, DiscoveryStep, Profile,
-        ResourceOutcome, ResourceResponse,
-    };
-    use dezoomify_core::core::{CatalogEntry, DiscoveryError, StableId};
 
     #[test]
     fn cli_names_and_url_hints_are_explicit() {
@@ -118,83 +113,5 @@ mod tests {
             Some("zoomify")
         );
         assert_eq!(preferred_program("https://x/unknown"), None);
-    }
-
-    struct ProfiledDziRule;
-
-    impl DiscoveryProgram for ProfiledDziRule {
-        fn start(&self, _: &DiscoveryInput) -> Box<dyn DiscoverySession> {
-            Box::new(ProfiledDziRule)
-        }
-    }
-
-    impl DiscoverySession for ProfiledDziRule {
-        fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
-            match event {
-                DiscoveryEvent::Start => Ok(DiscoveryStep::Delegate(Delegation {
-                    program_id: "deepzoom".into(),
-                    input: DiscoveryInput::from("memory://deployment/profiled.dzi"),
-                    profiles: vec!["repair-dzi".into()],
-                })),
-                DiscoveryEvent::Resource(_) => unreachable!("rule delegates immediately"),
-            }
-        }
-    }
-
-    struct RepairDzi;
-
-    impl Profile for RepairDzi {
-        fn adapt_resource(
-            &self,
-            outcome: ResourceOutcome,
-        ) -> Result<ResourceOutcome, DiscoveryError> {
-            Ok(match outcome {
-                ResourceOutcome::Response(mut response) => {
-                    // A narrowly-scoped deployment repair performed before
-                    // the existing DZI parser sees the supplied metadata.
-                    response.bytes = br#"<Image TileSize="256" Overlap="0" Format="jpg"><Size Width="500" Height="300"/></Image>"#.to_vec();
-                    ResourceOutcome::Response(response)
-                }
-                failure @ ResourceOutcome::Failure(_) => failure,
-            })
-        }
-    }
-
-    #[test]
-    fn profile_customizes_existing_dzi_without_replacing_its_parser() {
-        let mut registry = Registry::new();
-        registry.register("profiled-dzi-rule", Priority(0), Arc::new(ProfiledDziRule));
-        registry.register(
-            "deepzoom",
-            Priority(1),
-            Arc::new(dezoomify_core::dzi::DziDezoomer),
-        );
-        registry.register_profile("repair-dzi", Arc::new(RepairDzi));
-
-        let mut operation = registry.start("memory://deployment/viewer").unwrap();
-        let need = operation
-            .missing_resources()
-            .unwrap()
-            .into_iter()
-            .find(|need| need.request.uri.ends_with("profiled.dzi"))
-            .expect("delegated DZI metadata request");
-        operation
-            .provide(ResourceResponse {
-                id: need.id,
-                bytes: b"deployment-specific broken metadata".to_vec(),
-                content_type: Some("application/xml".into()),
-            })
-            .unwrap();
-
-        let catalog = operation.finish().unwrap();
-        let [CatalogEntry::Ready(image)] = catalog.entries() else {
-            panic!("the base DZI producer should return one ready image")
-        };
-        assert_eq!(image.format, StableId::new("deepzoom"));
-        assert_eq!(image.levels.last().unwrap().size, Some((500, 300).into()));
-        assert!(image.provenance.0.iter().any(|step| {
-            step.id == StableId::new("repair-dzi")
-                && step.description == "applied discovery profile"
-        }));
     }
 }

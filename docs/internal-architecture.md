@@ -73,33 +73,12 @@ participate in output completeness.
 
 All registrations have a stable ID and an explicit `Priority` (lower runs
 first). The core registry knows nothing about concrete formats. The application
-composes built-in programs and applies the CLI's established URL hints. The
-three extension mechanisms deliberately remain separate.
+composes built-in programs and applies the CLI's established URL hints.
+Registry validation makes duplicate IDs and equal-precedence registrations
+actionable errors instead of source-order accidents.
 
-### 1. New format
+### New format
 
 Implement a pure `DiscoveryProgram` and `DiscoverySession`; parse only bytes supplied
 through `ResourceOutcome`, then return an `ImageCatalog`. Fixed-grid formats
 should use `KnownTilePlan::rectangular` rather than implement scheduling.
-
-### 2. Site-specific discovery for an existing format
-
-A `DiscoveryProgram` may parse a supplied page or JSON resource, request one more
-resource, then delegate the resulting candidate to an existing format ID. It
-must not copy that format's metadata parser or tile logic.
-
-Accepted delegation steps are attached to catalog provenance so callers can
-explain how an endpoint was discovered.
-
-### 3. Deployment profile for an existing format
-
-A `Profile` is a narrow, pure transformation around a delegated base format.
-It may adapt the delegated input, a described resource request, the supplied
-resource outcome, or the completed catalog. This lets a deployment repair
-malformed metadata before the base parser sees it, adjust URI or header
-requirements, and adapt a tile scheme without replacing the base parser.
-
-Profile chains are inherited by nested delegation and applied in declaration
-order at every boundary. Applied profiles are attached to the returned catalog.
-Registry validation makes duplicate IDs and equal-precedence registrations
-actionable errors instead of source-order accidents.

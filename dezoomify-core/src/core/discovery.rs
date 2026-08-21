@@ -3,11 +3,11 @@
 //! A discovery program only describes resource work.  The application owns
 //! fetching and repeatedly feeds outcomes back to [`DiscoveryOperation`].
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
-use super::model::{ImageCatalog, Provenance, ProvenanceStep, Request, StableId};
+use super::model::{ImageCatalog, Request};
 
 /// Opaque input supplied to a discovery program.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -140,36 +140,6 @@ pub enum DiscoveryStep {
     Need(ResourceRequest),
     Complete(ImageCatalog),
     Reject(DiscoveryDiagnostic),
-    #[cfg_attr(not(test), allow(dead_code))]
-    Delegate(Delegation),
-}
-
-/// Start another registered program, optionally applying named profiles to
-/// every boundary of the delegated discovery operation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Delegation {
-    pub program_id: String,
-    pub input: DiscoveryInput,
-    pub profiles: Vec<String>,
-}
-
-impl Delegation {
-    #[cfg_attr(not(test), allow(dead_code))]
-    #[must_use]
-    pub fn new(program_id: impl Into<String>, input: impl Into<DiscoveryInput>) -> Self {
-        Self {
-            program_id: program_id.into(),
-            input: input.into(),
-            profiles: Vec::new(),
-        }
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    #[must_use]
-    pub fn with_profiles(mut self, profiles: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.profiles = profiles.into_iter().map(Into::into).collect();
-        self
-    }
 }
 
 /// Factory for independent, pure parser sessions.  Formats and URL discovery
@@ -188,51 +158,11 @@ pub trait DiscoverySession: Send {
     fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError>;
 }
 
-/// An explicit, named adaptation selected by a delegation.
-pub trait Profile: Send + Sync {
-    /// Adapt the input before the delegated program starts.
-    ///
-    /// The default leaves the input unchanged.
-    fn adapt_input(&self, input: DiscoveryInput) -> Result<DiscoveryInput, DiscoveryError> {
-        Ok(input)
-    }
-
-    /// Adapt a resource request emitted by the delegated program.
-    ///
-    /// The default leaves the request unchanged.
-    fn adapt_request(&self, request: ResourceRequest) -> Result<ResourceRequest, DiscoveryError> {
-        Ok(request)
-    }
-
-    /// Adapt an application-supplied resource result before the delegated
-    /// program receives it.
-    ///
-    /// The default leaves the outcome unchanged.
-    fn adapt_resource(&self, outcome: ResourceOutcome) -> Result<ResourceOutcome, DiscoveryError> {
-        Ok(outcome)
-    }
-
-    /// Adapt the final catalog emitted by the delegated program.
-    ///
-    /// # Errors
-    ///
-    /// Returns a pure diagnostic when the catalog cannot be adapted.
-    fn adapt_catalog(&self, catalog: ImageCatalog) -> Result<ImageCatalog, DiscoveryError> {
-        Ok(catalog)
-    }
-}
-
 /// Pure discovery errors.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DiscoveryError {
     UnknownRequest(RequestId),
     RequestAlreadyProvided(RequestId),
-    UnknownDelegatedProgram(String),
-    UnknownProfile(String),
-    DuplicateDelegation {
-        program_id: String,
-        uri: String,
-    },
     NoCandidateAccepted {
         diagnostics: Vec<(String, DiscoveryDiagnostic)>,
     },
@@ -248,12 +178,6 @@ impl fmt::Display for DiscoveryError {
         match self {
             Self::UnknownRequest(id) => write!(f, "unknown discovery request {}", id.0),
             Self::RequestAlreadyProvided(id) => write!(f, "request {} was already supplied", id.0),
-            Self::UnknownDelegatedProgram(id) => write!(f, "unknown delegated program '{id}'"),
-            Self::UnknownProfile(id) => write!(f, "unknown discovery profile '{id}'"),
-            Self::DuplicateDelegation { program_id, uri } => write!(
-                f,
-                "program '{program_id}' was already delegated for '{uri}'"
-            ),
             Self::NoCandidateAccepted { diagnostics } => {
                 f.write_str("no discovery candidate accepted the input")?;
                 for (id, diagnostic) in diagnostics {
@@ -282,17 +206,12 @@ enum CandidateState {
 
 struct Candidate {
     id: String,
-    profiles: Vec<String>,
-    provenance: Provenance,
-    ancestry: BTreeSet<(String, String)>,
     session: Box<dyn DiscoverySession>,
     state: CandidateState,
 }
 
 /// A pull-driven operation with no I/O or shared mutable parser state.
 pub struct DiscoveryOperation {
-    programs: BTreeMap<String, Arc<dyn DiscoveryProgram>>,
-    profiles: BTreeMap<String, Arc<dyn Profile>>,
     candidates: Vec<Candidate>,
     requests: BTreeMap<RequestId, ResourceNeed>,
     request_ids: BTreeMap<Request, RequestId>,
@@ -309,19 +228,12 @@ impl DiscoveryOperation {
     pub(crate) fn new(
         input: &DiscoveryInput,
         programs: Vec<(String, Arc<dyn DiscoveryProgram>)>,
-        profiles: BTreeMap<String, Arc<dyn Profile>>,
         limits: DiscoveryLimits,
     ) -> Self {
-        let mut by_id = BTreeMap::new();
         let mut candidates = Vec::new();
         for (id, program) in programs {
-            by_id.insert(id.clone(), Arc::clone(&program));
-            let ancestry = BTreeSet::from([(id.clone(), input.uri.clone())]);
             candidates.push(Candidate {
                 id,
-                profiles: Vec::new(),
-                provenance: Provenance::default(),
-                ancestry,
                 session: program.start(input),
                 state: CandidateState::New,
             });
@@ -329,8 +241,6 @@ impl DiscoveryOperation {
         // Registry validation and URL ranking supply the canonical candidate
         // order. Keep it intact here; sorting again would discard URL hints.
         Self {
-            programs: by_id,
-            profiles,
             candidates,
             requests: BTreeMap::new(),
             request_ids: BTreeMap::new(),
@@ -457,8 +367,6 @@ impl DiscoveryOperation {
                     .get(&id)
                     .expect("ready candidate has an outcome")
                     .clone();
-                let profiles = self.candidates[index].profiles.clone();
-                let outcome = self.adapt_resource(outcome, &profiles)?;
                 self.candidates[index]
                     .session
                     .advance(DiscoveryEvent::Resource(&outcome))
@@ -469,20 +377,19 @@ impl DiscoveryOperation {
     fn apply_step(&mut self, index: usize, step: DiscoveryStep) -> Result<(), DiscoveryError> {
         match step {
             DiscoveryStep::Need(request) => {
-                let profiles = self.candidates[index].profiles.clone();
                 self.candidates[index].state = CandidateState::Waiting(
-                    self.register_request(self.adapt_request(request, &profiles)?)?,
+                    self.register_request(request)?,
                 );
             }
             DiscoveryStep::Complete(catalog) => {
-                let profiles = self.candidates[index].profiles.clone();
-                let provenance = self.candidates[index].provenance.clone();
-                self.catalog = Some(self.apply_profiles(catalog, &profiles, provenance)?);
+                let catalog = catalog
+                    .normalize()
+                    .map_err(|error| DiscoveryError::Session(error.to_string()))?;
+                self.catalog = Some(catalog);
             }
             DiscoveryStep::Reject(diagnostic) => {
                 self.reject_candidate(index, diagnostic);
             }
-            DiscoveryStep::Delegate(delegation) => self.delegate(index, delegation)?,
         }
         Ok(())
     }
@@ -513,127 +420,11 @@ impl DiscoveryOperation {
         );
         Ok(id)
     }
-
-    fn delegate(
-        &mut self,
-        candidate_index: usize,
-        delegation: Delegation,
-    ) -> Result<(), DiscoveryError> {
-        let mut profiles = self.candidates[candidate_index].profiles.clone();
-        profiles.extend(delegation.profiles.iter().cloned());
-        let key = (delegation.program_id.clone(), delegation.input.uri.clone());
-        let mut ancestry = self.candidates[candidate_index].ancestry.clone();
-        if !ancestry.insert(key.clone()) {
-            return Err(DiscoveryError::DuplicateDelegation {
-                program_id: key.0,
-                uri: key.1,
-            });
-        }
-        let Some(program) = self.programs.get(&delegation.program_id).cloned() else {
-            return Err(DiscoveryError::UnknownDelegatedProgram(
-                delegation.program_id,
-            ));
-        };
-        for profile in &delegation.profiles {
-            if !self.profiles.contains_key(profile) {
-                return Err(DiscoveryError::UnknownProfile(profile.clone()));
-            }
-        }
-        let input = self.adapt_input(delegation.input, &profiles)?;
-        let from = self.candidates[candidate_index].id.clone();
-        let mut provenance = self.candidates[candidate_index].provenance.clone();
-        provenance.0.push(ProvenanceStep {
-            id: StableId::new(from.clone()),
-            description: format!("delegated to {} for {}", delegation.program_id, input.uri),
-        });
-        self.candidates[candidate_index].state = CandidateState::Rejected;
-        // Replace the rule in place so its explicit priority is retained and
-        // lower-priority auto candidates cannot win before the delegated
-        // format advances.
-        self.candidates[candidate_index] = Candidate {
-            id: delegation.program_id,
-            profiles,
-            provenance,
-            ancestry,
-            session: program.start(&input),
-            state: CandidateState::New,
-        };
-        Ok(())
-    }
-
-    fn adapt_input(
-        &self,
-        input: DiscoveryInput,
-        profile_ids: &[String],
-    ) -> Result<DiscoveryInput, DiscoveryError> {
-        self.adapt(input, profile_ids, |profile, input| {
-            profile.adapt_input(input)
-        })
-    }
-
-    fn adapt_request(
-        &self,
-        request: ResourceRequest,
-        profile_ids: &[String],
-    ) -> Result<ResourceRequest, DiscoveryError> {
-        self.adapt(request, profile_ids, |profile, request| {
-            profile.adapt_request(request)
-        })
-    }
-
-    fn adapt_resource(
-        &self,
-        outcome: ResourceOutcome,
-        profile_ids: &[String],
-    ) -> Result<ResourceOutcome, DiscoveryError> {
-        self.adapt(outcome, profile_ids, |profile, outcome| {
-            profile.adapt_resource(outcome)
-        })
-    }
-
-    fn adapt<T>(
-        &self,
-        value: T,
-        profile_ids: &[String],
-        adapt: impl Fn(&dyn Profile, T) -> Result<T, DiscoveryError>,
-    ) -> Result<T, DiscoveryError> {
-        profile_ids.iter().try_fold(value, |value, id| {
-            let profile = self
-                .profiles
-                .get(id)
-                .ok_or_else(|| DiscoveryError::UnknownProfile(id.clone()))?;
-            adapt(profile.as_ref(), value)
-        })
-    }
-
-    fn apply_profiles(
-        &mut self,
-        mut catalog: ImageCatalog,
-        profile_ids: &[String],
-        mut provenance: Provenance,
-    ) -> Result<ImageCatalog, DiscoveryError> {
-        for id in profile_ids {
-            let Some(profile) = self.profiles.get(id) else {
-                return Err(DiscoveryError::UnknownProfile(id.clone()));
-            };
-            catalog = profile.adapt_catalog(catalog)?;
-            provenance.0.push(ProvenanceStep {
-                id: StableId::new(id.clone()),
-                description: "applied discovery profile".into(),
-            });
-        }
-        let mut catalog = catalog
-            .normalize()
-            .map_err(|error| DiscoveryError::Session(error.to_string()))?;
-        catalog.append_provenance(&provenance);
-        Ok(catalog)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::model::{CatalogEntry, DeferredImage, StableId};
     use crate::core::registry::{Priority, Registry};
 
     #[derive(Clone, Copy)]
@@ -649,28 +440,20 @@ mod tests {
             uri: &'static str,
             result: NeedResult,
         },
-        Delegate {
-            program: &'static str,
-            target: &'static str,
-            profile: Option<&'static str>,
-        },
-        Target,
-        Boundary,
     }
 
     struct ScriptProgram(Script);
 
     struct ScriptSession {
         script: Script,
-        input: String,
         started: bool,
     }
 
     impl DiscoveryProgram for ScriptProgram {
         fn start(&self, input: &DiscoveryInput) -> Box<dyn DiscoverySession> {
+            let _ = input;
             Box::new(ScriptSession {
                 script: self.0.clone(),
-                input: input.uri.clone(),
                 started: false,
             })
         }
@@ -711,44 +494,6 @@ mod tests {
                     Ok(DiscoveryStep::Reject("resource unavailable".into()))
                 }
                 (
-                    Script::Delegate {
-                        program,
-                        target,
-                        profile,
-                    },
-                    DiscoveryEvent::Start,
-                ) => {
-                    let delegation = Delegation::new(*program, *target);
-                    Ok(DiscoveryStep::Delegate(match profile {
-                        Some(profile) => delegation.with_profiles([*profile]),
-                        None => delegation,
-                    }))
-                }
-                (Script::Target, DiscoveryEvent::Start) => Ok(DiscoveryStep::Complete(
-                    deferred_catalog("target", "memory://target"),
-                )),
-                (Script::Boundary, DiscoveryEvent::Start)
-                    if self.input != "memory://target#profiled" =>
-                {
-                    Ok(DiscoveryStep::Reject("unprofiled input".into()))
-                }
-                (Script::Boundary, DiscoveryEvent::Start) if !self.started => {
-                    self.started = true;
-                    Ok(DiscoveryStep::Need(ResourceRequest::new(
-                        "memory://target-metadata",
-                        ResourcePurpose::Metadata,
-                    )))
-                }
-                (
-                    Script::Boundary,
-                    DiscoveryEvent::Resource(ResourceOutcome::Response(response)),
-                ) if response.bytes == b"repaired" => Ok(DiscoveryStep::Complete(
-                    deferred_catalog("boundary", self.input.clone()),
-                )),
-                (Script::Boundary, DiscoveryEvent::Resource(_)) => {
-                    Ok(DiscoveryStep::Reject("unrepaired resource".into()))
-                }
-                (
                     Script::Need {
                         result: NeedResult::Session,
                         ..
@@ -757,12 +502,9 @@ mod tests {
                 ) => {
                     unreachable!("failed session never requests a resource")
                 }
-                (Script::Need { .. } | Script::Delegate { .. } | Script::Target, _) => {
+                (Script::Need { .. }, _) => {
                     Err(DiscoveryError::Session("unexpected test transition".into()))
                 }
-                (Script::Boundary, _) => Err(DiscoveryError::Session(
-                    "unexpected boundary transition".into(),
-                )),
             }
         }
     }
@@ -785,132 +527,6 @@ mod tests {
 
     fn need_program(uri: &'static str, result: NeedResult) -> Arc<ScriptProgram> {
         Arc::new(ScriptProgram(Script::Need { uri, result }))
-    }
-
-    fn deferred_catalog(id: &str, uri: impl Into<String>) -> ImageCatalog {
-        ImageCatalog::new([CatalogEntry::Deferred(DeferredImage {
-            id: StableId::from(id),
-            uri: uri.into(),
-            title: None,
-            provenance: Provenance::default(),
-            warnings: Vec::new(),
-        })])
-    }
-
-    /*
-     * The scripted programs below deliberately share one session harness: the
-     * tests exercise operation boundaries, not independent parser plumbing.
-     */
-    struct WarningProfile {
-        warning: &'static str,
-    }
-
-    impl Profile for WarningProfile {
-        fn adapt_catalog(&self, mut catalog: ImageCatalog) -> Result<ImageCatalog, DiscoveryError> {
-            for entry in &mut catalog.0 {
-                if let CatalogEntry::Deferred(image) = entry {
-                    image.warnings.push(self.warning.into());
-                }
-            }
-            Ok(catalog)
-        }
-    }
-
-    struct RepairingProfile {
-        adapt_catalog: fn(ImageCatalog) -> Result<ImageCatalog, DiscoveryError>,
-    }
-
-    impl Profile for RepairingProfile {
-        fn adapt_input(&self, mut input: DiscoveryInput) -> Result<DiscoveryInput, DiscoveryError> {
-            input.uri.push_str("#profiled");
-            Ok(input)
-        }
-
-        fn adapt_request(
-            &self,
-            mut request: ResourceRequest,
-        ) -> Result<ResourceRequest, DiscoveryError> {
-            request
-                .request
-                .headers
-                .insert("X-Profile".into(), "boundary".into());
-            Ok(request)
-        }
-
-        fn adapt_resource(
-            &self,
-            outcome: ResourceOutcome,
-        ) -> Result<ResourceOutcome, DiscoveryError> {
-            match outcome {
-                ResourceOutcome::Response(mut response) => {
-                    response.bytes = b"repaired".to_vec();
-                    Ok(ResourceOutcome::Response(response))
-                }
-                failure @ ResourceOutcome::Failure(_) => Ok(failure),
-            }
-        }
-
-        fn adapt_catalog(&self, catalog: ImageCatalog) -> Result<ImageCatalog, DiscoveryError> {
-            (self.adapt_catalog)(catalog)
-        }
-    }
-
-    #[allow(clippy::unnecessary_wraps)]
-    fn add_profile_warning(mut catalog: ImageCatalog) -> Result<ImageCatalog, DiscoveryError> {
-        let CatalogEntry::Deferred(image) = &mut catalog.0[0] else {
-            unreachable!("boundary test catalog is deferred")
-        };
-        image.warnings.push("profiled".into());
-        Ok(catalog)
-    }
-
-    fn reject_catalog(_: ImageCatalog) -> Result<ImageCatalog, DiscoveryError> {
-        Err(DiscoveryError::Session(
-            "profile cannot repair catalog".into(),
-        ))
-    }
-
-    #[allow(clippy::unnecessary_wraps)]
-    fn duplicate_catalog(_: ImageCatalog) -> Result<ImageCatalog, DiscoveryError> {
-        let entry = CatalogEntry::Deferred(DeferredImage {
-            id: StableId::from("duplicate"),
-            uri: "memory://duplicate".into(),
-            title: None,
-            provenance: Provenance::default(),
-            warnings: Vec::new(),
-        });
-        Ok(ImageCatalog::new([entry.clone(), entry]))
-    }
-
-    fn repairing_operation(
-        profile: &'static str,
-        adapt_catalog: fn(ImageCatalog) -> Result<ImageCatalog, DiscoveryError>,
-        fallback: bool,
-    ) -> DiscoveryOperation {
-        let mut registry = Registry::new();
-        registry.register(
-            "root",
-            Priority(0),
-            Arc::new(ScriptProgram(Script::Delegate {
-                program: "boundary-target",
-                target: "memory://target",
-                profile: Some(profile),
-            })),
-        );
-        registry.register(
-            "boundary-target",
-            Priority(1),
-            Arc::new(ScriptProgram(Script::Boundary)),
-        );
-        if fallback {
-            registry.register(
-                "fallback",
-                Priority(2),
-                need_program("memory://fallback", NeedResult::Complete),
-            );
-        }
-        registry.register_profile(profile, Arc::new(RepairingProfile { adapt_catalog }));
-        registry.start("memory://root").unwrap()
     }
 
     #[test]
@@ -971,148 +587,5 @@ mod tests {
         assert!(first.is_complete());
         assert!(!second.is_complete());
         assert_eq!(second.missing_resources().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn profile_adapts_every_delegated_discovery_boundary() {
-        let mut operation = repairing_operation("boundary", add_profile_warning, false);
-        let needs = operation.missing_resources().unwrap();
-        assert_eq!(needs.len(), 1);
-        assert_eq!(needs[0].request.uri, "memory://target-metadata");
-        assert_eq!(
-            needs[0].request.headers.get("X-Profile"),
-            Some(&"boundary".into())
-        );
-        operation
-            .provide(ResourceResponse {
-                id: needs[0].id,
-                bytes: b"broken".to_vec(),
-                content_type: None,
-            })
-            .unwrap();
-
-        let catalog = operation.finish().unwrap();
-        let CatalogEntry::Deferred(image) = &catalog.0[0] else {
-            panic!("expected deferred image")
-        };
-        assert_eq!(image.uri, "memory://target#profiled");
-        assert_eq!(image.warnings, ["profiled"]);
-        assert!(
-            image
-                .provenance
-                .0
-                .iter()
-                .any(|step| step.id.as_str() == "boundary")
-        );
-    }
-
-    #[test]
-    fn profile_session_error_rejects_its_candidate_and_uses_fallback() {
-        let mut operation = repairing_operation("failing-catalog", reject_catalog, true);
-        let needs = operation.missing_resources().unwrap();
-        assert_eq!(needs.len(), 2);
-        let target_need = needs
-            .iter()
-            .find(|need| need.request.uri == "memory://target-metadata")
-            .unwrap();
-        operation
-            .provide(ResourceResponse {
-                id: target_need.id,
-                bytes: b"broken".to_vec(),
-                content_type: None,
-            })
-            .unwrap();
-        assert!(operation.diagnostics.iter().any(|(id, diagnostic)| {
-            id == "boundary-target" && diagnostic.message == "profile cannot repair catalog"
-        }));
-        let needs = operation.missing_resources().unwrap();
-        assert_eq!(needs.len(), 1);
-        assert_eq!(needs[0].request.uri, "memory://fallback");
-        operation
-            .provide(ResourceResponse {
-                id: needs[0].id,
-                bytes: Vec::new(),
-                content_type: None,
-            })
-            .unwrap();
-        assert!(operation.finish().unwrap().is_empty());
-    }
-
-    #[test]
-    fn catalog_normalization_error_rejects_its_candidate_and_uses_fallback() {
-        let mut operation = repairing_operation("malformed-catalog", duplicate_catalog, true);
-        let target_need = operation
-            .missing_resources()
-            .unwrap()
-            .into_iter()
-            .find(|need| need.request.uri == "memory://target-metadata")
-            .unwrap();
-        operation
-            .provide(ResourceResponse {
-                id: target_need.id,
-                bytes: b"broken".to_vec(),
-                content_type: None,
-            })
-            .unwrap();
-        assert!(operation.diagnostics.iter().any(|(id, diagnostic)| {
-            id == "boundary-target" && diagnostic.message.contains("duplicate")
-        }));
-        let fallback_need = operation.missing_resources().unwrap().pop().unwrap();
-        assert_eq!(fallback_need.request.uri, "memory://fallback");
-        operation
-            .provide(ResourceResponse {
-                id: fallback_need.id,
-                bytes: Vec::new(),
-                content_type: None,
-            })
-            .unwrap();
-        assert!(operation.finish().unwrap().is_empty());
-    }
-
-    #[test]
-    fn delegation_inherits_explicit_profiles_and_records_provenance() {
-        let mut registry = Registry::new();
-        registry.register(
-            "root",
-            Priority(0),
-            Arc::new(ScriptProgram(Script::Delegate {
-                program: "middle",
-                target: "memory://middle",
-                profile: Some("outer"),
-            })),
-        );
-        registry.register(
-            "middle",
-            Priority(1),
-            Arc::new(ScriptProgram(Script::Delegate {
-                program: "target",
-                target: "memory://target",
-                profile: Some("inner"),
-            })),
-        );
-        registry.register(
-            "target",
-            Priority(2),
-            Arc::new(ScriptProgram(Script::Target)),
-        );
-        registry.register_profile("outer", Arc::new(WarningProfile { warning: "outer" }));
-        registry.register_profile("inner", Arc::new(WarningProfile { warning: "inner" }));
-
-        let mut operation = registry.start("memory://root").unwrap();
-        assert!(operation.missing_resources().unwrap().is_empty());
-        let catalog = operation.finish().unwrap();
-        let CatalogEntry::Deferred(image) = &catalog.0[0] else {
-            panic!("expected deferred test image");
-        };
-        assert_eq!(image.warnings, ["outer", "inner"]);
-        assert_eq!(
-            image
-                .provenance
-                .0
-                .iter()
-                .map(|step| step.id.as_str())
-                .collect::<Vec<_>>(),
-            ["root", "middle", "outer", "inner"]
-        );
     }
 }

@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use super::discovery::{
-    DiscoveryError, DiscoveryInput, DiscoveryLimits, DiscoveryOperation, DiscoveryProgram, Profile,
+    DiscoveryError, DiscoveryInput, DiscoveryLimits, DiscoveryOperation, DiscoveryProgram,
 };
 
 /// Explicit URL-recognition precedence. Lower values run first.
@@ -16,12 +16,6 @@ struct ProgramRegistration {
     id: String,
     priority: Priority,
     program: Arc<dyn DiscoveryProgram>,
-}
-
-#[derive(Clone)]
-struct ProfileRegistration {
-    id: String,
-    profile: Arc<dyn Profile>,
 }
 
 /// Deterministic registration failures.
@@ -58,7 +52,6 @@ impl std::error::Error for RegistryError {}
 #[derive(Default, Clone)]
 pub struct Registry {
     programs: Vec<ProgramRegistration>,
-    profiles: Vec<ProfileRegistration>,
 }
 
 impl Registry {
@@ -78,15 +71,6 @@ impl Registry {
             id: id.into(),
             priority,
             program,
-        });
-    }
-
-    /// Register an explicitly selected catalog profile.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn register_profile(&mut self, id: impl Into<String>, profile: Arc<dyn Profile>) {
-        self.profiles.push(ProfileRegistration {
-            id: id.into(),
-            profile,
         });
     }
 
@@ -114,15 +98,6 @@ impl Registry {
         if let Some((priority, mut ids)) = priorities.into_iter().find(|(_, ids)| ids.len() > 1) {
             ids.sort();
             return Err(RegistryError::AmbiguousPriority { priority, ids });
-        }
-        let mut profile_ids = BTreeSet::new();
-        for registration in &self.profiles {
-            if !profile_ids.insert(registration.id.clone()) {
-                return Err(RegistryError::DuplicateId {
-                    kind: "profile",
-                    id: registration.id.clone(),
-                });
-            }
         }
         Ok(())
     }
@@ -163,11 +138,6 @@ impl Registry {
                 .into_iter()
                 .map(|registered| (registered.id, registered.program))
                 .collect(),
-            self.profiles
-                .iter()
-                .cloned()
-                .map(|registered| (registered.id, registered.profile))
-                .collect(),
             limits,
         ))
     }
@@ -191,8 +161,6 @@ mod tests {
             unreachable!("registry validation must not start programs")
         }
     }
-
-    impl Profile for NeverStarted {}
 
     #[test]
     fn duplicate_program_ids_are_rejected() {
@@ -220,20 +188,6 @@ mod tests {
             Err(RegistryError::AmbiguousPriority {
                 priority: Priority(7),
                 ids: vec!["a".into(), "b".into()],
-            })
-        );
-    }
-
-    #[test]
-    fn duplicate_profile_ids_are_rejected() {
-        let mut registry = Registry::new();
-        registry.register_profile("profile", Arc::new(NeverStarted));
-        registry.register_profile("profile", Arc::new(NeverStarted));
-        assert_eq!(
-            registry.validate(),
-            Err(RegistryError::DuplicateId {
-                kind: "profile",
-                id: "profile".into()
             })
         );
     }
