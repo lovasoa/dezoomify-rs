@@ -1,12 +1,12 @@
 # AGENTS.md
 
 dezoomify-rs downloads zoomable images (Zoomify, IIIF, Deep Zoom, krpano,
-Google Arts & Culture, NYPL, IIPImage, generic URL templates, `tiles.yaml`)
+Google Arts & Culture, IIPImage, generic URL templates, ...)
 and reassembles them into a single image file.
 
 ## Layout
 
-One workspace, two crates. Dependencies flow app → core only.
+One workspace, two crates. Dependencies from app to core only.
 
 - `dezoomify-core/` — pure library: turns supplied bytes into image catalogs
   and tile descriptions. No I/O, async, or image decoding; the boundary is
@@ -16,12 +16,13 @@ One workspace, two crates. Dependencies flow app → core only.
 | Concern | Location |
 |---|---|
 | CLI arguments | [`src/arguments.rs`](src/arguments.rs) |
-| Format registry, `--dezoomer` names, URL hints | [`src/registry.rs`](src/registry.rs) |
+| `--dezoomer` name resolution (`auto` vs. named) | [`src/registry.rs`](src/registry.rs) |
 | Native discovery driver (HTTP / local files) | [`src/native.rs`](src/native.rs) |
 | Fetching, headers, tile cache | [`src/network.rs`](src/network.rs) |
 | Tile download loop, progress bars | [`src/download_state.rs`](src/download_state.rs) |
 | Orchestration, image/level pickers, bulk mode | [`src/lib.rs`](src/lib.rs) |
 | Output encoders (PNG/JPEG/ZIF-TIFF/IIIF) | [`src/encoder/`](src/encoder/) |
+| Built-in format registry (names, URL hints, precedence) | [`dezoomify-core/src/core/registry.rs`](dezoomify-core/src/core/registry.rs) |
 | Discovery engine (sessions, limits, request dedup) | [`dezoomify-core/src/core/discovery.rs`](dezoomify-core/src/core/discovery.rs) |
 | Catalog, level and tile model | [`dezoomify-core/src/core/model.rs`](dezoomify-core/src/core/model.rs) |
 | Known-grid tile plans | [`dezoomify-core/src/core/tile_plan.rs`](dezoomify-core/src/core/tile_plan.rs) |
@@ -35,8 +36,8 @@ One workspace, two crates. Dependencies flow app → core only.
    [`generic`](dezoomify-core/src/generic/mod.rs)).
 2. Fixed grids: implement `RectangularSource` and wrap it in
    `KnownTilePlan::rectangular` ([`tile_plan.rs`](dezoomify-core/src/core/tile_plan.rs)).
-3. Register the id, CLI name and base priority in `BUILTINS`
-   ([`src/registry.rs`](src/registry.rs)).
+3. Register the program's name, URL hints, and position (recognition order) in
+   `BUILTINS` ([`dezoomify-core/src/core/registry.rs`](dezoomify-core/src/core/registry.rs)).
 
 ## Commands
 

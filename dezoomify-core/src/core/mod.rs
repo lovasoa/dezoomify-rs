@@ -23,6 +23,6 @@ pub use model::{
     Request, StableId, TileId, TileRole, TileSpec,
 };
 pub use processing::ProcessingError;
-pub use registry::{Priority, Registry};
+pub use registry::{Registry, default_registry, registry_for};
 pub use tile_plan::{KnownPlanCursor, KnownTilePlan, LevelPlan, ReplayablePlan};
 pub use uri::resolve_relative;

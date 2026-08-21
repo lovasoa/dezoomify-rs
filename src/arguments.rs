@@ -33,7 +33,7 @@ pub struct Arguments {
 
     /// Name of the dezoomer to use. "auto" will try to detect the format automatically
     #[arg(short, long, default_value = "auto")]
-    dezoomer: String,
+    pub(crate) dezoomer: String,
 
     /// If several zoom levels are available, select the largest one (highest resolution)
     #[arg(short, long)]
@@ -226,9 +226,6 @@ impl Arguments {
     #[must_use]
     pub fn has_level_specifying_args(&self) -> bool {
         self.max_width.is_some() || self.max_height.is_some() || self.zoom_level.is_some()
-    }
-    pub(crate) fn dezoomer_name(&self) -> &str {
-        &self.dezoomer
     }
     pub fn best_size<I: Iterator<Item = Vec2d>>(&self, sizes: I) -> Option<Vec2d> {
         if self.should_use_largest() {

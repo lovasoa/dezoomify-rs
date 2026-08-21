@@ -14,11 +14,10 @@ use dezoomify_core::core::discovery::{
     DiscoveryError, DiscoveryOperation, ResourceFailure, ResourceNeed, ResourceResponse,
 };
 use dezoomify_core::core::model::{ImageCatalog, Request};
-use dezoomify_core::core::registry::{Registry, RegistryError};
+use dezoomify_core::core::registry::Registry;
 
 // Errors which can occur while the native application drives discovery.
 custom_error! {pub NativeDiscoveryError
-    Registry{source: RegistryError} = "invalid discovery registry: {source}",
     Discovery{source: DiscoveryError} = "discovery failed: {source}",
 }
 
@@ -70,7 +69,7 @@ impl NativeDiscoveryDriver {
         registry: &Registry,
         uri: impl Into<String>,
     ) -> Result<ImageCatalog, NativeDiscoveryError> {
-        let operation = registry.start(uri.into())?;
+        let operation = registry.start(uri.into());
         self.drive(operation).await
     }
 

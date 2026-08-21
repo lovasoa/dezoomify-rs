@@ -437,7 +437,7 @@ impl DiscoveryOperation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::registry::{Priority, Registry};
+    use crate::core::registry::Registry;
 
     #[derive(Clone, Copy)]
     enum NeedResult {
@@ -542,16 +542,14 @@ mod tests {
         let mut registry = Registry::new();
         registry.register(
             "rejecting",
-            Priority(0),
             need_program("memory://shared", NeedResult::Reject),
         );
         registry.register(
             "accepting",
-            Priority(1),
             need_program("memory://shared", NeedResult::Complete),
         );
 
-        let mut operation = registry.start("memory://root").unwrap();
+        let mut operation = registry.start("memory://root");
         assert_eq!(operation.missing_resources().unwrap().len(), 1);
         need_response(&mut operation, b"metadata");
         assert!(operation.is_complete());
@@ -562,16 +560,14 @@ mod tests {
         let mut registry = Registry::new();
         registry.register(
             "broken",
-            Priority(0),
             need_program("memory://unused", NeedResult::Session),
         );
         registry.register(
             "working",
-            Priority(1),
             need_program("memory://working", NeedResult::Complete),
         );
 
-        let mut operation = registry.start("memory://root").unwrap();
+        let mut operation = registry.start("memory://root");
         let needs = operation.missing_resources().unwrap();
         assert_eq!(needs[0].request.uri, "memory://working");
         provide_response(&mut operation, needs[0].id, b"");
@@ -583,11 +579,10 @@ mod tests {
         let mut registry = Registry::new();
         registry.register(
             "one",
-            Priority(0),
             need_program("memory://metadata", NeedResult::Complete),
         );
-        let mut first = registry.start("memory://first").unwrap();
-        let mut second = registry.start("memory://second").unwrap();
+        let mut first = registry.start("memory://first");
+        let mut second = registry.start("memory://second");
         let first_id = first.missing_resources().unwrap()[0].id;
         let second_id = second.missing_resources().unwrap()[0].id;
         assert_eq!(first_id, second_id);
@@ -670,15 +665,14 @@ mod tests {
         let mut registry = Registry::new();
         registry.register(
             "high",
-            Priority(0),
             Arc::new(ChainProgram {
                 first: "memory://high1",
                 second: "memory://high2",
             }),
         );
-        registry.register("low", Priority(1), Arc::new(SingleProgram("memory://low1")));
+        registry.register("low", Arc::new(SingleProgram("memory://low1")));
 
-        let mut operation = registry.start("memory://root").unwrap();
+        let mut operation = registry.start("memory://root");
         let needs = operation.missing_resources().unwrap();
         assert_eq!(needs.len(), 2);
         assert!(needs.iter().any(|n| n.request.uri == "memory://high1"));
@@ -729,12 +723,12 @@ mod tests {
             }
         }
         let mut registry = Registry::new();
-        registry.register("loop", Priority(0), Arc::new(LoopProgram));
+        registry.register("loop", Arc::new(LoopProgram));
         let limits = DiscoveryLimits {
             transitions: 3,
             ..Default::default()
         };
-        let mut operation = registry.start_with_limits("memory://root", limits).unwrap();
+        let mut operation = registry.start_with_limits("memory://root", limits);
         let mut result = Ok(());
         for _ in 0..5 {
             let needs = operation.missing_resources().unwrap();
@@ -758,14 +752,14 @@ mod tests {
     #[test]
     fn resource_limit_rejects_offending_candidate_instead_of_aborting() {
         let mut registry = Registry::new();
-        registry.register("a", Priority(0), Arc::new(SingleProgram("memory://a")));
-        registry.register("b", Priority(1), Arc::new(SingleProgram("memory://b")));
-        registry.register("c", Priority(2), Arc::new(SingleProgram("memory://c")));
+        registry.register("a", Arc::new(SingleProgram("memory://a")));
+        registry.register("b", Arc::new(SingleProgram("memory://b")));
+        registry.register("c", Arc::new(SingleProgram("memory://c")));
         let limits = DiscoveryLimits {
             resources: 2,
             ..Default::default()
         };
-        let mut operation = registry.start_with_limits("memory://root", limits).unwrap();
+        let mut operation = registry.start_with_limits("memory://root", limits);
         let needs = operation.missing_resources().unwrap();
         assert_eq!(needs.len(), 2);
         assert!(
@@ -788,16 +782,12 @@ mod tests {
     #[test]
     fn retained_bytes_limit_is_enforced() {
         let mut registry = Registry::new();
-        registry.register(
-            "one",
-            Priority(0),
-            need_program("memory://meta", NeedResult::Complete),
-        );
+        registry.register("one", need_program("memory://meta", NeedResult::Complete));
         let limits = DiscoveryLimits {
             retained_bytes: 10,
             ..Default::default()
         };
-        let mut operation = registry.start_with_limits("memory://root", limits).unwrap();
+        let mut operation = registry.start_with_limits("memory://root", limits);
         let needs = operation.missing_resources().unwrap();
         assert_eq!(needs.len(), 1);
         let large = vec![0u8; 20];

@@ -1,57 +1,83 @@
 //! Stable registration and precedence policy for pure discovery programs.
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use super::discovery::{
-    DiscoveryError, DiscoveryInput, DiscoveryLimits, DiscoveryOperation, DiscoveryProgram,
+use super::discovery::{DiscoveryInput, DiscoveryLimits, DiscoveryOperation, DiscoveryProgram};
+use crate::{
+    bulk_text, custom_yaml, dzi, generic, google_arts_and_culture, iiif, iipimage, krpano, nypl,
+    zoomify,
 };
 
-/// Explicit URL-recognition precedence. Lower values run first.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Priority(pub i32);
-
-#[derive(Clone)]
-struct ProgramRegistration {
-    id: String,
-    priority: Priority,
-    program: Arc<dyn DiscoveryProgram>,
+/// One built-in program: its single name, the URL fragments that identify it
+/// for auto-detection, and its constructor.
+struct Builtin {
+    name: &'static str,
+    url_hints: &'static [&'static str],
+    construct: fn() -> Arc<dyn DiscoveryProgram>,
 }
 
-/// Deterministic registration failures.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RegistryError {
-    DuplicateId {
-        kind: &'static str,
-        id: String,
+/// Every built-in program, in recognition order.
+///
+/// The list order *is* the priority: earlier programs are tried first during
+/// auto-detection. Each program has exactly one name, which is used both for
+/// diagnostics and as the user-facing selector.
+const BUILTINS: &[Builtin] = &[
+    Builtin {
+        name: "custom",
+        url_hints: &[],
+        construct: || Arc::new(custom_yaml::CustomDezoomer),
     },
-    AmbiguousPriority {
-        priority: Priority,
-        ids: Vec<String>,
+    Builtin {
+        name: "google_arts_and_culture",
+        url_hints: &[],
+        construct: || Arc::new(google_arts_and_culture::GAPDezoomer),
     },
-}
+    Builtin {
+        name: "zoomify",
+        url_hints: &["ImageProperties.xml", "TileGroup"],
+        construct: || Arc::new(zoomify::ZoomifyDezoomer),
+    },
+    Builtin {
+        name: "iiif",
+        url_hints: &["info.json", "iiif", "manifest.json"],
+        construct: || Arc::new(iiif::IiifDezoomer),
+    },
+    Builtin {
+        name: "deepzoom",
+        url_hints: &[".dzi", "_files/"],
+        construct: || Arc::new(dzi::DziDezoomer),
+    },
+    Builtin {
+        name: "generic",
+        url_hints: &["{{"],
+        construct: || Arc::new(generic::GenericDezoomer),
+    },
+    Builtin {
+        name: "krpano",
+        url_hints: &["tiles.xml"],
+        construct: || Arc::new(krpano::KrpanoDezoomer),
+    },
+    Builtin {
+        name: "iipimage",
+        url_hints: &["?FIF"],
+        construct: || Arc::new(iipimage::IIPImage),
+    },
+    Builtin {
+        name: "nypl",
+        url_hints: &["digitalcollections.nypl.org"],
+        construct: || Arc::new(nypl::NYPLImage),
+    },
+    Builtin {
+        name: "bulk_text",
+        url_hints: &[],
+        construct: || Arc::new(bulk_text::BulkTextDezoomer),
+    },
+];
 
-impl std::fmt::Display for RegistryError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::DuplicateId { kind, id } => write!(f, "duplicate {kind} registration ID '{id}'"),
-            Self::AmbiguousPriority { priority, ids } => write!(
-                f,
-                "ambiguous URL-recognition priority {}: {}",
-                priority.0,
-                ids.join(", ")
-            ),
-        }
-    }
-}
-
-impl std::error::Error for RegistryError {}
-
-/// One immutable program object graph. Programs include both direct formats
-/// and discovery rules; a rule delegates rather than requiring a second API.
+/// An ordered set of programs to try. Registration order is recognition order.
 #[derive(Default, Clone)]
 pub struct Registry {
-    programs: Vec<ProgramRegistration>,
+    programs: Vec<(String, Arc<dyn DiscoveryProgram>)>,
 }
 
 impl Registry {
@@ -60,135 +86,94 @@ impl Registry {
         Self::default()
     }
 
-    /// Register one format or discovery rule with explicit recognition rank.
-    pub fn register(
-        &mut self,
-        id: impl Into<String>,
-        priority: Priority,
-        program: Arc<dyn DiscoveryProgram>,
-    ) {
-        self.programs.push(ProgramRegistration {
-            id: id.into(),
-            priority,
-            program,
-        });
+    /// Register one program. Earlier registrations are tried first.
+    pub fn register(&mut self, id: impl Into<String>, program: Arc<dyn DiscoveryProgram>) {
+        self.programs.push((id.into(), program));
     }
 
-    /// Validate all stable identities and auto-recognition priorities.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for duplicate IDs or two programs with the same
-    /// recognition priority.
-    pub fn validate(&self) -> Result<(), RegistryError> {
-        let mut program_ids = BTreeSet::new();
-        let mut priorities: BTreeMap<Priority, Vec<String>> = BTreeMap::new();
-        for registration in &self.programs {
-            if !program_ids.insert(registration.id.clone()) {
-                return Err(RegistryError::DuplicateId {
-                    kind: "program",
-                    id: registration.id.clone(),
-                });
-            }
-            priorities
-                .entry(registration.priority)
-                .or_default()
-                .push(registration.id.clone());
-        }
-        if let Some((priority, mut ids)) = priorities.into_iter().find(|(_, ids)| ids.len() > 1) {
-            ids.sort();
-            return Err(RegistryError::AmbiguousPriority { priority, ids });
-        }
-        Ok(())
-    }
-
-    /// Start independent parser state for every registered program.
-    ///
-    /// # Errors
-    ///
-    /// Returns registration errors before any program executes.
-    pub fn start(
-        &self,
-        input: impl Into<DiscoveryInput>,
-    ) -> Result<DiscoveryOperation, RegistryError> {
+    /// Start independent parser state for every registered program, in order.
+    #[must_use]
+    pub fn start(&self, input: impl Into<DiscoveryInput>) -> DiscoveryOperation {
         self.start_with_limits(input, DiscoveryLimits::default())
     }
 
     /// Start independent parser state with explicit operation limits.
-    ///
-    /// # Errors
-    ///
-    /// Returns registration errors before any program executes.
+    #[must_use]
     pub fn start_with_limits(
         &self,
         input: impl Into<DiscoveryInput>,
         limits: DiscoveryLimits,
-    ) -> Result<DiscoveryOperation, RegistryError> {
-        self.validate()?;
-        let input = input.into();
-        let mut programs = self.programs.clone();
-        programs.sort_by(|left, right| {
-            left.priority
-                .cmp(&right.priority)
-                .then_with(|| left.id.cmp(&right.id))
-        });
-        Ok(DiscoveryOperation::new(
-            &input,
-            programs
-                .into_iter()
-                .map(|registered| (registered.id, registered.program))
-                .collect(),
-            limits,
-        ))
+    ) -> DiscoveryOperation {
+        DiscoveryOperation::new(&input.into(), self.programs.clone(), limits)
     }
 }
 
-impl From<RegistryError> for DiscoveryError {
-    fn from(error: RegistryError) -> Self {
-        Self::Session(error.to_string())
+/// The name of the first built-in program whose URL hints match `uri`.
+fn preferred_name(uri: &str) -> Option<&'static str> {
+    BUILTINS
+        .iter()
+        .find(|builtin| builtin.url_hints.iter().any(|hint| uri.contains(hint)))
+        .map(|builtin| builtin.name)
+}
+
+/// Compose every built-in program, preferring the one whose URL hints match.
+#[must_use]
+pub fn default_registry(uri: &str) -> Registry {
+    let preferred = preferred_name(uri);
+    let mut programs: Vec<(String, Arc<dyn DiscoveryProgram>)> = BUILTINS
+        .iter()
+        .map(|builtin| (builtin.name.to_owned(), (builtin.construct)()))
+        .collect();
+    if let Some(name) = preferred
+        && let Some(index) = programs.iter().position(|(id, _)| id == name)
+    {
+        let program = programs.remove(index);
+        programs.insert(0, program);
     }
+    Registry { programs }
+}
+
+/// Resolve a single built-in program by its name.
+#[must_use]
+pub fn registry_for(name: &str) -> Option<Registry> {
+    let builtin = BUILTINS
+        .iter()
+        .find(|builtin| builtin.name.eq_ignore_ascii_case(name))?;
+    let mut registry = Registry::new();
+    registry.register(builtin.name, (builtin.construct)());
+    Some(registry)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::discovery::DiscoverySession;
     use super::*;
 
-    struct NeverStarted;
-
-    impl DiscoveryProgram for NeverStarted {
-        fn start(&self, _: &DiscoveryInput) -> Box<dyn DiscoverySession> {
-            unreachable!("registry validation must not start programs")
+    #[test]
+    fn every_builtin_name_resolves_to_a_single_program() {
+        for builtin in BUILTINS {
+            let registry = registry_for(builtin.name).unwrap_or_else(|| {
+                panic!("built-in `{}` must resolve", builtin.name);
+            });
+            assert_eq!(registry.programs.len(), 1);
+            assert_eq!(registry.programs[0].0, builtin.name);
         }
+        assert!(registry_for("nope").is_none());
     }
 
     #[test]
-    fn duplicate_program_ids_are_rejected() {
-        let mut registry = Registry::new();
-        for _ in 0..2 {
-            registry.register("same", Priority(0), Arc::new(NeverStarted));
-        }
+    fn url_hints_prefer_the_matching_program() {
+        assert_eq!(preferred_name("x/info.json"), Some("iiif"));
+        assert_eq!(preferred_name("x/unknown"), None);
         assert_eq!(
-            registry.validate(),
-            Err(RegistryError::DuplicateId {
-                kind: "program",
-                id: "same".into()
-            })
+            default_registry("x/info.json").programs[0].0,
+            "iiif",
+            "the matching program must be tried first"
         );
     }
 
     #[test]
-    fn ambiguous_program_priorities_are_rejected() {
-        let mut registry = Registry::new();
-        for id in ["a", "b"] {
-            registry.register(id, Priority(7), Arc::new(NeverStarted));
-        }
-        assert_eq!(
-            registry.validate(),
-            Err(RegistryError::AmbiguousPriority {
-                priority: Priority(7),
-                ids: vec!["a".into(), "b".into()],
-            })
-        );
+    fn default_registry_without_a_hint_keeps_definition_order() {
+        assert_eq!(default_registry("x/unknown").programs[0].0, "custom");
+        let _ = default_registry("x/unknown").start("memory://root");
     }
 }

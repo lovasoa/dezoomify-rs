@@ -16,6 +16,7 @@ use crate::core::{
 /// `IIPImage` discovery program.
 #[derive(Default)]
 pub struct IIPImage;
+
 const META: &str = "&OBJ=Max-size&OBJ=Tile-size&OBJ=Resolution-number";
 
 impl DiscoveryProgram for IIPImage {

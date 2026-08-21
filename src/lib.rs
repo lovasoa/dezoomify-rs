@@ -28,8 +28,10 @@ use crate::encoder::tile_buffer::TileBuffer;
 use crate::native::NativeDiscoveryDriver;
 use crate::output_file::reserve_output_file;
 use dezoomify_core::core::{
-    CatalogEntry, DeferredImage, ImageCatalog, ImageDescriptor, LevelDescriptor,
+    CatalogEntry, DeferredImage, ImageCatalog, ImageDescriptor, LevelDescriptor, default_registry,
 };
+
+use crate::registry::registry_for_cli;
 
 mod arguments;
 mod binary_display;
@@ -61,10 +63,8 @@ async fn get_images_from_uri(
     uri: &str,
 ) -> Result<ImageCatalog, ZoomError> {
     let registry =
-        crate::registry::registry_for_cli(args.dezoomer_name(), uri).ok_or_else(|| {
-            ZoomError::NoSuchDezoomer {
-                name: args.dezoomer_name().to_owned(),
-            }
+        registry_for_cli(&args.dezoomer, uri).ok_or_else(|| ZoomError::NoSuchDezoomer {
+            name: args.dezoomer.clone(),
         })?;
     discover_images(resolver, &registry, uri)
         .await
@@ -211,7 +211,7 @@ async fn resolve_deferred_images(
     resolver: &NativeDiscoveryDriver,
 ) -> Result<ImageCatalog, String> {
     let url = image_url.uri.clone();
-    discover_images(resolver, &crate::registry::default_registry(&url), &url)
+    discover_images(resolver, &default_registry(&url), &url)
         .await
         .map(|catalog| inherit_deferred_context(catalog, &image_url))
 }
@@ -495,10 +495,8 @@ pub async fn process_bulk(args: &Arguments) -> Result<BulkStats, ZoomError> {
     let http = client(std::iter::empty(), args, None)?;
     let resolver = NativeDiscoveryDriver::new(http);
     let registry =
-        crate::registry::registry_for_cli(args.dezoomer_name(), bulk_uri).ok_or_else(|| {
-            ZoomError::NoSuchDezoomer {
-                name: args.dezoomer_name().to_owned(),
-            }
+        registry_for_cli(&args.dezoomer, bulk_uri).ok_or_else(|| ZoomError::NoSuchDezoomer {
+            name: args.dezoomer.clone(),
         })?;
     let images = discover_images(&resolver, &registry, bulk_uri)
         .await
