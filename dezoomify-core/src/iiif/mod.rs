@@ -7,9 +7,9 @@ use crate::Vec2d;
 use crate::core::discovery::DiscoveryEvent;
 use crate::core::tile_plan::RectangularSource;
 use crate::core::{
-    CatalogEntry, DeferredImage, DiscoveryError, DiscoveryInput, DiscoveryProgram,
-    DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
-    LevelPlan, Request, ResourceOutcome, ResourceRequest, StableId,
+    CatalogEntry, DeferredImage, Dezoomer, DezoomerMeta, DiscoveryError, DiscoveryInput,
+    DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor, LevelPlan,
+    Request, ResourceOutcome, ResourceRequest, StableId,
 };
 use crate::iiif::tile_info::TileSizeFormat;
 use crate::json_utils::all_json;
@@ -23,10 +23,12 @@ use crate::core::TileProgram;
 #[cfg(test)]
 mod title_tests;
 
-/// IIIF discovery program.
+/// IIIF dezoomer.
 /// See <https://iiif.io/>
-#[derive(Default)]
-pub struct IiifDezoomer;
+pub struct Iiif {
+    uri: String,
+    requested: bool,
+}
 
 /// Determines the best title for an image from IIIF manifest metadata
 #[must_use]
@@ -67,21 +69,7 @@ impl From<IIIFError> for DiscoveryError {
     }
 }
 
-impl DiscoveryProgram for IiifDezoomer {
-    fn start(&self, input: &DiscoveryInput) -> Box<dyn DiscoverySession> {
-        Box::new(IiifSession {
-            uri: input.uri.clone(),
-            requested: false,
-        })
-    }
-}
-
-struct IiifSession {
-    uri: String,
-    requested: bool,
-}
-
-impl DiscoverySession for IiifSession {
+impl Dezoomer for Iiif {
     fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
         match event {
             DiscoveryEvent::Start if !self.requested => {
@@ -97,6 +85,18 @@ impl DiscoverySession for IiifSession {
             DiscoveryEvent::Start => {
                 Err(DiscoveryError::Session("IIIF session started twice".into()))
             }
+        }
+    }
+}
+
+impl DezoomerMeta for Iiif {
+    const NAME: &'static str = "iiif";
+    const URL_HINTS: &'static [&'static str] = &["info.json", "iiif", "manifest.json"];
+
+    fn start(input: &DiscoveryInput) -> Self {
+        Self {
+            uri: input.uri.clone(),
+            requested: false,
         }
     }
 }
@@ -612,7 +612,7 @@ fn tile_urls(level: &LevelDescriptor) -> Vec<String> {
 #[test]
 fn discovery_requests_metadata_then_returns_normalized_replayable_levels() {
     let input = DiscoveryInput::from("https://example.com/image/info.json");
-    let mut session = IiifDezoomer.start(&input);
+    let mut session = Iiif::start(&input);
     let DiscoveryStep::Need(need) = session.advance(DiscoveryEvent::Start).unwrap() else {
         panic!("IIIF must request its metadata");
     };

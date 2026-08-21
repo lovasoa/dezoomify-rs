@@ -4,9 +4,9 @@ use crate::Vec2d;
 use crate::core::discovery::DiscoveryEvent;
 use crate::core::tile_plan::RectangularSource;
 use crate::core::{
-    CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
-    DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
-    LevelPlan, ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
+    CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
+    DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor, LevelPlan,
+    ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
 };
 use std::sync::Arc;
 use tile_info::{PageInfo, TileInfo};
@@ -14,23 +14,13 @@ pub(crate) mod decryption;
 mod tile_info;
 mod url;
 
-#[derive(Default)]
-pub struct GAPDezoomer;
-impl DiscoveryProgram for GAPDezoomer {
-    fn start(&self, input: &DiscoveryInput) -> Box<dyn DiscoverySession> {
-        Box::new(GapSession {
-            uri: input.uri.clone(),
-            page: None,
-            requested: false,
-        })
-    }
-}
-struct GapSession {
+pub struct Gap {
     uri: String,
     page: Option<Arc<PageInfo>>,
     requested: bool,
 }
-impl DiscoverySession for GapSession {
+
+impl Dezoomer for Gap {
     fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
         match event {
             DiscoveryEvent::Start
@@ -69,6 +59,19 @@ impl DiscoverySession for GapSession {
         }
     }
 }
+
+impl DezoomerMeta for Gap {
+    const NAME: &'static str = "google_arts_and_culture";
+
+    fn start(input: &DiscoveryInput) -> Self {
+        Self {
+            uri: input.uri.clone(),
+            page: None,
+            requested: false,
+        }
+    }
+}
+
 fn catalog(page: &Arc<PageInfo>, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
     let TileInfo {
         tile_width,
@@ -157,7 +160,7 @@ mod tests {
 
     fn fixture_catalog() -> ImageCatalog {
         let input = DiscoveryInput::from("https://artsandculture.google.com/asset/test");
-        let mut session = GAPDezoomer.start(&input);
+        let mut session = Gap::start(&input);
         session.advance(DiscoveryEvent::Start).unwrap();
         let page = response(include_bytes!(
             "../../testdata/google_arts_and_culture/page_source.html"
@@ -178,7 +181,7 @@ mod tests {
     #[test]
     fn discovers_fixture_as_five_replayable_levels() {
         let input = DiscoveryInput::from("https://artsandculture.google.com/asset/test");
-        let mut session = GAPDezoomer.start(&input);
+        let mut session = Gap::start(&input);
         let DiscoveryStep::Need(page) = session.advance(DiscoveryEvent::Start).unwrap() else {
             panic!("Google Arts discovery must request the page");
         };
@@ -236,7 +239,7 @@ mod tests {
     #[test]
     fn rejects_non_google_urls_without_requesting_data() {
         let input = DiscoveryInput::from("https://example.com/test");
-        let mut session = GAPDezoomer.start(&input);
+        let mut session = Gap::start(&input);
         assert!(matches!(
             session.advance(DiscoveryEvent::Start).unwrap(),
             DiscoveryStep::Reject(_)
@@ -274,7 +277,7 @@ mod tests {
     #[test]
     fn invalid_tile_information_is_reported_as_a_session_error() {
         let input = DiscoveryInput::from("https://artsandculture.google.com/asset/test");
-        let mut session = GAPDezoomer.start(&input);
+        let mut session = Gap::start(&input);
         session.advance(DiscoveryEvent::Start).unwrap();
         let page = response(include_bytes!(
             "../../testdata/google_arts_and_culture/page_source.html"

@@ -5,7 +5,6 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::Arc;
 
 use super::model::{ImageCatalog, Request};
 
@@ -128,20 +127,63 @@ pub enum DiscoveryStep {
     Reject(DiscoveryDiagnostic),
 }
 
-/// Factory for independent, pure parser sessions.  Formats and URL discovery
-/// rules implement this same trait; priority is registry policy.
-pub trait DiscoveryProgram: Send + Sync {
-    fn start(&self, input: &DiscoveryInput) -> Box<dyn DiscoverySession>;
-}
-
-/// One operation-local parser state machine.
-pub trait DiscoverySession: Send {
+/// One dezoomer: a pure parser state machine driven by [`DiscoveryOperation`].
+///
+/// This replaces the former `DiscoveryProgram`/`DiscoverySession` pair. A
+/// dezoomer is boxed as `dyn Dezoomer`, so it stays object-safe; static
+/// metadata and construction live on [`DezoomerMeta`].
+pub trait Dezoomer: Send {
     /// Advance the parser from an input or one requested resource result.
     ///
     /// # Errors
     ///
     /// Returns a pure diagnostic when bytes or state cannot be interpreted.
     fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError>;
+}
+
+/// Static metadata and construction for a concrete [`Dezoomer`] type.
+///
+/// [`Dezoomer`] cannot carry associated consts without losing object safety,
+/// so the name, URL hints, and constructor live here instead. A format
+/// implements both traits on one struct.
+pub trait DezoomerMeta: Dezoomer + Sized {
+    /// Public name: the `--dezoomer` selector and the diagnostic label.
+    const NAME: &'static str;
+
+    /// Cheap URL fragments used only to rank auto-detection candidates.
+    ///
+    /// The authoritative accept/reject decision stays in [`Dezoomer::advance`].
+    const URL_HINTS: &'static [&'static str] = &[];
+
+    /// Build fresh, independent parser state from the input.
+    fn start(input: &DiscoveryInput) -> Self;
+}
+
+/// Erased constructor for a concrete [`DezoomerMeta`] type.
+#[must_use]
+pub fn erase<T: DezoomerMeta + 'static>(input: &DiscoveryInput) -> Box<dyn Dezoomer> {
+    Box::new(T::start(input))
+}
+
+/// The single declaration point for a format: its name, URL hints, and
+/// constructor, all derived from a concrete [`DezoomerMeta`] type.
+#[derive(Clone, Copy)]
+pub struct DezoomerSpec {
+    pub name: &'static str,
+    pub url_hints: &'static [&'static str],
+    pub start: fn(&DiscoveryInput) -> Box<dyn Dezoomer>,
+}
+
+impl DezoomerSpec {
+    /// Build a spec from a concrete dezoomer type.
+    #[must_use]
+    pub const fn of<T: DezoomerMeta + 'static>() -> Self {
+        Self {
+            name: T::NAME,
+            url_hints: T::URL_HINTS,
+            start: erase::<T>,
+        }
+    }
 }
 
 /// Pure discovery errors.
@@ -192,7 +234,7 @@ enum CandidateState {
 
 struct Candidate {
     id: String,
-    session: Box<dyn DiscoverySession>,
+    session: Box<dyn Dezoomer>,
     state: CandidateState,
 }
 
@@ -213,14 +255,14 @@ pub struct DiscoveryOperation {
 impl DiscoveryOperation {
     pub(crate) fn new(
         input: &DiscoveryInput,
-        programs: Vec<(String, Arc<dyn DiscoveryProgram>)>,
+        specs: &[DezoomerSpec],
         limits: DiscoveryLimits,
     ) -> Self {
         let mut candidates = Vec::new();
-        for (id, program) in programs {
+        for spec in specs {
             candidates.push(Candidate {
-                id,
-                session: program.start(input),
+                id: spec.name.to_owned(),
+                session: (spec.start)(input),
                 state: CandidateState::New,
             });
         }
@@ -439,82 +481,198 @@ mod tests {
     use super::*;
     use crate::core::registry::Registry;
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     enum NeedResult {
         Complete,
         Reject,
         Session,
     }
 
-    #[derive(Clone)]
-    enum Script {
-        Need {
-            uri: &'static str,
-            result: NeedResult,
-        },
+    /// Generates a single-request dezoomer that requests `$uri` on start and
+    /// then completes, rejects, or errors according to `$result`.
+    macro_rules! script_dezoomer {
+        ($ty:ident, $name:literal, $uri:literal, $result:path) => {
+            struct $ty {
+                started: bool,
+            }
+
+            impl Dezoomer for $ty {
+                fn advance(
+                    &mut self,
+                    event: DiscoveryEvent<'_>,
+                ) -> Result<DiscoveryStep, DiscoveryError> {
+                    match event {
+                        DiscoveryEvent::Start if $result == NeedResult::Session => {
+                            Err(DiscoveryError::Session("not my format".into()))
+                        }
+                        DiscoveryEvent::Start if !self.started => {
+                            self.started = true;
+                            Ok(DiscoveryStep::Need(ResourceRequest::new($uri)))
+                        }
+                        DiscoveryEvent::Resource(ResourceOutcome::Response(_))
+                            if $result == NeedResult::Complete =>
+                        {
+                            Ok(DiscoveryStep::Complete(ImageCatalog::default()))
+                        }
+                        DiscoveryEvent::Resource(ResourceOutcome::Response(_))
+                            if $result == NeedResult::Reject =>
+                        {
+                            Ok(DiscoveryStep::Reject("wrong metadata".into()))
+                        }
+                        DiscoveryEvent::Resource(ResourceOutcome::Failure(_)) => {
+                            Ok(DiscoveryStep::Reject("resource unavailable".into()))
+                        }
+                        DiscoveryEvent::Resource(ResourceOutcome::Response(_)) => {
+                            unreachable!("failed session never requests a resource")
+                        }
+                        DiscoveryEvent::Start => {
+                            Err(DiscoveryError::Session("unexpected test transition".into()))
+                        }
+                    }
+                }
+            }
+
+            impl DezoomerMeta for $ty {
+                const NAME: &'static str = $name;
+
+                fn start(_: &DiscoveryInput) -> Self {
+                    Self { started: false }
+                }
+            }
+        };
     }
 
-    struct ScriptProgram(Script);
+    /// Generates a two-stage dezoomer that requests `$first`, then `$second`,
+    /// then completes.
+    macro_rules! chain_dezoomer {
+        ($ty:ident, $name:literal, $first:literal, $second:literal) => {
+            struct $ty {
+                state: u8,
+            }
 
-    struct ScriptSession {
-        script: Script,
-        started: bool,
+            impl Dezoomer for $ty {
+                fn advance(
+                    &mut self,
+                    event: DiscoveryEvent<'_>,
+                ) -> Result<DiscoveryStep, DiscoveryError> {
+                    match (self.state, event) {
+                        (0, DiscoveryEvent::Start) => {
+                            self.state = 1;
+                            Ok(DiscoveryStep::Need(ResourceRequest::new($first)))
+                        }
+                        (1, DiscoveryEvent::Resource(ResourceOutcome::Response(_))) => {
+                            self.state = 2;
+                            Ok(DiscoveryStep::Need(ResourceRequest::new($second)))
+                        }
+                        (2, DiscoveryEvent::Resource(ResourceOutcome::Response(_))) => {
+                            Ok(DiscoveryStep::Complete(ImageCatalog::default()))
+                        }
+                        _ => Ok(DiscoveryStep::Reject("unexpected".into())),
+                    }
+                }
+            }
+
+            impl DezoomerMeta for $ty {
+                const NAME: &'static str = $name;
+
+                fn start(_: &DiscoveryInput) -> Self {
+                    Self { state: 0 }
+                }
+            }
+        };
     }
 
-    impl DiscoveryProgram for ScriptProgram {
-        fn start(&self, input: &DiscoveryInput) -> Box<dyn DiscoverySession> {
-            let _ = input;
-            Box::new(ScriptSession {
-                script: self.0.clone(),
-                started: false,
-            })
+    /// Generates a single-stage dezoomer that requests `$uri`, then completes.
+    macro_rules! single_dezoomer {
+        ($ty:ident, $name:literal, $uri:literal) => {
+            struct $ty {
+                requested: bool,
+            }
+
+            impl Dezoomer for $ty {
+                fn advance(
+                    &mut self,
+                    event: DiscoveryEvent<'_>,
+                ) -> Result<DiscoveryStep, DiscoveryError> {
+                    match event {
+                        DiscoveryEvent::Start if !self.requested => {
+                            self.requested = true;
+                            Ok(DiscoveryStep::Need(ResourceRequest::new($uri)))
+                        }
+                        DiscoveryEvent::Resource(ResourceOutcome::Response(_)) => {
+                            Ok(DiscoveryStep::Complete(ImageCatalog::default()))
+                        }
+                        _ => Ok(DiscoveryStep::Reject("unexpected".into())),
+                    }
+                }
+            }
+
+            impl DezoomerMeta for $ty {
+                const NAME: &'static str = $name;
+
+                fn start(_: &DiscoveryInput) -> Self {
+                    Self { requested: false }
+                }
+            }
+        };
+    }
+
+    script_dezoomer!(
+        RejectingShared,
+        "rejecting",
+        "memory://shared",
+        NeedResult::Reject
+    );
+    script_dezoomer!(
+        AcceptingShared,
+        "accepting",
+        "memory://shared",
+        NeedResult::Complete
+    );
+    script_dezoomer!(Broken, "broken", "memory://unused", NeedResult::Session);
+    script_dezoomer!(Working, "working", "memory://working", NeedResult::Complete);
+    script_dezoomer!(
+        OneMetadata,
+        "one",
+        "memory://metadata",
+        NeedResult::Complete
+    );
+    script_dezoomer!(OneMeta, "one", "memory://meta", NeedResult::Complete);
+
+    chain_dezoomer!(HighChain, "high", "memory://high1", "memory://high2");
+
+    single_dezoomer!(Low, "low", "memory://low1");
+    single_dezoomer!(A, "a", "memory://a");
+    single_dezoomer!(B, "b", "memory://b");
+    single_dezoomer!(C, "c", "memory://c");
+
+    struct Loop(usize);
+    impl Dezoomer for Loop {
+        fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
+            match event {
+                DiscoveryEvent::Start => Ok(DiscoveryStep::Need(ResourceRequest::new(format!(
+                    "memory://loop{}",
+                    self.0
+                )))),
+                DiscoveryEvent::Resource(ResourceOutcome::Response(_)) => {
+                    self.0 += 1;
+                    Ok(DiscoveryStep::Need(ResourceRequest::new(format!(
+                        "memory://loop{}",
+                        self.0
+                    ))))
+                }
+                DiscoveryEvent::Resource(ResourceOutcome::Failure(_)) => {
+                    Ok(DiscoveryStep::Reject("done".into()))
+                }
+            }
         }
     }
 
-    impl DiscoverySession for ScriptSession {
-        fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
-            match (&self.script, event) {
-                (
-                    Script::Need {
-                        result: NeedResult::Session,
-                        ..
-                    },
-                    DiscoveryEvent::Start,
-                ) => Err(DiscoveryError::Session("not my format".into())),
-                (Script::Need { uri, .. }, DiscoveryEvent::Start) if !self.started => {
-                    self.started = true;
-                    Ok(DiscoveryStep::Need(ResourceRequest::new(*uri)))
-                }
-                (
-                    Script::Need {
-                        result: NeedResult::Complete,
-                        ..
-                    },
-                    DiscoveryEvent::Resource(ResourceOutcome::Response(_)),
-                ) => Ok(DiscoveryStep::Complete(ImageCatalog::default())),
-                (
-                    Script::Need {
-                        result: NeedResult::Reject,
-                        ..
-                    },
-                    DiscoveryEvent::Resource(ResourceOutcome::Response(_)),
-                ) => Ok(DiscoveryStep::Reject("wrong metadata".into())),
-                (Script::Need { .. }, DiscoveryEvent::Resource(ResourceOutcome::Failure(_))) => {
-                    Ok(DiscoveryStep::Reject("resource unavailable".into()))
-                }
-                (
-                    Script::Need {
-                        result: NeedResult::Session,
-                        ..
-                    },
-                    _,
-                ) => {
-                    unreachable!("failed session never requests a resource")
-                }
-                (Script::Need { .. }, _) => {
-                    Err(DiscoveryError::Session("unexpected test transition".into()))
-                }
-            }
+    impl DezoomerMeta for Loop {
+        const NAME: &'static str = "loop";
+
+        fn start(_: &DiscoveryInput) -> Self {
+            Self(0)
         }
     }
 
@@ -533,21 +691,11 @@ mod tests {
             .unwrap();
     }
 
-    fn need_program(uri: &'static str, result: NeedResult) -> Arc<ScriptProgram> {
-        Arc::new(ScriptProgram(Script::Need { uri, result }))
-    }
-
     #[test]
     fn identical_requests_are_fanned_out_to_candidates_once() {
         let mut registry = Registry::new();
-        registry.register(
-            "rejecting",
-            need_program("memory://shared", NeedResult::Reject),
-        );
-        registry.register(
-            "accepting",
-            need_program("memory://shared", NeedResult::Complete),
-        );
+        registry.register(DezoomerSpec::of::<RejectingShared>());
+        registry.register(DezoomerSpec::of::<AcceptingShared>());
 
         let mut operation = registry.start("memory://root");
         assert_eq!(operation.missing_resources().unwrap().len(), 1);
@@ -558,14 +706,8 @@ mod tests {
     #[test]
     fn session_errors_reject_one_candidate_and_continue() {
         let mut registry = Registry::new();
-        registry.register(
-            "broken",
-            need_program("memory://unused", NeedResult::Session),
-        );
-        registry.register(
-            "working",
-            need_program("memory://working", NeedResult::Complete),
-        );
+        registry.register(DezoomerSpec::of::<Broken>());
+        registry.register(DezoomerSpec::of::<Working>());
 
         let mut operation = registry.start("memory://root");
         let needs = operation.missing_resources().unwrap();
@@ -577,10 +719,7 @@ mod tests {
     #[test]
     fn parser_state_is_local_to_each_operation() {
         let mut registry = Registry::new();
-        registry.register(
-            "one",
-            need_program("memory://metadata", NeedResult::Complete),
-        );
+        registry.register(DezoomerSpec::of::<OneMetadata>());
         let mut first = registry.start("memory://first");
         let mut second = registry.start("memory://second");
         let first_id = first.missing_resources().unwrap()[0].id;
@@ -592,85 +731,11 @@ mod tests {
         assert_eq!(second.missing_resources().unwrap().len(), 1);
     }
 
-    struct ChainProgram {
-        first: &'static str,
-        second: &'static str,
-    }
-
-    struct ChainSession {
-        first: &'static str,
-        second: &'static str,
-        state: u8,
-    }
-
-    impl DiscoveryProgram for ChainProgram {
-        fn start(&self, _: &DiscoveryInput) -> Box<dyn DiscoverySession> {
-            Box::new(ChainSession {
-                first: self.first,
-                second: self.second,
-                state: 0,
-            })
-        }
-    }
-
-    impl DiscoverySession for ChainSession {
-        fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
-            match (self.state, event) {
-                (0, DiscoveryEvent::Start) => {
-                    self.state = 1;
-                    Ok(DiscoveryStep::Need(ResourceRequest::new(self.first)))
-                }
-                (1, DiscoveryEvent::Resource(ResourceOutcome::Response(_))) => {
-                    self.state = 2;
-                    Ok(DiscoveryStep::Need(ResourceRequest::new(self.second)))
-                }
-                (2, DiscoveryEvent::Resource(ResourceOutcome::Response(_))) => {
-                    Ok(DiscoveryStep::Complete(ImageCatalog::default()))
-                }
-                _ => Ok(DiscoveryStep::Reject("unexpected".into())),
-            }
-        }
-    }
-
-    struct SingleProgram(&'static str);
-    struct SingleSession {
-        uri: &'static str,
-        requested: bool,
-    }
-    impl DiscoveryProgram for SingleProgram {
-        fn start(&self, _: &DiscoveryInput) -> Box<dyn DiscoverySession> {
-            Box::new(SingleSession {
-                uri: self.0,
-                requested: false,
-            })
-        }
-    }
-    impl DiscoverySession for SingleSession {
-        fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
-            match event {
-                DiscoveryEvent::Start if !self.requested => {
-                    self.requested = true;
-                    Ok(DiscoveryStep::Need(ResourceRequest::new(self.uri)))
-                }
-                DiscoveryEvent::Resource(ResourceOutcome::Response(_)) => {
-                    Ok(DiscoveryStep::Complete(ImageCatalog::default()))
-                }
-                _ => Ok(DiscoveryStep::Reject("unexpected".into())),
-            }
-        }
-    }
-
     #[test]
     fn priority_scheduling_fetches_higher_priority_chain_first() {
         let mut registry = Registry::new();
-        registry.register(
-            "high",
-            Arc::new(ChainProgram {
-                first: "memory://high1",
-                second: "memory://high2",
-            }),
-        );
-        registry.register("low", Arc::new(SingleProgram("memory://low1")));
+        registry.register(DezoomerSpec::of::<HighChain>());
+        registry.register(DezoomerSpec::of::<Low>());
 
         let mut operation = registry.start("memory://root");
         let needs = operation.missing_resources().unwrap();
@@ -693,37 +758,8 @@ mod tests {
 
     #[test]
     fn transition_limit_is_enforced() {
-        struct LoopProgram;
-        struct LoopSession(usize);
-        impl DiscoveryProgram for LoopProgram {
-            fn start(&self, _: &DiscoveryInput) -> Box<dyn DiscoverySession> {
-                Box::new(LoopSession(0))
-            }
-        }
-        impl DiscoverySession for LoopSession {
-            fn advance(
-                &mut self,
-                event: DiscoveryEvent<'_>,
-            ) -> Result<DiscoveryStep, DiscoveryError> {
-                match event {
-                    DiscoveryEvent::Start => Ok(DiscoveryStep::Need(ResourceRequest::new(
-                        format!("memory://loop{}", self.0),
-                    ))),
-                    DiscoveryEvent::Resource(ResourceOutcome::Response(_)) => {
-                        self.0 += 1;
-                        Ok(DiscoveryStep::Need(ResourceRequest::new(format!(
-                            "memory://loop{}",
-                            self.0
-                        ))))
-                    }
-                    DiscoveryEvent::Resource(ResourceOutcome::Failure(_)) => {
-                        Ok(DiscoveryStep::Reject("done".into()))
-                    }
-                }
-            }
-        }
         let mut registry = Registry::new();
-        registry.register("loop", Arc::new(LoopProgram));
+        registry.register(DezoomerSpec::of::<Loop>());
         let limits = DiscoveryLimits {
             transitions: 3,
             ..Default::default()
@@ -752,9 +788,9 @@ mod tests {
     #[test]
     fn resource_limit_rejects_offending_candidate_instead_of_aborting() {
         let mut registry = Registry::new();
-        registry.register("a", Arc::new(SingleProgram("memory://a")));
-        registry.register("b", Arc::new(SingleProgram("memory://b")));
-        registry.register("c", Arc::new(SingleProgram("memory://c")));
+        registry.register(DezoomerSpec::of::<A>());
+        registry.register(DezoomerSpec::of::<B>());
+        registry.register(DezoomerSpec::of::<C>());
         let limits = DiscoveryLimits {
             resources: 2,
             ..Default::default()
@@ -782,7 +818,7 @@ mod tests {
     #[test]
     fn retained_bytes_limit_is_enforced() {
         let mut registry = Registry::new();
-        registry.register("one", need_program("memory://meta", NeedResult::Complete));
+        registry.register(DezoomerSpec::of::<OneMeta>());
         let limits = DiscoveryLimits {
             retained_bytes: 10,
             ..Default::default()

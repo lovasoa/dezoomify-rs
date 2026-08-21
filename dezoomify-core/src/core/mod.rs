@@ -13,7 +13,7 @@ pub mod uri;
 
 pub use adaptive::{TileObservation, TileProgram, TileProgramError};
 pub use discovery::{
-    DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram, DiscoverySession,
+    Dezoomer, DezoomerMeta, DezoomerSpec, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
     DiscoveryStep, ResourceOutcome, ResourceRequest,
 };
 #[cfg(test)]

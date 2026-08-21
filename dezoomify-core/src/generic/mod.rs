@@ -5,30 +5,17 @@ use std::sync::Arc;
 use crate::core::adaptive::{GenericAdaptivePlan, is_generic_template};
 use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
-    CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
-    DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, LevelDescriptor, LevelPlan,
-    StableId,
+    CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
+    DiscoveryStep, ImageCatalog, ImageDescriptor, LevelDescriptor, LevelPlan, StableId,
 };
 
-/// Generic template discovery program.
-#[derive(Default)]
-pub struct GenericDezoomer;
-
-impl DiscoveryProgram for GenericDezoomer {
-    fn start(&self, input: &DiscoveryInput) -> Box<dyn DiscoverySession> {
-        Box::new(GenericSession {
-            template: input.uri.clone(),
-            complete: false,
-        })
-    }
-}
-
-struct GenericSession {
+/// Generic template dezoomer.
+pub struct Generic {
     template: String,
     complete: bool,
 }
 
-impl DiscoverySession for GenericSession {
+impl Dezoomer for Generic {
     fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
         match event {
             DiscoveryEvent::Start if !is_generic_template(&self.template) => Ok(
@@ -61,6 +48,18 @@ impl DiscoverySession for GenericSession {
             DiscoveryEvent::Start => Err(DiscoveryError::Session(
                 "generic session started twice".into(),
             )),
+        }
+    }
+}
+
+impl DezoomerMeta for Generic {
+    const NAME: &'static str = "generic";
+    const URL_HINTS: &'static [&'static str] = &["{{"];
+
+    fn start(input: &DiscoveryInput) -> Self {
+        Self {
+            template: input.uri.clone(),
+            complete: false,
         }
     }
 }

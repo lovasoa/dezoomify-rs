@@ -16,32 +16,19 @@ use crate::core::discovery::DiscoveryEvent;
 use crate::core::resolve_relative;
 use crate::core::tile_plan::RectangularSource;
 use crate::core::{
-    CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
-    DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
-    LevelPlan, ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
+    CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
+    DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor, LevelPlan,
+    ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
 };
 use crate::krpano::krpano_metadata::{ImageInfo, LevelDesc};
 
 mod krpano_metadata;
 
-/// The krpano metadata discovery program.
+/// The krpano metadata dezoomer.
 ///
-/// The program owns only parser state. The application supplies the requested
-/// HTML, XML, and viewer-script bytes through [`DiscoverySession::advance`].
-#[derive(Default)]
-pub struct KrpanoDezoomer;
-
-impl DiscoveryProgram for KrpanoDezoomer {
-    fn start(&self, input: &DiscoveryInput) -> Box<dyn DiscoverySession> {
-        Box::new(KrpanoSession {
-            input_uri: input.uri.clone(),
-            state: SessionState::Initial,
-        })
-    }
-}
-
-/// One operation-local HTML → XML → viewer-JS resolution chain.
-struct KrpanoSession {
+/// The dezoomer owns only parser state. The application supplies the requested
+/// HTML, XML, and viewer-script bytes through [`Dezoomer::advance`].
+pub struct Krpano {
     input_uri: String,
     state: SessionState,
 }
@@ -62,7 +49,7 @@ enum SessionState {
     Complete,
 }
 
-impl DiscoverySession for KrpanoSession {
+impl Dezoomer for Krpano {
     fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
         match event {
             DiscoveryEvent::Start if matches!(self.state, SessionState::Initial) => {
@@ -82,7 +69,19 @@ impl DiscoverySession for KrpanoSession {
     }
 }
 
-impl KrpanoSession {
+impl DezoomerMeta for Krpano {
+    const NAME: &'static str = "krpano";
+    const URL_HINTS: &'static [&'static str] = &["tiles.xml"];
+
+    fn start(input: &DiscoveryInput) -> Self {
+        Self {
+            input_uri: input.uri.clone(),
+            state: SessionState::Initial,
+        }
+    }
+}
+
+impl Krpano {
     fn handle_failure(&mut self, message: &str) -> Result<DiscoveryStep, DiscoveryError> {
         debug!("krpano: resource failure: {message}");
         let state = std::mem::replace(&mut self.state, SessionState::Complete);
@@ -689,7 +688,7 @@ mod tests {
 
     fn discover_single_resource(uri: &str, bytes: Vec<u8>) -> ImageCatalog {
         let input = DiscoveryInput::from(uri);
-        let mut session = KrpanoDezoomer.start(&input);
+        let mut session = Krpano::start(&input);
         assert!(matches!(
             session.advance(DiscoveryEvent::Start).unwrap(),
             DiscoveryStep::Need(ResourceRequest { request })
@@ -993,8 +992,7 @@ mod tests {
 
     #[test]
     fn viewer_js_is_detected_before_html_embed_markers() {
-        let mut session =
-            KrpanoDezoomer.start(&DiscoveryInput::from("https://example.com/krpano.js"));
+        let mut session = Krpano::start(&DiscoveryInput::from("https://example.com/krpano.js"));
         let _ = session.advance(DiscoveryEvent::Start).unwrap();
         let step = session
             .advance(DiscoveryEvent::Resource(&ResourceOutcome::Response(
@@ -1011,8 +1009,7 @@ mod tests {
 
     #[test]
     fn old_create_pano_viewer_js_is_detected_as_viewer_js() {
-        let mut session =
-            KrpanoDezoomer.start(&DiscoveryInput::from("https://example.com/viewer.js"));
+        let mut session = Krpano::start(&DiscoveryInput::from("https://example.com/viewer.js"));
         let _ = session.advance(DiscoveryEvent::Start).unwrap();
         let step = session
             .advance(DiscoveryEvent::Resource(&ResourceOutcome::Response(

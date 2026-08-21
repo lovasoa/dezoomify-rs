@@ -2,30 +2,17 @@
 
 use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
-    CatalogEntry, DeferredImage, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
-    DiscoveryProgram, DiscoverySession, DiscoveryStep, ImageCatalog, ResourceOutcome,
-    ResourceRequest, StableId,
+    CatalogEntry, DeferredImage, Dezoomer, DezoomerMeta, DiscoveryDiagnostic, DiscoveryError,
+    DiscoveryInput, DiscoveryStep, ImageCatalog, ResourceOutcome, ResourceRequest, StableId,
 };
 
-/// Text-list discovery program.
-#[derive(Default)]
-pub struct BulkTextDezoomer;
-
-impl DiscoveryProgram for BulkTextDezoomer {
-    fn start(&self, input: &DiscoveryInput) -> Box<dyn DiscoverySession> {
-        Box::new(BulkSession {
-            uri: input.uri.clone(),
-            requested: false,
-        })
-    }
-}
-
-struct BulkSession {
+/// Text-list dezoomer.
+pub struct BulkText {
     uri: String,
     requested: bool,
 }
 
-impl DiscoverySession for BulkSession {
+impl Dezoomer for BulkText {
     fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
         match event {
             DiscoveryEvent::Start if !is_bulk_file(&self.uri) => Ok(DiscoveryStep::Reject(
@@ -62,6 +49,17 @@ impl DiscoverySession for BulkSession {
             DiscoveryEvent::Start => {
                 Err(DiscoveryError::Session("bulk session started twice".into()))
             }
+        }
+    }
+}
+
+impl DezoomerMeta for BulkText {
+    const NAME: &'static str = "bulk_text";
+
+    fn start(input: &DiscoveryInput) -> Self {
+        Self {
+            uri: input.uri.clone(),
+            requested: false,
         }
     }
 }
@@ -189,7 +187,7 @@ mod tests {
     }
 
     fn complete(uri: &str, content: &str) -> Result<ImageCatalog, DiscoveryError> {
-        let mut session = BulkTextDezoomer.start(&DiscoveryInput::from(uri));
+        let mut session = BulkText::start(&DiscoveryInput::from(uri));
         assert!(matches!(
             session.advance(DiscoveryEvent::Start)?,
             DiscoveryStep::Need(_)

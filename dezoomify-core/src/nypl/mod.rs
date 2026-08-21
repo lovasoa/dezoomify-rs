@@ -10,9 +10,9 @@ use crate::Vec2d;
 use crate::core::discovery::DiscoveryEvent;
 use crate::core::tile_plan::RectangularSource;
 use crate::core::{
-    CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
-    DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
-    LevelPlan, ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
+    CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
+    DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor, LevelPlan,
+    ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
 };
 use crate::json_utils::number_or_string;
 
@@ -20,23 +20,13 @@ const VIEW: &str = "https://digitalcollections.nypl.org/items/";
 const META: &str = "https://access.nypl.org/image.php/";
 const POSTFIX: &str = "/tiles/config.js";
 
-#[derive(Default)]
-pub struct NYPLImage;
-impl DiscoveryProgram for NYPLImage {
-    fn start(&self, input: &DiscoveryInput) -> Box<dyn DiscoverySession> {
-        Box::new(NyplSession {
-            input: input.uri.clone(),
-            requested: false,
-            metadata_uri: None,
-        })
-    }
-}
-struct NyplSession {
+pub struct Nypl {
     input: String,
     requested: bool,
     metadata_uri: Option<String>,
 }
-impl DiscoverySession for NyplSession {
+
+impl Dezoomer for Nypl {
     fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
         match event {
             DiscoveryEvent::Start if !self.requested => {
@@ -70,6 +60,19 @@ impl DiscoverySession for NyplSession {
             DiscoveryEvent::Start => {
                 Err(DiscoveryError::Session("NYPL session started twice".into()))
             }
+        }
+    }
+}
+
+impl DezoomerMeta for Nypl {
+    const NAME: &'static str = "nypl";
+    const URL_HINTS: &'static [&'static str] = &["digitalcollections.nypl.org"];
+
+    fn start(input: &DiscoveryInput) -> Self {
+        Self {
+            input: input.uri.clone(),
+            requested: false,
+            metadata_uri: None,
         }
     }
 }

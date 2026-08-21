@@ -8,32 +8,20 @@ use crate::Vec2d;
 use crate::core::discovery::DiscoveryEvent;
 use crate::core::tile_plan::RectangularSource;
 use crate::core::{
-    CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
-    DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
-    LevelPlan, ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
+    CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
+    DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor, LevelPlan,
+    ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
 };
 
 mod image_properties;
 
-/// Zoomify metadata program.
-#[derive(Default)]
-pub struct ZoomifyDezoomer;
-
-impl DiscoveryProgram for ZoomifyDezoomer {
-    fn start(&self, input: &DiscoveryInput) -> Box<dyn DiscoverySession> {
-        Box::new(ZoomifySession {
-            uri: input.uri.clone(),
-            requested: false,
-        })
-    }
-}
-
-struct ZoomifySession {
+/// Zoomify metadata dezoomer.
+pub struct Zoomify {
     uri: String,
     requested: bool,
 }
 
-impl DiscoverySession for ZoomifySession {
+impl Dezoomer for Zoomify {
     fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
         match event {
             DiscoveryEvent::Start if !self.uri.contains("/ImageProperties.xml") => {
@@ -54,6 +42,18 @@ impl DiscoverySession for ZoomifySession {
             DiscoveryEvent::Start => Err(DiscoveryError::Session(
                 "Zoomify session started twice".into(),
             )),
+        }
+    }
+}
+
+impl DezoomerMeta for Zoomify {
+    const NAME: &'static str = "zoomify";
+    const URL_HINTS: &'static [&'static str] = &["ImageProperties.xml", "TileGroup"];
+
+    fn start(input: &DiscoveryInput) -> Self {
+        Self {
+            uri: input.uri.clone(),
+            requested: false,
         }
     }
 }

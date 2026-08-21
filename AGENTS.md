@@ -31,13 +31,15 @@ One workspace, two crates. Dependencies from app to core only.
 
 ## Adding a format
 
-1. Implement `DiscoveryProgram` + `DiscoverySession` in
+1. Implement the [`Dezoomer`](dezoomify-core/src/core/discovery.rs) trait in
    `dezoomify-core/src/<format>/mod.rs` (smallest example:
-   [`generic`](dezoomify-core/src/generic/mod.rs)).
+   [`generic`](dezoomify-core/src/generic/mod.rs)): a `start` constructor from
+   `DiscoveryInput` plus an `advance` state machine.
 2. Fixed grids: implement `RectangularSource` and wrap it in
    `KnownTilePlan::rectangular` ([`tile_plan.rs`](dezoomify-core/src/core/tile_plan.rs)).
-3. Register the program's name, URL hints, and position (recognition order) in
-   `BUILTINS` ([`dezoomify-core/src/core/registry.rs`](dezoomify-core/src/core/registry.rs)).
+3. Declare the dezoomer's name and URL hints once in a co-located
+   `DezoomerSpec` const in the same module, then list that const in `BUILTINS`
+   ([`dezoomify-core/src/core/registry.rs`](dezoomify-core/src/core/registry.rs)).
 
 ## Commands
 

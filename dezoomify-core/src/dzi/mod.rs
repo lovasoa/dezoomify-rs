@@ -9,35 +9,22 @@ use crate::Vec2d;
 use crate::core::discovery::DiscoveryEvent;
 use crate::core::tile_plan::RectangularSource;
 use crate::core::{
-    CatalogEntry, DiscoveryError, DiscoveryInput, DiscoveryProgram, DiscoverySession,
-    DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor, LevelPlan,
-    ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
+    CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryError, DiscoveryInput, DiscoveryStep,
+    ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor, LevelPlan, ProcessingRecipe,
+    Request, ResourceOutcome, ResourceRequest, StableId,
 };
 use crate::json_utils::all_json;
 
 mod dzi_file;
 
-/// Deep Zoom Image discovery program.
-#[derive(Default)]
-pub struct DziDezoomer;
-
-impl DiscoveryProgram for DziDezoomer {
-    fn start(&self, input: &DiscoveryInput) -> Box<dyn DiscoverySession> {
-        Box::new(DziSession {
-            input: input.uri.clone(),
-            requested: false,
-            metadata_uri: None,
-        })
-    }
-}
-
-struct DziSession {
+/// Deep Zoom Image dezoomer.
+pub struct Dzi {
     input: String,
     requested: bool,
     metadata_uri: Option<String>,
 }
 
-impl DiscoverySession for DziSession {
+impl Dezoomer for Dzi {
     fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
         match event {
             DiscoveryEvent::Start if !self.requested => {
@@ -62,6 +49,19 @@ impl DiscoverySession for DziSession {
             DiscoveryEvent::Start => {
                 Err(DiscoveryError::Session("DZI session started twice".into()))
             }
+        }
+    }
+}
+
+impl DezoomerMeta for Dzi {
+    const NAME: &'static str = "deepzoom";
+    const URL_HINTS: &'static [&'static str] = &[".dzi", "_files/"];
+
+    fn start(input: &DiscoveryInput) -> Self {
+        Self {
+            input: input.uri.clone(),
+            requested: false,
+            metadata_uri: None,
         }
     }
 }

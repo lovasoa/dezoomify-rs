@@ -8,35 +8,23 @@ use serde::Deserialize;
 use crate::Vec2d;
 use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
-    CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
-    DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
-    LevelPlan, ProcessingRecipe, ReplayablePlan, Request, ResourceOutcome, ResourceRequest,
-    StableId, TileId, TileProgramError, TileRole, TileSpec,
+    CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
+    DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor, LevelPlan,
+    ProcessingRecipe, ReplayablePlan, Request, ResourceOutcome, ResourceRequest, StableId, TileId,
+    TileProgramError, TileRole, TileSpec,
 };
 use crate::default_headers;
 
 mod tile_set;
 mod variable;
 
-/// Explicit YAML layout discovery program.
-#[derive(Default)]
-pub struct CustomDezoomer;
-
-impl DiscoveryProgram for CustomDezoomer {
-    fn start(&self, input: &DiscoveryInput) -> Box<dyn DiscoverySession> {
-        Box::new(CustomSession {
-            uri: input.uri.clone(),
-            requested: false,
-        })
-    }
-}
-
-struct CustomSession {
+/// Explicit YAML layout dezoomer.
+pub struct Custom {
     uri: String,
     requested: bool,
 }
 
-impl DiscoverySession for CustomSession {
+impl Dezoomer for Custom {
     fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
         match event {
             DiscoveryEvent::Start if !self.uri.ends_with("tiles.yaml") => Ok(
@@ -55,6 +43,17 @@ impl DiscoverySession for CustomSession {
             DiscoveryEvent::Start => Err(DiscoveryError::Session(
                 "custom YAML session started twice".into(),
             )),
+        }
+    }
+}
+
+impl DezoomerMeta for Custom {
+    const NAME: &'static str = "custom";
+
+    fn start(input: &DiscoveryInput) -> Self {
+        Self {
+            uri: input.uri.clone(),
+            requested: false,
         }
     }
 }

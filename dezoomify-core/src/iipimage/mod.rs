@@ -8,30 +8,20 @@ use crate::Vec2d;
 use crate::core::discovery::DiscoveryEvent;
 use crate::core::tile_plan::RectangularSource;
 use crate::core::{
-    CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
-    DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
-    LevelPlan, ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
+    CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
+    DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor, LevelPlan,
+    ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
 };
 
-/// `IIPImage` discovery program.
-#[derive(Default)]
-pub struct IIPImage;
-
-const META: &str = "&OBJ=Max-size&OBJ=Tile-size&OBJ=Resolution-number";
-
-impl DiscoveryProgram for IIPImage {
-    fn start(&self, input: &DiscoveryInput) -> Box<dyn DiscoverySession> {
-        Box::new(IipSession {
-            input: input.uri.clone(),
-            metadata: None,
-        })
-    }
-}
-struct IipSession {
+/// `IIPImage` dezoomer.
+pub struct Iip {
     input: String,
     metadata: Option<String>,
 }
-impl DiscoverySession for IipSession {
+
+const META: &str = "&OBJ=Max-size&OBJ=Tile-size&OBJ=Resolution-number";
+
+impl Dezoomer for Iip {
     fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
         match event {
             DiscoveryEvent::Start if self.metadata.is_none() => {
@@ -69,6 +59,18 @@ impl DiscoverySession for IipSession {
             DiscoveryEvent::Start => {
                 Err(DiscoveryError::Session("IIP session started twice".into()))
             }
+        }
+    }
+}
+
+impl DezoomerMeta for Iip {
+    const NAME: &'static str = "iipimage";
+    const URL_HINTS: &'static [&'static str] = &["?FIF"];
+
+    fn start(input: &DiscoveryInput) -> Self {
+        Self {
+            input: input.uri.clone(),
+            metadata: None,
         }
     }
 }
@@ -196,7 +198,7 @@ mod tests {
     #[test]
     fn lowercase_fif_urls_request_canonical_metadata() {
         let uri = "https://publications-images.artic.edu/fcgi-bin/iipsrv.fcgi?fif=osci/Renoir_11/Color_Corrected/G39094sm2.ptif&jtl=4,11";
-        let mut session = IIPImage.start(&DiscoveryInput::from(uri));
+        let mut session = Iip::start(&DiscoveryInput::from(uri));
         let step = session.advance(DiscoveryEvent::Start).unwrap();
         let DiscoveryStep::Need(need) = step else {
             panic!("IIP URL did not request metadata")
