@@ -42,7 +42,7 @@ impl TileObservation {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum AdaptiveError {
+pub enum TileProgramError {
     ZeroCapacity,
     PendingObservation,
     NoPendingObservation,
@@ -52,10 +52,10 @@ pub enum AdaptiveError {
     ArithmeticOverflow,
 }
 
-impl fmt::Display for AdaptiveError {
+impl fmt::Display for TileProgramError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ZeroCapacity => f.write_str("adaptive capacity must be greater than zero"),
+            Self::ZeroCapacity => f.write_str("tile batch capacity must be greater than zero"),
             Self::PendingObservation => f.write_str("a probe observation is pending"),
             Self::NoPendingObservation => f.write_str("no probe observation is pending"),
             Self::InvalidObservationCount(count) => {
@@ -63,20 +63,23 @@ impl fmt::Display for AdaptiveError {
             }
             Self::InvalidObservation(id) => write!(f, "unexpected observation for {id}"),
             Self::InvalidDimensions(id) => write!(f, "invalid dimensions for {id}"),
-            Self::ArithmeticOverflow => f.write_str("adaptive geometry overflowed u32"),
+            Self::ArithmeticOverflow => f.write_str("tile geometry overflowed u32"),
         }
     }
 }
 
-impl Error for AdaptiveError {}
+impl Error for TileProgramError {}
+
+/// Backwards-compatible alias — the unified batch error was historically named `AdaptiveError`.
+pub type AdaptiveError = TileProgramError;
 
 pub trait AdaptivePlan: fmt::Debug + Send + Sync {
     fn start(&self) -> Box<dyn TileProgram>;
 }
 
 pub trait TileProgram: fmt::Debug + Send {
-    fn take_ready(&mut self, capacity: usize) -> Result<Option<Vec<TileSpec>>, AdaptiveError>;
-    fn submit(&mut self, observations: &[TileObservation]) -> Result<(), AdaptiveError>;
+    fn take_ready(&mut self, capacity: usize) -> Result<Option<Vec<TileSpec>>, TileProgramError>;
+    fn submit(&mut self, observations: &[TileObservation]) -> Result<(), TileProgramError>;
     fn image_size(&self) -> Option<Vec2d>;
 }
 
@@ -169,23 +172,23 @@ impl GenericProgram {
         }
     }
 
-    fn spec(&mut self, point: Vec2d, role: TileRole) -> Result<TileSpec, AdaptiveError> {
+    fn spec(&mut self, point: Vec2d, role: TileRole) -> Result<TileSpec, TileProgramError> {
         let size = self.tile_size.unwrap_or_default();
         let origin = Vec2d {
             x: point
                 .x
                 .checked_mul(size.x)
-                .ok_or(AdaptiveError::ArithmeticOverflow)?,
+                .ok_or(TileProgramError::ArithmeticOverflow)?,
             y: point
                 .y
                 .checked_mul(size.y)
-                .ok_or(AdaptiveError::ArithmeticOverflow)?,
+                .ok_or(TileProgramError::ArithmeticOverflow)?,
         };
         let id = TileId::new(self.plan.level.clone(), self.next_id);
         self.next_id = self
             .next_id
             .checked_add(1)
-            .ok_or(AdaptiveError::ArithmeticOverflow)?;
+            .ok_or(TileProgramError::ArithmeticOverflow)?;
         Ok(TileSpec {
             id,
             request: Request::new(render_template(&self.plan.template, point.x, point.y)),
@@ -197,7 +200,7 @@ impl GenericProgram {
         })
     }
 
-    fn finish_search(&mut self, last: Vec2d) -> Result<(), AdaptiveError> {
+    fn finish_search(&mut self, last: Vec2d) -> Result<(), TileProgramError> {
         let Some(tile) = self.tile_size else {
             self.grid_size = Some(Vec2d::default());
             return Ok(());
@@ -206,21 +209,21 @@ impl GenericProgram {
             x: last
                 .x
                 .checked_add(1)
-                .ok_or(AdaptiveError::ArithmeticOverflow)?,
+                .ok_or(TileProgramError::ArithmeticOverflow)?,
             y: last
                 .y
                 .checked_add(1)
-                .ok_or(AdaptiveError::ArithmeticOverflow)?,
+                .ok_or(TileProgramError::ArithmeticOverflow)?,
         };
         self.image_size = Some(Vec2d {
             x: grid
                 .x
                 .checked_mul(tile.x)
-                .ok_or(AdaptiveError::ArithmeticOverflow)?,
+                .ok_or(TileProgramError::ArithmeticOverflow)?,
             y: grid
                 .y
                 .checked_mul(tile.y)
-                .ok_or(AdaptiveError::ArithmeticOverflow)?,
+                .ok_or(TileProgramError::ArithmeticOverflow)?,
         });
         self.grid_size = Some(grid);
         Ok(())
@@ -228,12 +231,12 @@ impl GenericProgram {
 }
 
 impl TileProgram for GenericProgram {
-    fn take_ready(&mut self, capacity: usize) -> Result<Option<Vec<TileSpec>>, AdaptiveError> {
+    fn take_ready(&mut self, capacity: usize) -> Result<Option<Vec<TileSpec>>, TileProgramError> {
         if capacity == 0 {
-            return Err(AdaptiveError::ZeroCapacity);
+            return Err(TileProgramError::ZeroCapacity);
         }
         if self.pending.is_some() {
-            return Err(AdaptiveError::PendingObservation);
+            return Err(TileProgramError::PendingObservation);
         }
         if let Some(grid) = self.grid_size {
             let total = u64::from(grid.x) * u64::from(grid.y);
@@ -243,9 +246,9 @@ impl TileProgram for GenericProgram {
                 self.output_cursor += 1;
                 let point = Vec2d {
                     x: u32::try_from(ordinal % u64::from(grid.x))
-                        .map_err(|_| AdaptiveError::ArithmeticOverflow)?,
+                        .map_err(|_| TileProgramError::ArithmeticOverflow)?,
                     y: u32::try_from(ordinal / u64::from(grid.x))
-                        .map_err(|_| AdaptiveError::ArithmeticOverflow)?,
+                        .map_err(|_| TileProgramError::ArithmeticOverflow)?,
                 };
                 if !self.observed.contains_key(&point) {
                     batch.push(self.spec(point, TileRole::Output)?);
@@ -260,17 +263,17 @@ impl TileProgram for GenericProgram {
         Ok(Some(vec![spec]))
     }
 
-    fn submit(&mut self, observations: &[TileObservation]) -> Result<(), AdaptiveError> {
+    fn submit(&mut self, observations: &[TileObservation]) -> Result<(), TileProgramError> {
         let Some((expected, point)) = self.pending.take() else {
-            return Err(AdaptiveError::NoPendingObservation);
+            return Err(TileProgramError::NoPendingObservation);
         };
         if observations.len() != 1 {
             self.pending = Some((expected.clone(), point));
-            return Err(AdaptiveError::InvalidObservationCount(observations.len()));
+            return Err(TileProgramError::InvalidObservationCount(observations.len()));
         }
         if observations[0].id != expected {
             self.pending = Some((expected.clone(), point));
-            return Err(AdaptiveError::InvalidObservation(
+            return Err(TileProgramError::InvalidObservation(
                 observations[0].id.clone(),
             ));
         }
@@ -281,7 +284,7 @@ impl TileProgram for GenericProgram {
             }
             ObservationResult::Available { .. } => {
                 self.pending = Some((expected.clone(), point));
-                return Err(AdaptiveError::InvalidDimensions(expected));
+                return Err(TileProgramError::InvalidDimensions(expected));
             }
             ObservationResult::Missing => false,
         };

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::Vec2d;
 
-use super::adaptive::AdaptivePlan;
+use super::adaptive::{AdaptivePlan, TileObservation, TileProgram, TileProgramError};
 use super::model::{ProcessingRecipe, Request, StableId, TileId, TileRole, TileSpec};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -102,6 +102,16 @@ impl KnownTilePlan {
 pub enum LevelPlan {
     Known(KnownTilePlan),
     Adaptive(Arc<dyn AdaptivePlan>),
+}
+
+impl LevelPlan {
+    #[must_use]
+    pub fn start_program(&self) -> Box<dyn TileProgram> {
+        match self {
+            Self::Known(plan) => Box::new(plan.cursor()),
+            Self::Adaptive(plan) => plan.start(),
+        }
+    }
 }
 
 impl fmt::Debug for LevelPlan {
@@ -212,23 +222,39 @@ pub struct KnownPlanCursor {
 }
 
 impl KnownPlanCursor {
-    pub fn take_ready(&mut self, capacity: usize) -> Result<Option<Vec<TileSpec>>, PlanError> {
+    fn take_ready_inner(&mut self, capacity: usize) -> Result<Option<Vec<TileSpec>>, TileProgramError> {
         if capacity == 0 {
-            return Err(PlanError::ZeroCapacity);
+            return Err(TileProgramError::ZeroCapacity);
         }
         let remaining = usize::try_from(self.remaining()).unwrap_or(usize::MAX);
         let mut batch = Vec::with_capacity(capacity.min(remaining));
         while batch.len() < capacity {
-            let Some(spec) = self.plan.0.tile(self.next)? else {
+            let Some(spec) = self
+                .plan
+                .0
+                .tile(self.next)
+                .map_err(|error| match error {
+                    PlanError::ZeroCapacity => TileProgramError::ZeroCapacity,
+                    PlanError::ArithmeticOverflow => TileProgramError::ArithmeticOverflow,
+                    PlanError::DuplicateTileId(_) | PlanError::InvalidTile(_) => {
+                        TileProgramError::ArithmeticOverflow
+                    }
+                })?
+            else {
                 break;
             };
             self.next = self
                 .next
                 .checked_add(1)
-                .ok_or(PlanError::ArithmeticOverflow)?;
+                .ok_or(TileProgramError::ArithmeticOverflow)?;
             batch.push(spec);
         }
         Ok((!batch.is_empty()).then_some(batch))
+    }
+
+    /// Convenience for callers not going through the `TileProgram` trait.
+    pub fn take_ready(&mut self, capacity: usize) -> Result<Option<Vec<TileSpec>>, TileProgramError> {
+        self.take_ready_inner(capacity)
     }
 
     #[must_use]
@@ -242,6 +268,20 @@ impl KnownPlanCursor {
     }
 }
 
+impl TileProgram for KnownPlanCursor {
+    fn take_ready(&mut self, capacity: usize) -> Result<Option<Vec<TileSpec>>, TileProgramError> {
+        self.take_ready_inner(capacity)
+    }
+
+    fn submit(&mut self, _observations: &[TileObservation]) -> Result<(), TileProgramError> {
+        Ok(())
+    }
+
+    fn image_size(&self) -> Option<Vec2d> {
+        None
+    }
+}
+
 impl fmt::Display for TileId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}", self.level, self.ordinal)
@@ -250,6 +290,7 @@ impl fmt::Display for TileId {
 
 #[cfg(test)]
 mod tests {
+    use super::super::adaptive::TileProgramError;
     use super::*;
 
     #[derive(Debug)]
@@ -324,7 +365,7 @@ mod tests {
     fn zero_capacity_is_typed_error() {
         assert_eq!(
             plan(Vec2d::default()).cursor().take_ready(0),
-            Err(PlanError::ZeroCapacity)
+            Err(TileProgramError::ZeroCapacity)
         );
     }
 

@@ -11,7 +11,9 @@ pub mod registry;
 pub mod tile_plan;
 pub mod uri;
 
-pub use adaptive::TileObservation;
+pub use adaptive::{
+    AdaptiveError, TileObservation, TileProgram, TileProgramError,
+};
 pub use discovery::{
     DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram, DiscoverySession,
     DiscoveryStep, ResourceOutcome, ResourcePurpose, ResourceRequest,
@@ -24,5 +26,5 @@ pub use model::{
 };
 pub use processing::ProcessingError;
 pub use registry::{Priority, Registry};
-pub use tile_plan::{KnownTilePlan, LevelPlan, PlanError, ReplayablePlan};
+pub use tile_plan::{KnownPlanCursor, KnownTilePlan, LevelPlan, PlanError, ReplayablePlan};
 pub use uri::resolve_relative;

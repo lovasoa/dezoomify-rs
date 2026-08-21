@@ -26,7 +26,7 @@ use crate::encoder::tile_buffer::TileBuffer;
 use crate::native::NativeDiscoveryDriver;
 use crate::output_file::reserve_output_file;
 use dezoomify_core::core::{
-    CatalogEntry, DeferredImage, ImageCatalog, ImageDescriptor, LevelDescriptor, LevelPlan,
+    CatalogEntry, DeferredImage, ImageCatalog, ImageDescriptor, LevelDescriptor,
 };
 
 mod arguments;
@@ -807,50 +807,31 @@ async fn dezoomify_level_into_buffer(
     progress.set_computing_urls();
 
     let level_size = level.size;
-    match level.plan {
-        LevelPlan::Known(plan) => {
-            let mut cursor = plan.cursor();
-            while let Some(specs) =
-                cursor
-                    .take_ready(args.parallelism)
-                    .map_err(|error| ZoomError::Dezoomer {
-                        message: error.to_string(),
-                    })?
-            {
-                coordinator
-                    .download_batch(specs, canvas, &mut state, &progress, level_size)
-                    .await?;
-            }
-        }
-        LevelPlan::Adaptive(plan) => {
-            let mut program = plan.start();
-            loop {
-                let Some(specs) =
-                    program
-                        .take_ready(args.parallelism)
-                        .map_err(|error| ZoomError::Dezoomer {
-                            message: error.to_string(),
-                        })?
-                else {
-                    break;
-                };
-                let observations = coordinator
-                    .download_batch(
-                        specs,
-                        canvas,
-                        &mut state,
-                        &progress,
-                        program.image_size().or(level_size),
-                    )
-                    .await?;
-                if !observations.is_empty() {
-                    program
-                        .submit(&observations)
-                        .map_err(|error| ZoomError::Dezoomer {
-                            message: error.to_string(),
-                        })?;
-                }
-            }
+    let mut program = level.plan.start_program();
+    loop {
+        let Some(specs) = program
+            .take_ready(args.parallelism)
+            .map_err(|error| ZoomError::Dezoomer {
+                message: error.to_string(),
+            })?
+        else {
+            break;
+        };
+        let observations = coordinator
+            .download_batch(
+                specs,
+                canvas,
+                &mut state,
+                &progress,
+                program.image_size().or(level_size),
+            )
+            .await?;
+        if !observations.is_empty() {
+            program
+                .submit(&observations)
+                .map_err(|error| ZoomError::Dezoomer {
+                    message: error.to_string(),
+                })?;
         }
     }
 
@@ -876,6 +857,7 @@ pub fn max_size_in_rect(position: Vec2d, tile_size: Vec2d, canvas_size: Vec2d) -
 mod tests {
     use super::*;
     use clap::Parser;
+    use dezoomify_core::core::LevelPlan;
 
     fn test_level(
         size: Option<Vec2d>,
