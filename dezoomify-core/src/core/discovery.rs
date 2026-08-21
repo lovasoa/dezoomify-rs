@@ -31,38 +31,25 @@ impl From<&str> for DiscoveryInput {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RequestId(pub u64);
 
-/// Why a program requested a resource.  It is informational and never
-/// prescribes transport.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum ResourcePurpose {
-    InitialMetadata,
-    Metadata,
-    ViewerScript,
-    TileInformation,
-}
-
 /// A resource which must be supplied by the application before discovery can
 /// continue.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceNeed {
     pub id: RequestId,
     pub request: Request,
-    pub purpose: ResourcePurpose,
 }
 
 /// A resource request before the operation assigns its stable ID.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceRequest {
     pub request: Request,
-    pub purpose: ResourcePurpose,
 }
 
 impl ResourceRequest {
     #[must_use]
-    pub fn new(uri: impl Into<String>, purpose: ResourcePurpose) -> Self {
+    pub fn new(uri: impl Into<String>) -> Self {
         Self {
             request: Request::new(uri),
-            purpose,
         }
     }
 }
@@ -72,7 +59,6 @@ impl ResourceRequest {
 pub struct ResourceResponse {
     pub id: RequestId,
     pub bytes: Vec<u8>,
-    pub content_type: Option<String>,
 }
 
 /// An application-reported failure to satisfy a request.
@@ -415,7 +401,6 @@ impl DiscoveryOperation {
             ResourceNeed {
                 id,
                 request: request.request,
-                purpose: request.purpose,
             },
         );
         Ok(id)
@@ -471,10 +456,7 @@ mod tests {
                 ) => Err(DiscoveryError::Session("not my format".into())),
                 (Script::Need { uri, .. }, DiscoveryEvent::Start) if !self.started => {
                     self.started = true;
-                    Ok(DiscoveryStep::Need(ResourceRequest::new(
-                        *uri,
-                        ResourcePurpose::Metadata,
-                    )))
+                    Ok(DiscoveryStep::Need(ResourceRequest::new(*uri)))
                 }
                 (
                     Script::Need {
@@ -520,7 +502,6 @@ mod tests {
             .provide(ResourceResponse {
                 id,
                 bytes: bytes.to_vec(),
-                content_type: None,
             })
             .unwrap();
     }

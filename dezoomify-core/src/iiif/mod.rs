@@ -9,7 +9,7 @@ use crate::core::tile_plan::RectangularSource;
 use crate::core::{
     CatalogEntry, DeferredImage, DiscoveryError, DiscoveryInput, DiscoveryProgram,
     DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
-    LevelPlan, Provenance, Request, ResourceOutcome, ResourcePurpose, ResourceRequest, StableId,
+    LevelPlan, Request, ResourceOutcome, ResourceRequest, StableId,
 };
 use crate::iiif::tile_info::TileSizeFormat;
 use crate::json_utils::all_json;
@@ -85,7 +85,6 @@ impl DiscoverySession for IiifSession {
                 self.requested = true;
                 Ok(DiscoveryStep::Need(ResourceRequest::new(
                     self.uri.clone(),
-                    ResourcePurpose::InitialMetadata,
                 )))
             }
             DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
@@ -175,7 +174,6 @@ fn catalog_from_manifest_info(
                 )),
                 uri: image_info.image_uri,
                 title,
-                provenance: Provenance::default(),
                 warnings: warnings.clone(),
             })
         })
@@ -198,7 +196,6 @@ fn catalog_from_info(url: &str, raw_info: &[u8]) -> Result<ImageCatalog, Discove
         title: None,
         format: StableId::new("iiif"),
         levels,
-        provenance: Provenance::default(),
         warnings,
     })]))
 }
@@ -279,7 +276,6 @@ fn levels_from_info(url: &str, mut image_info: ImageInfo) -> Vec<LevelDescriptor
                             scale_factor: Some(scale_factor),
                             has_overlapping_tiles: false,
                             plan: LevelPlan::Known(KnownTilePlan::rectangular(source)),
-                            provenance: Provenance::default(),
                             warnings: warnings.clone(),
                         }
                     },
@@ -614,7 +610,6 @@ fn discovery_requests_metadata_then_returns_normalized_replayable_levels() {
         panic!("IIIF must request its metadata");
     };
     assert_eq!(need.request.uri, input.uri);
-    assert_eq!(need.purpose, ResourcePurpose::InitialMetadata);
 
     let response = ResourceOutcome::Response(crate::core::ResourceResponse {
         id: crate::core::RequestId(0),
@@ -624,7 +619,6 @@ fn discovery_requests_metadata_then_returns_normalized_replayable_levels() {
           "tiles":[{"width":512,"height":512,"scaleFactors":[1,2,4]}]
         }"#
         .to_vec(),
-        content_type: Some("application/json".into()),
     });
     let DiscoveryStep::Complete(catalog) = session
         .advance(DiscoveryEvent::Resource(&response))

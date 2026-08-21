@@ -384,7 +384,6 @@ mod tests {
         let spec = |role| TileSpec {
             id: TileId::new(StableId::from("level"), 0),
             request: Request::new("memory://tile"),
-            source_region: None,
             destination: Vec2d { x: 0, y: 0 },
             expected_size: None,
             processing: ProcessingRecipe::None,

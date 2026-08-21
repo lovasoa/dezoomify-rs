@@ -85,8 +85,9 @@ pub(crate) async fn fetch_resource<'a>(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn request_headers(request: &Request) -> Vec<(String, String)> {
-    effective_request_headers(request, &HashSet::new())
+    request.headers.clone().into_iter().collect()
 }
 
 /// Same as `request_headers` but skips any header whose name (case-insensitive)
@@ -97,23 +98,9 @@ pub(crate) fn effective_request_headers(
     request: &Request,
     user_header_names: &HashSet<String>,
 ) -> Vec<(String, String)> {
-    let mut headers = request.headers.clone();
-    if !request.accepted_content_types.is_empty()
-        && !headers
-            .keys()
-            .any(|name| name.eq_ignore_ascii_case("accept"))
-    {
-        headers.insert(
-            "Accept".to_owned(),
-            request
-                .accepted_content_types
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
-    }
-    headers
+    request
+        .headers
+        .clone()
         .into_iter()
         .filter(|(name, _)| !user_header_names.contains(&name.to_ascii_lowercase()))
         .collect()
@@ -268,10 +255,6 @@ fn tile_cache_path(root: &std::path::Path, request: &Request) -> PathBuf {
         digest.update(value.as_bytes());
         digest.update([0]);
     }
-    for content_type in &request.accepted_content_types {
-        digest.update(content_type.as_bytes());
-        digest.update([0]);
-    }
     let digest = digest
         .finalize()
         .iter()
@@ -327,8 +310,8 @@ pub fn default_headers() -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Request, TileDownloader, effective_request_headers, request_headers, tile_cache_path,
-        tile_cache_paths, user_header_names,
+        Request, TileDownloader, effective_request_headers, tile_cache_path, tile_cache_paths,
+        user_header_names,
     };
     use std::collections::HashSet;
     use std::path::Path;
@@ -341,14 +324,6 @@ mod tests {
         assert_ne!(
             tile_cache_path(Path::new("/tmp/cache"), &first),
             tile_cache_path(Path::new("/tmp/cache"), &second)
-        );
-        let mut png = Request::new("https://example.test/tile");
-        png.accepted_content_types.insert("image/png".into());
-        let mut jpeg = Request::new("https://example.test/tile");
-        jpeg.accepted_content_types.insert("image/jpeg".into());
-        assert_ne!(
-            tile_cache_path(Path::new("/tmp/cache"), &png),
-            tile_cache_path(Path::new("/tmp/cache"), &jpeg)
         );
     }
 
@@ -390,17 +365,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn accepted_content_types_supply_default_accept_header() {
-        let mut request = Request::new("memory://tile");
-        request
-            .accepted_content_types
-            .insert("image/png".to_owned());
-        assert_eq!(
-            request_headers(&request),
-            vec![("Accept".to_owned(), "image/png".to_owned())]
-        );
-    }
 
     #[test]
     fn user_referer_overrides_automatic_referer_on_tile_requests() {

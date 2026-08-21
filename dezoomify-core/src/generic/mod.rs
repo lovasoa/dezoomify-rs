@@ -6,8 +6,7 @@ use crate::core::adaptive::{GenericAdaptivePlan, is_generic_template};
 use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
     CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
-    DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, LevelDescriptor, LevelPlan,
-    Provenance, StableId,
+    DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, LevelDescriptor, LevelPlan, StableId,
 };
 
 /// Generic template discovery program.
@@ -54,10 +53,8 @@ impl DiscoverySession for GenericSession {
                             scale_factor: None,
                             has_overlapping_tiles: false,
                             plan: LevelPlan::Adaptive(plan),
-                            provenance: Provenance::default(),
                             warnings: Vec::new(),
                         }],
-                        provenance: Provenance::default(),
                         warnings: Vec::new(),
                     }),
                 ])))

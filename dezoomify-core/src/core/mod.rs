@@ -16,13 +16,12 @@ pub use adaptive::{
 };
 pub use discovery::{
     DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram, DiscoverySession,
-    DiscoveryStep, ResourceOutcome, ResourcePurpose, ResourceRequest,
+    DiscoveryStep, ResourceOutcome, ResourceRequest,
 };
 #[cfg(test)]
 pub use discovery::{RequestId, ResourceResponse};
 pub use model::{
-    CatalogEntry, DeferredImage, ImageCatalog, ImageDescriptor, LevelDescriptor, ProcessingRecipe,
-    Provenance, ProvenanceStep, Request, StableId, TileId, TileRole, TileSpec,
+    CatalogEntry, DeferredImage, ImageCatalog, ImageDescriptor, LevelDescriptor, ProcessingRecipe, Request, StableId, TileId, TileRole, TileSpec,
 };
 pub use processing::ProcessingError;
 pub use registry::{Priority, Registry};

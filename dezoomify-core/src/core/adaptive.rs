@@ -192,7 +192,6 @@ impl GenericProgram {
         Ok(TileSpec {
             id,
             request: Request::new(render_template(&self.plan.template, point.x, point.y)),
-            source_region: None,
             destination: origin,
             expected_size: (role == TileRole::Output).then_some(size),
             processing: ProcessingRecipe::None,

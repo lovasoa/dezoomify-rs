@@ -11,7 +11,7 @@ use crate::core::tile_plan::RectangularSource;
 use crate::core::{
     CatalogEntry, DiscoveryError, DiscoveryInput, DiscoveryProgram, DiscoverySession,
     DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor, LevelPlan,
-    ProcessingRecipe, Provenance, Request, ResourceOutcome, ResourcePurpose, ResourceRequest,
+    ProcessingRecipe, Request, ResourceOutcome, ResourceRequest,
     StableId,
 };
 use crate::json_utils::all_json;
@@ -52,7 +52,6 @@ impl DiscoverySession for DziSession {
                 self.metadata_uri = Some(uri.clone());
                 Ok(DiscoveryStep::Need(ResourceRequest::new(
                     uri,
-                    ResourcePurpose::InitialMetadata,
                 )))
             }
             DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => load_catalog(
@@ -114,7 +113,6 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
                 scale_factor: None,
                 has_overlapping_tiles: image.overlap > 0,
                 plan: LevelPlan::Known(KnownTilePlan::rectangular(level)),
-                provenance: Provenance::default(),
                 warnings: Vec::new(),
             }
         })
@@ -130,7 +128,6 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
             title,
             format: StableId::new("deepzoom"),
             levels,
-            provenance: Provenance::default(),
             warnings: Vec::new(),
         }));
     }

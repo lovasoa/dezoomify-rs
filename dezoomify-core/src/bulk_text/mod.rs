@@ -3,8 +3,7 @@
 use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
     CatalogEntry, DeferredImage, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
-    DiscoveryProgram, DiscoverySession, DiscoveryStep, ImageCatalog, Provenance, ResourceOutcome,
-    ResourcePurpose, ResourceRequest, StableId,
+    DiscoveryProgram, DiscoverySession, DiscoveryStep, ImageCatalog, ResourceOutcome, ResourceRequest, StableId,
 };
 
 /// Text-list discovery program.
@@ -35,7 +34,6 @@ impl DiscoverySession for BulkSession {
                 self.requested = true;
                 Ok(DiscoveryStep::Need(ResourceRequest::new(
                     self.uri.clone(),
-                    ResourcePurpose::InitialMetadata,
                 )))
             }
             DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
@@ -54,7 +52,6 @@ impl DiscoverySession for BulkSession {
                             id: StableId::new(format!("bulk:{index}")),
                             uri: image.uri,
                             title: Some(image.title),
-                            provenance: Provenance::default(),
                             warnings: Vec::new(),
                         })
                     }),
@@ -151,7 +148,6 @@ mod tests {
         ResourceOutcome::Response(ResourceResponse {
             id: RequestId(0),
             bytes: content.as_bytes().to_vec(),
-            content_type: Some("text/plain".into()),
         })
     }
 

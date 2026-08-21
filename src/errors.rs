@@ -61,11 +61,8 @@ impl From<reqwest::Error> for ZoomError {
 
 impl From<ProcessingError> for ZoomError {
     fn from(source: ProcessingError) -> Self {
-        match source {
-            ProcessingError::Unsupported { name } => Self::UnsupportedProcessingRecipe { name },
-            source @ ProcessingError::GoogleArtsDecrypt { .. } => Self::PostProcessing {
-                source: Box::new(source),
-            },
+        Self::PostProcessing {
+            source: Box::new(source),
         }
     }
 }

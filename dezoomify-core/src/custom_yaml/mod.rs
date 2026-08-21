@@ -1,6 +1,6 @@
 //! Pure discovery for explicit `tiles.yaml` layouts.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use serde::Deserialize;
@@ -10,8 +10,7 @@ use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
     CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
     DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
-    LevelPlan, PlanError, ProcessingRecipe, Provenance, ReplayablePlan, Request, ResourceOutcome,
-    ResourcePurpose, ResourceRequest, StableId, TileId, TileRole, TileSpec,
+    LevelPlan, PlanError, ProcessingRecipe, ReplayablePlan, Request, ResourceOutcome, ResourceRequest, StableId, TileId, TileRole, TileSpec,
 };
 
 mod tile_set;
@@ -50,7 +49,6 @@ impl DiscoverySession for CustomSession {
                 self.requested = true;
                 Ok(DiscoveryStep::Need(ResourceRequest::new(
                     self.uri.clone(),
-                    ResourcePurpose::InitialMetadata,
                 )))
             }
             DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
@@ -102,10 +100,8 @@ fn catalog_from_yaml(bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
                 headers: Arc::new(headers),
                 tile_count,
             })),
-            provenance: Provenance::default(),
             warnings: Vec::new(),
         }],
-        provenance: Provenance::default(),
         warnings: Vec::new(),
     })]))
 }
@@ -135,9 +131,7 @@ impl ReplayablePlan for CustomPlan {
             request: Request {
                 uri: entry.uri,
                 headers: (*self.headers).clone(),
-                accepted_content_types: BTreeSet::default(),
             },
-            source_region: None,
             destination: entry.position,
             expected_size: None,
             processing: ProcessingRecipe::None,

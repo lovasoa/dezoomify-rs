@@ -12,7 +12,6 @@ use super::model::{ProcessingRecipe, Request, StableId, TileId, TileRole, TileSp
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PlanError {
     ZeroCapacity,
-    DuplicateTileId(TileId),
     ArithmeticOverflow,
     InvalidTile(String),
 }
@@ -21,7 +20,6 @@ impl fmt::Display for PlanError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ZeroCapacity => f.write_str("tile batch capacity must be greater than zero"),
-            Self::DuplicateTileId(id) => write!(f, "duplicate tile id: {id:?}"),
             Self::ArithmeticOverflow => f.write_str("tile geometry overflowed u32"),
             Self::InvalidTile(message) => f.write_str(message),
         }
@@ -57,17 +55,6 @@ impl KnownTilePlan {
     #[must_use]
     pub(crate) fn new(plan: impl ReplayablePlan + 'static) -> Self {
         Self(Arc::new(plan))
-    }
-
-    /// Freeze a genuinely explicit plan. Duplicate IDs are rejected here.
-    pub fn explicit(specs: Vec<TileSpec>) -> Result<Self, PlanError> {
-        let mut ids = std::collections::HashSet::with_capacity(specs.len());
-        for spec in &specs {
-            if !ids.insert(spec.id.clone()) {
-                return Err(PlanError::DuplicateTileId(spec.id.clone()));
-            }
-        }
-        Ok(Self::new(ExplicitPlan(specs.into())))
     }
 
     #[must_use]
@@ -190,28 +177,11 @@ impl<S: RectangularSource> ReplayablePlan for RectangularPlan<S> {
         Ok(Some(TileSpec {
             id: TileId::new(self.0.level_id(), ordinal),
             request,
-            source_region: None,
             destination,
             expected_size: (overlap == Vec2d::default()).then_some(clipped),
             processing: self.0.processing(),
             role: TileRole::Output,
         }))
-    }
-}
-
-#[derive(Debug)]
-struct ExplicitPlan(Arc<[TileSpec]>);
-
-impl ReplayablePlan for ExplicitPlan {
-    fn len(&self) -> u64 {
-        self.0.len() as u64
-    }
-
-    fn tile(&self, ordinal: u64) -> Result<Option<TileSpec>, PlanError> {
-        Ok(usize::try_from(ordinal)
-            .ok()
-            .and_then(|index| self.0.get(index))
-            .cloned())
     }
 }
 
@@ -226,7 +196,8 @@ impl KnownPlanCursor {
         if capacity == 0 {
             return Err(TileProgramError::ZeroCapacity);
         }
-        let remaining = usize::try_from(self.remaining()).unwrap_or(usize::MAX);
+        let remaining = self.plan.len().saturating_sub(self.next);
+        let remaining = usize::try_from(remaining).unwrap_or(usize::MAX);
         let mut batch = Vec::with_capacity(capacity.min(remaining));
         while batch.len() < capacity {
             let Some(spec) = self
@@ -236,7 +207,7 @@ impl KnownPlanCursor {
                 .map_err(|error| match error {
                     PlanError::ZeroCapacity => TileProgramError::ZeroCapacity,
                     PlanError::ArithmeticOverflow => TileProgramError::ArithmeticOverflow,
-                    PlanError::DuplicateTileId(_) | PlanError::InvalidTile(_) => {
+                    PlanError::InvalidTile(_) => {
                         TileProgramError::ArithmeticOverflow
                     }
                 })?
@@ -257,15 +228,6 @@ impl KnownPlanCursor {
         self.take_ready_inner(capacity)
     }
 
-    #[must_use]
-    pub fn remaining(&self) -> u64 {
-        self.plan.len().saturating_sub(self.next)
-    }
-
-    #[must_use]
-    pub fn is_finished(&self) -> bool {
-        self.remaining() == 0
-    }
 }
 
 impl TileProgram for KnownPlanCursor {
@@ -324,7 +286,6 @@ mod tests {
         TileSpec {
             id: TileId::new("level".into(), ordinal),
             request: Request::new(uri),
-            source_region: None,
             destination: Vec2d::default(),
             expected_size: Some(Vec2d { x: 1, y: 1 }),
             processing: ProcessingRecipe::None,
@@ -357,8 +318,8 @@ mod tests {
         assert_eq!(cursor.take_ready(3).unwrap().unwrap().len(), 3);
         assert_eq!(cursor.take_ready(3).unwrap().unwrap().len(), 1);
         assert_eq!(cursor.take_ready(3).unwrap(), None);
-        assert!(cursor.is_finished());
-        assert_eq!((plan.len(), cursor.remaining()), (4, 0));
+        // After consuming all tiles, further calls return None
+        assert_eq!(plan.len(), 4);
     }
 
     #[test]
@@ -384,14 +345,5 @@ mod tests {
                 Vec2d { x: 2, y: 1 }
             ]
         );
-    }
-
-    #[test]
-    fn duplicate_ids_are_rejected() {
-        let id = TileId::new("level".into(), 0);
-        assert!(matches!(
-            KnownTilePlan::explicit(vec![spec("memory://one", 0), spec("memory://two", 0)]),
-            Err(PlanError::DuplicateTileId(duplicate)) if duplicate == id
-        ));
     }
 }

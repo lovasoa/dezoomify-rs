@@ -47,7 +47,6 @@ impl fmt::Display for StableId {
 pub struct Request {
     pub uri: String,
     pub headers: BTreeMap<String, String>,
-    pub accepted_content_types: BTreeSet<String>,
 }
 
 impl Request {
@@ -66,34 +65,14 @@ impl Request {
     }
 }
 
-/// A rectangle in source-tile or destination-image coordinates.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub struct Region {
-    pub origin: Vec2d,
-    pub size: Vec2d,
-}
-
-impl Region {
-    #[must_use]
-    pub const fn new(origin: Vec2d, size: Vec2d) -> Self {
-        Self { origin, size }
-    }
-}
-
 /// A byte-processing operation applied to a fetched tile payload before it
 /// is decoded as an image.
-///
-/// Recipes with a first-class variant are implemented by
-/// [`ProcessingRecipe::apply`]. [`ProcessingRecipe::Named`] remains an
-/// extension point for applications that inject their own processing.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ProcessingRecipe {
     None,
     /// Strips Google Arts & Culture tile encryption (see
     /// `google_arts_and_culture::decryption`).
     GoogleArtsDecrypt,
-    /// An application-provided operation identified by a stable name.
-    Named(StableId),
 }
 
 /// How an acquired tile participates in adaptive probing and final output.
@@ -118,12 +97,11 @@ impl TileId {
     }
 }
 
-/// A logical tile. `source_region == None` means the complete decoded source.
+/// A logical tile.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TileSpec {
     pub id: TileId,
     pub request: Request,
-    pub source_region: Option<Region>,
     /// Top-left output position. The extent is deliberately optional because
     /// probe and custom-layout tiles may only reveal it after decoding.
     pub destination: Vec2d,
@@ -131,15 +109,6 @@ pub struct TileSpec {
     pub processing: ProcessingRecipe,
     pub role: TileRole,
 }
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProvenanceStep {
-    pub id: StableId,
-    pub description: String,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Provenance(pub Vec<ProvenanceStep>);
 
 #[derive(Clone, Debug)]
 pub struct LevelDescriptor {
@@ -150,7 +119,6 @@ pub struct LevelDescriptor {
     pub scale_factor: Option<u32>,
     pub has_overlapping_tiles: bool,
     pub plan: LevelPlan,
-    pub provenance: Provenance,
     pub warnings: Vec<String>,
 }
 
@@ -188,7 +156,6 @@ pub struct ImageDescriptor {
     pub title: Option<String>,
     pub format: StableId,
     pub levels: Vec<LevelDescriptor>,
-    pub provenance: Provenance,
     pub warnings: Vec<String>,
 }
 
@@ -197,7 +164,6 @@ pub struct DeferredImage {
     pub id: StableId,
     pub uri: String,
     pub title: Option<String>,
-    pub provenance: Provenance,
     pub warnings: Vec<String>,
 }
 
@@ -289,20 +255,32 @@ impl ImageCatalog {
         Ok(self)
     }
 
-    pub fn append_provenance(&mut self, provenance: &Provenance) {
-        for entry in &mut self.0 {
-            match entry {
-                CatalogEntry::Ready(image) => image.provenance.0.extend(provenance.0.clone()),
-                CatalogEntry::Deferred(image) => image.provenance.0.extend(provenance.0.clone()),
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::core::{KnownTilePlan, LevelPlan};
+
+    #[derive(Debug)]
+    struct TestSource {
+        size: Vec2d,
+    }
+
+    impl crate::core::tile_plan::RectangularSource for TestSource {
+        fn level_id(&self) -> crate::core::StableId {
+            "level".into()
+        }
+        fn image_size(&self) -> Vec2d {
+            self.size
+        }
+        fn tile_size(&self) -> Vec2d {
+            Vec2d::square(1)
+        }
+        fn request(&self, p: Vec2d) -> Request {
+            Request::new(format!("memory://{}/{}", p.x, p.y))
+        }
+    }
 
     fn level(id: &str, size: u32) -> LevelDescriptor {
         LevelDescriptor {
@@ -312,8 +290,9 @@ mod tests {
             tile_size: None,
             scale_factor: None,
             has_overlapping_tiles: false,
-            plan: LevelPlan::Known(KnownTilePlan::explicit(Vec::new()).unwrap()),
-            provenance: Provenance::default(),
+            plan: LevelPlan::Known(KnownTilePlan::rectangular(TestSource {
+                size: Vec2d::square(size),
+            })),
             warnings: Vec::new(),
         }
     }
@@ -322,18 +301,9 @@ mod tests {
     fn display_label_includes_geometry_and_tile_count() {
         let mut level = level("gap:0", 100);
         level.tile_size = Some(Vec2d::square(100));
-        level.plan = LevelPlan::Known(
-            KnownTilePlan::explicit(vec![TileSpec {
-                id: TileId::new("level".into(), 0),
-                request: Request::new("memory://one"),
-                source_region: None,
-                destination: Vec2d::default(),
-                expected_size: Some(Vec2d::square(1)),
-                processing: ProcessingRecipe::None,
-                role: TileRole::Output,
-            }])
-            .unwrap(),
-        );
+        level.plan = LevelPlan::Known(KnownTilePlan::rectangular(TestSource {
+            size: Vec2d::square(1),
+        }));
         let label = level.display_label();
         assert!(label.contains("100 x 100 pixels"));
         assert!(label.contains("1 tiles"));
@@ -348,7 +318,6 @@ mod tests {
             title: None,
             format: StableId::new("test"),
             levels: vec![level("large", 300), level("small", 100)],
-            provenance: Provenance::default(),
             warnings: Vec::new(),
         })])
         .normalize()
@@ -363,14 +332,12 @@ mod tests {
                 id: StableId::new("same"),
                 uri: "memory://one".into(),
                 title: None,
-                provenance: Provenance::default(),
                 warnings: Vec::new(),
             }),
             CatalogEntry::Deferred(DeferredImage {
                 id: StableId::new("same"),
                 uri: "memory://two".into(),
                 title: None,
-                provenance: Provenance::default(),
                 warnings: Vec::new(),
             }),
         ]);

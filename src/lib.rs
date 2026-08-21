@@ -229,18 +229,17 @@ fn inherit_deferred_context(catalog: ImageCatalog, parent: &DeferredImage) -> Im
         .as_deref()
         .filter(|title| !title.trim().is_empty());
     ImageCatalog::new(catalog.into_entries().into_iter().map(|mut entry| {
-        let (title, provenance, warnings) = match entry {
+        let (title, warnings) = match entry {
             CatalogEntry::Ready(ref mut image) => {
-                (&mut image.title, &mut image.provenance, &mut image.warnings)
+                (&mut image.title, &mut image.warnings)
             }
             CatalogEntry::Deferred(ref mut image) => {
-                (&mut image.title, &mut image.provenance, &mut image.warnings)
+                (&mut image.title, &mut image.warnings)
             }
         };
         if title.as_deref().is_none_or(str::is_empty) {
             *title = parent_title.map(str::to_owned);
         }
-        provenance.0.splice(0..0, parent.provenance.0.clone());
         warnings.splice(0..0, parent.warnings.clone());
         entry
     }))
@@ -864,6 +863,26 @@ mod tests {
         tile_size: Option<Vec2d>,
         overlaps: bool,
     ) -> LevelDescriptor {
+        // Minimal rectangular source for tests
+        #[derive(Debug)]
+        struct DummySource {
+            size: Option<Vec2d>,
+            tile: Option<Vec2d>,
+        }
+        impl dezoomify_core::core::tile_plan::RectangularSource for DummySource {
+            fn level_id(&self) -> dezoomify_core::core::StableId {
+                "test-level".into()
+            }
+            fn image_size(&self) -> Vec2d {
+                self.size.unwrap_or(Vec2d::square(1))
+            }
+            fn tile_size(&self) -> Vec2d {
+                self.tile.unwrap_or(Vec2d::square(256))
+            }
+            fn request(&self, p: Vec2d) -> dezoomify_core::core::Request {
+                dezoomify_core::core::Request::new(format!("memory://{}/{}", p.x, p.y))
+            }
+        }
         LevelDescriptor {
             id: "test-level".into(),
             title: None,
@@ -871,11 +890,9 @@ mod tests {
             tile_size,
             scale_factor: None,
             has_overlapping_tiles: overlaps,
-            plan: LevelPlan::Known(
-                dezoomify_core::core::KnownTilePlan::explicit(Vec::new())
-                    .expect("empty plan is valid"),
-            ),
-            provenance: dezoomify_core::core::Provenance::default(),
+            plan: LevelPlan::Known(dezoomify_core::core::KnownTilePlan::rectangular(
+                DummySource { size, tile: tile_size },
+            )),
             warnings: Vec::new(),
         }
     }
@@ -900,12 +917,6 @@ mod tests {
             id: "manifest-entry".into(),
             uri: "memory://image/info.json".into(),
             title: Some("Manifest title".into()),
-            provenance: dezoomify_core::core::Provenance(vec![
-                dezoomify_core::core::ProvenanceStep {
-                    id: "manifest-rule".into(),
-                    description: "found image service".into(),
-                },
-            ]),
             warnings: vec!["manifest warning".into()],
         };
         let child = ImageDescriptor {
@@ -913,12 +924,6 @@ mod tests {
             title: None,
             format: "iiif".into(),
             levels: Vec::new(),
-            provenance: dezoomify_core::core::Provenance(vec![
-                dezoomify_core::core::ProvenanceStep {
-                    id: "iiif".into(),
-                    description: "parsed info.json".into(),
-                },
-            ]),
             warnings: vec!["image warning".into()],
         };
 
@@ -929,15 +934,6 @@ mod tests {
         };
         assert_eq!(image.title.as_deref(), Some("Manifest title"));
         assert_eq!(image.warnings, ["manifest warning", "image warning"]);
-        assert_eq!(
-            image
-                .provenance
-                .0
-                .iter()
-                .map(|step| step.id.as_str())
-                .collect::<Vec<_>>(),
-            ["manifest-rule", "iiif"]
-        );
     }
 
     #[test]

@@ -6,7 +6,7 @@ use crate::core::tile_plan::RectangularSource;
 use crate::core::{
     CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
     DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
-    LevelPlan, ProcessingRecipe, Provenance, Request, ResourceOutcome, ResourcePurpose,
+    LevelPlan, ProcessingRecipe, Request, ResourceOutcome,
     ResourceRequest, StableId,
 };
 use std::sync::Arc;
@@ -45,7 +45,6 @@ impl DiscoverySession for GapSession {
                 self.requested = true;
                 Ok(DiscoveryStep::Need(ResourceRequest::new(
                     self.uri.clone(),
-                    ResourcePurpose::InitialMetadata,
                 )))
             }
             DiscoveryEvent::Resource(ResourceOutcome::Response(response))
@@ -60,7 +59,6 @@ impl DiscoverySession for GapSession {
                 self.page = Some(Arc::new(page));
                 Ok(DiscoveryStep::Need(ResourceRequest::new(
                     next,
-                    ResourcePurpose::TileInformation,
                 )))
             }
             DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
@@ -112,7 +110,6 @@ fn catalog(page: &Arc<PageInfo>, bytes: &[u8]) -> Result<ImageCatalog, Discovery
                 scale_factor: None,
                 has_overlapping_tiles: false,
                 plan: LevelPlan::Known(KnownTilePlan::rectangular(source)),
-                provenance: Provenance::default(),
                 warnings: Vec::new(),
             }
         })
@@ -123,7 +120,6 @@ fn catalog(page: &Arc<PageInfo>, bytes: &[u8]) -> Result<ImageCatalog, Discovery
         title: Some(page.name.clone()),
         format: StableId::new("google_arts_and_culture"),
         levels,
-        provenance: Provenance::default(),
         warnings: Vec::new(),
     })]))
 }
@@ -161,8 +157,7 @@ mod tests {
     fn response(bytes: &[u8]) -> ResourceOutcome {
         ResourceOutcome::Response(ResourceResponse {
             id: RequestId(0),
-            bytes: bytes.to_vec(),
-            content_type: None,
+            bytes: bytes.to_vec()
         })
     }
 

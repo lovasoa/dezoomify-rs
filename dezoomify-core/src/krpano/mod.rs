@@ -17,8 +17,7 @@ use crate::core::tile_plan::RectangularSource;
 use crate::core::{
     CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
     DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
-    LevelPlan, ProcessingRecipe, Provenance, ProvenanceStep, Request, ResourceOutcome,
-    ResourcePurpose, ResourceRequest, StableId,
+    LevelPlan, ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
 };
 use crate::krpano::krpano_metadata::{ImageInfo, LevelDesc};
 
@@ -67,7 +66,7 @@ impl DiscoverySession for KrpanoSession {
         match event {
             DiscoveryEvent::Start if matches!(self.state, SessionState::Initial) => {
                 self.state = SessionState::WaitingInitial;
-                Ok(need(&self.input_uri, ResourcePurpose::InitialMetadata))
+                Ok(need(&self.input_uri))
             }
             DiscoveryEvent::Start => Err(DiscoveryError::Session(
                 "krpano session started twice".into(),
@@ -97,7 +96,7 @@ impl KrpanoSession {
                         xml_contents,
                         remaining_js_uris,
                     };
-                    Ok(need(&next_js_uri, ResourcePurpose::ViewerScript))
+                    Ok(need(&next_js_uri))
                 } else {
                     Err(DiscoveryError::Session(format!(
                         "failed to download krpano viewer script: {message}"
@@ -146,7 +145,7 @@ impl KrpanoSession {
                 viewer_js: contents.to_vec(),
                 remaining_js_uris: Vec::new(),
             };
-            return Ok(need(&xml_uri, ResourcePurpose::Metadata));
+            return Ok(need(&xml_uri));
         }
 
         if !looks_like_krpano_xml(contents) && looks_like_krpano_html(contents) {
@@ -161,7 +160,7 @@ impl KrpanoSession {
                 viewer_js: Vec::new(),
                 remaining_js_uris,
             };
-            return Ok(need(&xml_uri, ResourcePurpose::Metadata));
+            return Ok(need(&xml_uri));
         }
 
         if is_encrypted_xml(contents) {
@@ -176,7 +175,7 @@ impl KrpanoSession {
                 xml_contents: contents.to_vec(),
                 remaining_js_uris: candidates,
             };
-            return Ok(need(&viewer_uri, ResourcePurpose::ViewerScript));
+            return Ok(need(&viewer_uri));
         }
 
         if looks_like_krpano_xml(contents) {
@@ -212,7 +211,7 @@ impl KrpanoSession {
                     xml_contents: contents.to_vec(),
                     remaining_js_uris,
                 };
-                Ok(need(&viewer_uri, ResourcePurpose::ViewerScript))
+                Ok(need(&viewer_uri))
             }
         }
     }
@@ -238,7 +237,7 @@ impl KrpanoSession {
                     xml_contents,
                     remaining_js_uris,
                 };
-                Ok(need(&viewer_uri, ResourcePurpose::ViewerScript))
+                Ok(need(&viewer_uri))
             }
         }
     }
@@ -250,8 +249,8 @@ impl KrpanoSession {
     }
 }
 
-fn need(uri: &str, purpose: ResourcePurpose) -> DiscoveryStep {
-    DiscoveryStep::Need(ResourceRequest::new(uri, purpose))
+fn need(uri: &str) -> DiscoveryStep {
+    DiscoveryStep::Need(ResourceRequest::new(uri))
 }
 
 /// True if the content looks like a krpano XML file rather than HTML.
@@ -476,7 +475,6 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
     let metadata = KrpanoMetadata::from_bytes(contents)
         .map_err(|error| DiscoveryError::Session(format!("unable to parse krpano XML: {error}")))?;
     let global_title = metadata.get_title().unwrap_or_default().to_owned();
-    let metadata_provenance = provenance(url);
     let mut entries = Vec::new();
 
     for (image_index, ImageInfo { image, name }) in metadata.into_image_iter().enumerate() {
@@ -529,7 +527,6 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
                         scale_factor: None,
                         has_overlapping_tiles: false,
                         plan: LevelPlan::Known(KnownTilePlan::rectangular(source)),
-                        provenance: metadata_provenance.clone(),
                         warnings: Vec::new(),
                     });
                 }
@@ -541,19 +538,12 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
             title: image_title,
             format: StableId::new("krpano"),
             levels,
-            provenance: metadata_provenance.clone(),
             warnings,
         }));
     }
     Ok(ImageCatalog::new(entries))
 }
 
-fn provenance(uri: &str) -> Provenance {
-    Provenance(vec![ProvenanceStep {
-        id: StableId::new("krpano:metadata"),
-        description: format!("parsed krpano metadata from {uri}"),
-    }])
-}
 
 fn joined_nonempty<'a>(parts: impl IntoIterator<Item = &'a str>) -> Option<String> {
     let title = parts.into_iter().filter(|part| !part.is_empty()).join(" ");
@@ -674,15 +664,14 @@ mod tests {
         let mut session = KrpanoDezoomer.start(&input);
         assert!(matches!(
             session.advance(DiscoveryEvent::Start).unwrap(),
-            DiscoveryStep::Need(ResourceRequest { request, purpose: ResourcePurpose::InitialMetadata })
+            DiscoveryStep::Need(ResourceRequest { request })
                 if request.uri == uri
         ));
         match session
             .advance(DiscoveryEvent::Resource(&ResourceOutcome::Response(
                 crate::core::ResourceResponse {
                     id: crate::core::RequestId(0),
-                    bytes,
-                    content_type: None,
+                    bytes
                 },
             )))
             .unwrap()
@@ -983,13 +972,12 @@ mod tests {
             .advance(DiscoveryEvent::Resource(&ResourceOutcome::Response(
                 crate::core::ResourceResponse {
                     id: crate::core::RequestId(0),
-                    bytes: b"function embedpano(opts) { /* krpano viewer */ }".to_vec(),
-                    content_type: None,
+                    bytes: b"function embedpano(opts) { /* krpano viewer */ }".to_vec()
                 },
             )))
             .unwrap();
         assert!(
-            matches!(step, DiscoveryStep::Need(ResourceRequest { request, purpose: ResourcePurpose::Metadata }) if request.uri == "https://example.com/tour.xml")
+            matches!(step, DiscoveryStep::Need(ResourceRequest { request }) if request.uri == "https://example.com/tour.xml")
         );
     }
 
@@ -1003,13 +991,12 @@ mod tests {
                 crate::core::ResourceResponse {
                     id: crate::core::RequestId(0),
                     bytes: b"function createPanoViewer(opts) { return buildViewer(opts); }"
-                        .to_vec(),
-                    content_type: None,
+                        .to_vec()
                 },
             )))
             .unwrap();
         assert!(
-            matches!(step, DiscoveryStep::Need(ResourceRequest { request, purpose: ResourcePurpose::Metadata }) if request.uri == "https://example.com/tour.xml")
+            matches!(step, DiscoveryStep::Need(ResourceRequest { request }) if request.uri == "https://example.com/tour.xml")
         );
     }
 

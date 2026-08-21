@@ -10,7 +10,7 @@ use crate::core::tile_plan::RectangularSource;
 use crate::core::{
     CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
     DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
-    LevelPlan, ProcessingRecipe, Provenance, Request, ResourceOutcome, ResourcePurpose,
+    LevelPlan, ProcessingRecipe, Request, ResourceOutcome,
     ResourceRequest, StableId,
 };
 
@@ -46,7 +46,6 @@ impl DiscoverySession for ZoomifySession {
                 self.requested = true;
                 Ok(DiscoveryStep::Need(ResourceRequest::new(
                     self.uri.clone(),
-                    ResourcePurpose::InitialMetadata,
                 )))
             }
             DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
@@ -92,7 +91,6 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
                 scale_factor: None,
                 has_overlapping_tiles: false,
                 plan: LevelPlan::Known(KnownTilePlan::rectangular(level)),
-                provenance: Provenance::default(),
                 warnings: Vec::new(),
             }
         })
@@ -108,7 +106,6 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
         title,
         format: StableId::new("zoomify"),
         levels,
-        provenance: Provenance::default(),
         warnings,
     })]))
 }

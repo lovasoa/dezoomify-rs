@@ -12,7 +12,7 @@ use crate::core::tile_plan::RectangularSource;
 use crate::core::{
     CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
     DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
-    LevelPlan, ProcessingRecipe, Provenance, Request, ResourceOutcome, ResourcePurpose,
+    LevelPlan, ProcessingRecipe, Request, ResourceOutcome,
     ResourceRequest, StableId,
 };
 use crate::json_utils::number_or_string;
@@ -60,7 +60,6 @@ impl DiscoverySession for NyplSession {
                 self.metadata_uri = Some(meta.clone());
                 Ok(DiscoveryStep::Need(ResourceRequest::new(
                     meta,
-                    ResourcePurpose::InitialMetadata,
                 )))
             }
             DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => catalog(
@@ -117,7 +116,6 @@ fn catalog(uri: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
                 scale_factor: None,
                 has_overlapping_tiles: metadata.overlap > 0,
                 plan: LevelPlan::Known(KnownTilePlan::rectangular(source)),
-                provenance: Provenance::default(),
                 warnings: Vec::new(),
             }
         })
@@ -128,7 +126,6 @@ fn catalog(uri: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
         title: None,
         format: StableId::new("nypl"),
         levels,
-        provenance: Provenance::default(),
         warnings: Vec::new(),
     })]))
 }

@@ -97,7 +97,6 @@ impl NativeDiscoveryDriver {
             Ok(resource) => operation.provide(ResourceResponse {
                 id: need.id,
                 bytes: resource.bytes,
-                content_type: resource.content_type,
             }),
             Err(error) => operation.provide_failure(ResourceFailure {
                 id: need.id,
