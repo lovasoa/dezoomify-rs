@@ -11,8 +11,7 @@ use crate::core::tile_plan::RectangularSource;
 use crate::core::{
     CatalogEntry, DiscoveryError, DiscoveryInput, DiscoveryProgram, DiscoverySession,
     DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor, LevelPlan,
-    ProcessingRecipe, Request, ResourceOutcome, ResourceRequest,
-    StableId,
+    ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
 };
 use crate::json_utils::all_json;
 
@@ -50,9 +49,7 @@ impl DiscoverySession for DziSession {
                     |matched| format!("{}.dzi", &self.input[..matched.start()]),
                 );
                 self.metadata_uri = Some(uri.clone());
-                Ok(DiscoveryStep::Need(ResourceRequest::new(
-                    uri,
-                )))
+                Ok(DiscoveryStep::Need(ResourceRequest::new(uri)))
             }
             DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => load_catalog(
                 self.metadata_uri.as_deref().unwrap_or(&self.input),
@@ -78,9 +75,7 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
         .chain(all_json::<DziFile>(contents))
         .collect::<Vec<_>>();
     if parsed.is_empty() {
-        let detail = xml_err
-            .map(|e| format!(": {e}"))
-            .unwrap_or_default();
+        let detail = xml_err.map(|e| format!(": {e}")).unwrap_or_default();
         return Err(DiscoveryError::Session(format!(
             "unable to parse DZI metadata{detail}"
         )));
@@ -112,7 +107,10 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
             };
             LevelDescriptor {
                 id,
-                title: Some(format!("DZI level {ordinal} ({}×{} pixels)", size.x, size.y)),
+                title: Some(format!(
+                    "DZI level {ordinal} ({}×{} pixels)",
+                    size.x, size.y
+                )),
                 size: Some(size),
                 tile_size: Some(tile_size),
                 has_overlapping_tiles: image.overlap > 0,
@@ -176,6 +174,7 @@ impl RectangularSource for DziLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::TileProgram;
 
     fn ready_image(catalog: ImageCatalog) -> ImageDescriptor {
         match catalog.into_entries().pop().unwrap() {

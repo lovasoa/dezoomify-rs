@@ -12,8 +12,7 @@ use crate::core::tile_plan::RectangularSource;
 use crate::core::{
     CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
     DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
-    LevelPlan, ProcessingRecipe, Request, ResourceOutcome,
-    ResourceRequest, StableId,
+    LevelPlan, ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
 };
 use crate::json_utils::number_or_string;
 
@@ -58,9 +57,7 @@ impl DiscoverySession for NyplSession {
                     )));
                 };
                 self.metadata_uri = Some(meta.clone());
-                Ok(DiscoveryStep::Need(ResourceRequest::new(
-                    meta,
-                )))
+                Ok(DiscoveryStep::Need(ResourceRequest::new(meta)))
             }
             DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => catalog(
                 self.metadata_uri.as_deref().unwrap_or(&self.input),
@@ -205,6 +202,7 @@ impl From<MetadataSize> for Vec2d {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::TileProgram;
     #[test]
     fn parses_metadata_and_tile_url() {
         let bytes = br#"{"configs":{"0":{"size":{"width":"2422","height":"3000"},"tilesize":"256","overlap":"2","format":"png"}}}"#;

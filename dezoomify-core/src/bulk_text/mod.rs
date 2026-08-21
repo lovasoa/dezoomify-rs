@@ -3,7 +3,8 @@
 use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
     CatalogEntry, DeferredImage, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
-    DiscoveryProgram, DiscoverySession, DiscoveryStep, ImageCatalog, ResourceOutcome, ResourceRequest, StableId,
+    DiscoveryProgram, DiscoverySession, DiscoveryStep, ImageCatalog, ResourceOutcome,
+    ResourceRequest, StableId,
 };
 
 /// Text-list discovery program.
@@ -32,9 +33,7 @@ impl DiscoverySession for BulkSession {
             )),
             DiscoveryEvent::Start if !self.requested => {
                 self.requested = true;
-                Ok(DiscoveryStep::Need(ResourceRequest::new(
-                    self.uri.clone(),
-                )))
+                Ok(DiscoveryStep::Need(ResourceRequest::new(self.uri.clone())))
             }
             DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
                 let text = std::str::from_utf8(&response.bytes).map_err(|error| {
@@ -87,7 +86,10 @@ fn parse_text_urls(content: &str) -> Result<Vec<ListedImage>, DiscoveryError> {
     parse_text_urls_with_base(content, "")
 }
 
-fn parse_text_urls_with_base(content: &str, base_uri: &str) -> Result<Vec<ListedImage>, DiscoveryError> {
+fn parse_text_urls_with_base(
+    content: &str,
+    base_uri: &str,
+) -> Result<Vec<ListedImage>, DiscoveryError> {
     content
         .lines()
         .enumerate()
@@ -104,10 +106,7 @@ fn parse_text_urls_with_base(content: &str, base_uri: &str) -> Result<Vec<Listed
                 .next()
                 .filter(|title| !title.is_empty())
                 .map_or_else(|| title_from_uri(&uri, line_number), str::to_owned);
-            Ok(ListedImage {
-                uri,
-                title,
-            })
+            Ok(ListedImage { uri, title })
         })
         .collect()
 }
@@ -118,9 +117,7 @@ fn normalize_uri(uri: &str, base_uri: &str) -> String {
         || uri.contains("{{Y}}")
         || uri.starts_with(['/', '.', '\\'])
         || uri.contains(['/', '\\'])
-        || (uri.len() >= 2
-            && uri.as_bytes()[1] == b':'
-            && uri.as_bytes()[0].is_ascii_alphabetic())
+        || (uri.len() >= 2 && uri.as_bytes()[1] == b':' && uri.as_bytes()[0].is_ascii_alphabetic())
     {
         return uri.to_owned();
     }

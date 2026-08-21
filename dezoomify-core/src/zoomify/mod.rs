@@ -10,8 +10,7 @@ use crate::core::tile_plan::RectangularSource;
 use crate::core::{
     CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
     DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
-    LevelPlan, ProcessingRecipe, Request, ResourceOutcome,
-    ResourceRequest, StableId,
+    LevelPlan, ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
 };
 
 mod image_properties;
@@ -44,9 +43,7 @@ impl DiscoverySession for ZoomifySession {
             }
             DiscoveryEvent::Start if !self.requested => {
                 self.requested = true;
-                Ok(DiscoveryStep::Need(ResourceRequest::new(
-                    self.uri.clone(),
-                )))
+                Ok(DiscoveryStep::Need(ResourceRequest::new(self.uri.clone())))
             }
             DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
                 load_catalog(&self.uri, &response.bytes).map(DiscoveryStep::Complete)
@@ -91,7 +88,10 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
             };
             LevelDescriptor {
                 id: level.level_id.clone(),
-                title: Some(format!("{base_name} Zoomify level {index} ({}×{} pixels)", size.x, size.y)),
+                title: Some(format!(
+                    "{base_name} Zoomify level {index} ({}×{} pixels)",
+                    size.x, size.y
+                )),
                 size: Some(size),
                 tile_size: Some(tile_size),
                 plan: LevelPlan::Known(KnownTilePlan::rectangular(level)),
@@ -150,6 +150,7 @@ impl RectangularSource for ZoomifyLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::TileProgram;
 
     fn ready_image(url: &str, contents: &[u8]) -> ImageDescriptor {
         match load_catalog(url, contents)

@@ -10,16 +10,13 @@ use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
     CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
     DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
-    LevelPlan, PlanError, ProcessingRecipe, ReplayablePlan, Request, ResourceOutcome, ResourceRequest, StableId, TileId, TileRole, TileSpec,
+    LevelPlan, ProcessingRecipe, ReplayablePlan, Request, ResourceOutcome, ResourceRequest,
+    StableId, TileId, TileProgramError, TileRole, TileSpec,
 };
+use crate::default_headers;
 
 mod tile_set;
 mod variable;
-
-fn default_headers() -> HashMap<String, String> {
-    serde_yaml::from_str(include_str!("../../../src/default_headers.yaml"))
-        .expect("bundled default headers must be valid YAML")
-}
 
 /// Explicit YAML layout discovery program.
 #[derive(Default)]
@@ -47,9 +44,7 @@ impl DiscoverySession for CustomSession {
             ),
             DiscoveryEvent::Start if !self.requested => {
                 self.requested = true;
-                Ok(DiscoveryStep::Need(ResourceRequest::new(
-                    self.uri.clone(),
-                )))
+                Ok(DiscoveryStep::Need(ResourceRequest::new(self.uri.clone())))
             }
             DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
                 catalog_from_yaml(&response.bytes).map(DiscoveryStep::Complete)
@@ -114,14 +109,14 @@ impl ReplayablePlan for CustomPlan {
         self.tile_count
     }
 
-    fn tile(&self, ordinal: u64) -> Result<Option<TileSpec>, PlanError> {
+    fn tile(&self, ordinal: u64) -> Result<Option<TileSpec>, TileProgramError> {
         if ordinal >= self.tile_count {
             return Ok(None);
         }
         let entry = self
             .tile_set
             .tile_at(ordinal)
-            .map_err(|error| PlanError::InvalidTile(error.to_string()))?;
+            .map_err(|error| TileProgramError::InvalidTile(error.to_string()))?;
         Ok(Some(TileSpec {
             id: TileId::new(StableId::new("custom:level"), ordinal),
             request: Request {
@@ -139,6 +134,7 @@ impl ReplayablePlan for CustomPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::TileProgram;
 
     #[test]
     fn parses_bundled_example_headers() {
@@ -191,5 +187,41 @@ y_template: y
         assert_eq!(first.request.uri, "https://example.test/0/0");
         assert_eq!(last.request.uri, "https://example.test/1/1");
         assert_eq!(first, plan.tile(0).unwrap().unwrap());
+    }
+
+    #[test]
+    fn tile_expression_errors_keep_their_message() {
+        // x_template evaluates to a value larger than u32: the error must
+        // surface its own message, not a generic geometry-overflow message.
+        let catalog = catalog_from_yaml(
+            br#"
+variables:
+  - name: x
+    from: 0
+    to: 1
+url_template: "https://example.test/{{x}}"
+x_template: "5000000000 + x"
+y_template: y
+"#,
+        )
+        .unwrap();
+        let image = match &catalog.entries()[0] {
+            CatalogEntry::Ready(image) => image,
+            CatalogEntry::Deferred(_) => panic!("custom YAML is immediately ready"),
+        };
+        let plan = match &image.levels[0].plan {
+            LevelPlan::Known(plan) => plan,
+            LevelPlan::Adaptive(_) => panic!("custom YAML has a known plan"),
+        };
+        let mut program = plan.cursor();
+        let error = program.take_ready(1).unwrap_err().to_string();
+        assert!(
+            error.contains("Number too large"),
+            "unexpected error message: {error}"
+        );
+        assert!(
+            !error.contains("overflowed u32"),
+            "expression errors must not be reported as geometry overflow: {error}"
+        );
     }
 }

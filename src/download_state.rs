@@ -37,10 +37,6 @@ impl DownloadState {
         self.any_successful_tiles += 1;
     }
 
-    fn record_probe_success(&mut self) {
-        self.any_successful_tiles += 1;
-    }
-
     fn record_probe_output_success(&mut self) {
         self.total_tiles += 1;
         self.successful_tiles += 1;
@@ -230,7 +226,6 @@ impl<'a> TileDownloadCoordinator<'a> {
             if success {
                 match spec.role {
                     TileRole::Output => state.record_output_success(),
-                    TileRole::Probe => state.record_probe_success(),
                     TileRole::ProbeAndOutput => state.record_probe_output_success(),
                 }
             }
@@ -287,7 +282,6 @@ impl<'a> TileDownloadCoordinator<'a> {
             if success {
                 match spec.role {
                     TileRole::Output => state.record_output_success(),
-                    TileRole::Probe => state.record_probe_success(),
                     TileRole::ProbeAndOutput => state.record_probe_output_success(),
                 }
             }

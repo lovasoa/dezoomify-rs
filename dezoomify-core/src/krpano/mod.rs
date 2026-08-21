@@ -158,7 +158,10 @@ impl KrpanoSession {
             debug!("krpano: initial response looks like HTML, extracting XML and JS candidates");
             let html = String::from_utf8_lossy(contents);
             let remaining_js_uris = extract_js_candidates_from_html(&html, &self.input_uri);
-            debug!("krpano: found {} JS candidates in HTML", remaining_js_uris.len());
+            debug!(
+                "krpano: found {} JS candidates in HTML",
+                remaining_js_uris.len()
+            );
             let xml_uri = extract_xml_from_embedpano(&html).map_or_else(
                 || sibling_uri(&self.input_uri, "tour.xml"),
                 |reference| resolve_relative(&self.input_uri, &reference),
@@ -217,7 +220,7 @@ impl KrpanoSession {
             Ok(decrypted) => {
                 debug!("krpano: successfully decrypted XML at {xml_uri}");
                 self.complete(&xml_uri, &decrypted)
-            },
+            }
             Err(error) => {
                 warn!("krpano: failed to decrypt XML at {xml_uri}: {error}");
                 let Some(viewer_uri) = next_js_candidate(&mut remaining_js_uris) else {
@@ -250,7 +253,7 @@ impl KrpanoSession {
             Ok(decrypted) => {
                 info!("krpano: successfully decrypted XML using viewer JS");
                 self.complete(&xml_uri, &decrypted)
-            },
+            }
             Err(error) => {
                 warn!("krpano: decryption failed with viewer JS: {error}");
                 let Some(viewer_uri) = next_js_candidate(&mut remaining_js_uris) else {
@@ -569,7 +572,6 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
     Ok(ImageCatalog::new(entries))
 }
 
-
 fn joined_nonempty<'a>(parts: impl IntoIterator<Item = &'a str>) -> Option<String> {
     let title = parts.into_iter().filter(|part| !part.is_empty()).join(" ");
     (!title.is_empty()).then_some(title)
@@ -658,6 +660,7 @@ impl RectangularSource for KrpanoLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::TileProgram;
 
     fn image(catalog: ImageCatalog) -> ImageDescriptor {
         match catalog.into_entries().into_iter().next().unwrap() {
@@ -696,7 +699,7 @@ mod tests {
             .advance(DiscoveryEvent::Resource(&ResourceOutcome::Response(
                 crate::core::ResourceResponse {
                     id: crate::core::RequestId(0),
-                    bytes
+                    bytes,
                 },
             )))
             .unwrap()
@@ -997,7 +1000,7 @@ mod tests {
             .advance(DiscoveryEvent::Resource(&ResourceOutcome::Response(
                 crate::core::ResourceResponse {
                     id: crate::core::RequestId(0),
-                    bytes: b"function embedpano(opts) { /* krpano viewer */ }".to_vec()
+                    bytes: b"function embedpano(opts) { /* krpano viewer */ }".to_vec(),
                 },
             )))
             .unwrap();
@@ -1016,7 +1019,7 @@ mod tests {
                 crate::core::ResourceResponse {
                     id: crate::core::RequestId(0),
                     bytes: b"function createPanoViewer(opts) { return buildViewer(opts); }"
-                        .to_vec()
+                        .to_vec(),
                 },
             )))
             .unwrap();

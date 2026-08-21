@@ -32,3 +32,16 @@ pub mod zoomify;
 mod json_utils;
 
 pub use vec2d::Vec2d;
+
+/// Browser-like headers sent by default with every request, both by the
+/// application's HTTP client and by `custom_yaml` tile requests.
+///
+/// # Panics
+///
+/// Panics if the bundled `default_headers.yaml` fails to parse, which would be
+/// a bug in this crate.
+#[must_use]
+pub fn default_headers() -> std::collections::HashMap<String, String> {
+    serde_yaml::from_str(include_str!("default_headers.yaml"))
+        .expect("bundled default headers must be valid YAML")
+}

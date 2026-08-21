@@ -6,7 +6,8 @@ use crate::core::adaptive::{GenericAdaptivePlan, is_generic_template};
 use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
     CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
-    DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, LevelDescriptor, LevelPlan, StableId,
+    DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, LevelDescriptor, LevelPlan,
+    StableId,
 };
 
 /// Generic template discovery program.

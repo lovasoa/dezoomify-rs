@@ -11,9 +11,7 @@ pub mod registry;
 pub mod tile_plan;
 pub mod uri;
 
-pub use adaptive::{
-    AdaptiveError, TileObservation, TileProgram, TileProgramError,
-};
+pub use adaptive::{TileObservation, TileProgram, TileProgramError};
 pub use discovery::{
     DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram, DiscoverySession,
     DiscoveryStep, ResourceOutcome, ResourceRequest,
@@ -21,9 +19,10 @@ pub use discovery::{
 #[cfg(test)]
 pub use discovery::{RequestId, ResourceResponse};
 pub use model::{
-    CatalogEntry, DeferredImage, ImageCatalog, ImageDescriptor, LevelDescriptor, ProcessingRecipe, Request, StableId, TileId, TileRole, TileSpec,
+    CatalogEntry, DeferredImage, ImageCatalog, ImageDescriptor, LevelDescriptor, ProcessingRecipe,
+    Request, StableId, TileId, TileRole, TileSpec,
 };
 pub use processing::ProcessingError;
 pub use registry::{Priority, Registry};
-pub use tile_plan::{KnownPlanCursor, KnownTilePlan, LevelPlan, PlanError, ReplayablePlan};
+pub use tile_plan::{KnownPlanCursor, KnownTilePlan, LevelPlan, ReplayablePlan};
 pub use uri::resolve_relative;

@@ -50,6 +50,9 @@ pub enum TileProgramError {
     InvalidObservation(TileId),
     InvalidDimensions(TileId),
     ArithmeticOverflow,
+    /// A known plan failed to produce a tile (for example an invalid
+    /// `tiles.yaml` expression evaluated while generating the tile).
+    InvalidTile(String),
 }
 
 impl fmt::Display for TileProgramError {
@@ -64,14 +67,12 @@ impl fmt::Display for TileProgramError {
             Self::InvalidObservation(id) => write!(f, "unexpected observation for {id}"),
             Self::InvalidDimensions(id) => write!(f, "invalid dimensions for {id}"),
             Self::ArithmeticOverflow => f.write_str("tile geometry overflowed u32"),
+            Self::InvalidTile(message) => f.write_str(message),
         }
     }
 }
 
 impl Error for TileProgramError {}
-
-/// Backwards-compatible alias — the unified batch error was historically named `AdaptiveError`.
-pub type AdaptiveError = TileProgramError;
 
 pub trait AdaptivePlan: fmt::Debug + Send + Sync {
     fn start(&self) -> Box<dyn TileProgram>;
@@ -268,7 +269,9 @@ impl TileProgram for GenericProgram {
         };
         if observations.len() != 1 {
             self.pending = Some((expected.clone(), point));
-            return Err(TileProgramError::InvalidObservationCount(observations.len()));
+            return Err(TileProgramError::InvalidObservationCount(
+                observations.len(),
+            ));
         }
         if observations[0].id != expected {
             self.pending = Some((expected.clone(), point));
@@ -530,37 +533,37 @@ mod tests {
         let mut program = generic("level");
         assert_eq!(
             program.submit(&[]),
-            Err(AdaptiveError::NoPendingObservation)
+            Err(TileProgramError::NoPendingObservation)
         );
-        assert_eq!(program.take_ready(0), Err(AdaptiveError::ZeroCapacity));
+        assert_eq!(program.take_ready(0), Err(TileProgramError::ZeroCapacity));
         let probe = program.take_ready(1).unwrap().unwrap().remove(0);
         assert_eq!(probe.request.uri, "memory://00,0");
         assert_eq!(
             program.take_ready(1),
-            Err(AdaptiveError::PendingObservation)
+            Err(TileProgramError::PendingObservation)
         );
         assert_eq!(
             program.submit(&[]),
-            Err(AdaptiveError::InvalidObservationCount(0))
+            Err(TileProgramError::InvalidObservationCount(0))
         );
         assert_eq!(
             program.submit(&[
                 TileObservation::missing(probe.id.clone()),
                 TileObservation::missing(probe.id.clone()),
             ]),
-            Err(AdaptiveError::InvalidObservationCount(2))
+            Err(TileProgramError::InvalidObservationCount(2))
         );
         let unknown = TileId::new("other".into(), 0);
         assert_eq!(
             program.submit(&[TileObservation::missing(unknown.clone())]),
-            Err(AdaptiveError::InvalidObservation(unknown))
+            Err(TileProgramError::InvalidObservation(unknown))
         );
         assert_eq!(
             program.submit(&[TileObservation::available(
                 probe.id.clone(),
                 Vec2d::default()
             )]),
-            Err(AdaptiveError::InvalidDimensions(probe.id.clone()))
+            Err(TileProgramError::InvalidDimensions(probe.id.clone()))
         );
         program
             .submit(&[TileObservation::missing(probe.id)])
@@ -578,7 +581,10 @@ mod tests {
         first
             .submit(&[TileObservation::missing(first_probe.id)])
             .unwrap();
-        assert_eq!(second.take_ready(1), Err(AdaptiveError::PendingObservation));
+        assert_eq!(
+            second.take_ready(1),
+            Err(TileProgramError::PendingObservation)
+        );
     }
 
     #[test]

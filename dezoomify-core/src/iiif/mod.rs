@@ -18,6 +18,9 @@ pub mod manifest_types;
 pub mod tile_info;
 
 #[cfg(test)]
+use crate::core::TileProgram;
+
+#[cfg(test)]
 mod title_tests;
 
 /// IIIF discovery program.
@@ -83,9 +86,7 @@ impl DiscoverySession for IiifSession {
         match event {
             DiscoveryEvent::Start if !self.requested => {
                 self.requested = true;
-                Ok(DiscoveryStep::Need(ResourceRequest::new(
-                    self.uri.clone(),
-                )))
+                Ok(DiscoveryStep::Need(ResourceRequest::new(self.uri.clone())))
             }
             DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
                 catalog(&self.uri, &response.bytes).map(DiscoveryStep::Complete)

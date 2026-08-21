@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fmt::Write;
 use std::future::Future;
 use std::iter::once;
@@ -85,15 +85,11 @@ pub(crate) async fn fetch_resource<'a>(
     }
 }
 
-#[allow(dead_code)]
-pub(crate) fn request_headers(request: &Request) -> Vec<(String, String)> {
-    request.headers.clone().into_iter().collect()
-}
-
-/// Same as `request_headers` but skips any header whose name (case-insensitive)
-/// already appears in `user_header_names`. Client default headers (from `-H`)
-/// take precedence over format-generated per-request headers, restoring the
-/// master behaviour where the user's `Referer` (or any other header) wins.
+/// Returns the per-request headers for `request`, skipping any header whose
+/// name (case-insensitive) already appears in `user_header_names`. Client
+/// default headers (from `-H`) take precedence over format-generated
+/// per-request headers, restoring the master behaviour where the user's
+/// `Referer` (or any other header) wins.
 pub(crate) fn effective_request_headers(
     request: &Request,
     user_header_names: &HashSet<String>,
@@ -282,7 +278,7 @@ pub fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
     uri: Option<&str>,
 ) -> Result<reqwest::Client, ZoomError> {
     let referer = uri.or(args.request_referer()).unwrap_or("");
-    let header_map = default_headers()
+    let header_map = dezoomify_core::default_headers()
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .chain(once(("Referer", referer)))
@@ -301,10 +297,6 @@ pub fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
         .timeout(args.timeout)
         .build()?;
     Ok(client)
-}
-
-pub fn default_headers() -> HashMap<String, String> {
-    serde_yaml::from_str(include_str!("default_headers.yaml")).unwrap()
 }
 
 #[cfg(test)]
@@ -365,7 +357,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn user_referer_overrides_automatic_referer_on_tile_requests() {
         // Rectangular formats inject Referer = tile (0,0) URL. A CLI `-H "Referer: …"`
@@ -379,7 +370,10 @@ mod tests {
         // No user header -> auto Referer survives
         assert_eq!(
             effective_request_headers(&request, &HashSet::new()),
-            vec![("Referer".to_owned(), "https://example.test/tile/0/0".to_owned())]
+            vec![(
+                "Referer".to_owned(),
+                "https://example.test/tile/0/0".to_owned()
+            )]
         );
         // User supplied Referer -> auto one is filtered out (client default wins)
         let user = HashSet::from(["referer".to_owned()]);
@@ -400,7 +394,9 @@ mod tests {
         // custom_yaml puts its YAML `headers` map on each tile request.
         // CLI headers must win for any colliding name.
         let mut request = Request::new("https://example.test/tile");
-        request.headers.insert("Referer".to_owned(), "https://auto.test".to_owned());
+        request
+            .headers
+            .insert("Referer".to_owned(), "https://auto.test".to_owned());
         request
             .headers
             .insert("X-Custom".to_owned(), "from-yaml".to_owned());
@@ -410,11 +406,21 @@ mod tests {
         let user = HashSet::from(["referer".to_owned(), "x-custom".to_owned()]);
         let filtered = effective_request_headers(&request, &user);
         // Referer and X-Custom are filtered, User-Agent survives (not in user set)
-        assert!(!filtered.iter().any(|(k, _)| k.eq_ignore_ascii_case("Referer")));
-        assert!(!filtered.iter().any(|(k, _)| k.eq_ignore_ascii_case("X-Custom")));
-        assert!(filtered
-            .iter()
-            .any(|(k, v)| k == "User-Agent" && v == "from-yaml"));
+        assert!(
+            !filtered
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("Referer"))
+        );
+        assert!(
+            !filtered
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("X-Custom"))
+        );
+        assert!(
+            filtered
+                .iter()
+                .any(|(k, v)| k == "User-Agent" && v == "from-yaml")
+        );
     }
 
     #[test]

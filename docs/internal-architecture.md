@@ -33,12 +33,14 @@ native: ResourceNeed -> acquire/retry/cache/decode/write/present
 
 `Registry::start` creates a fresh, resumable `DiscoveryOperation`. A registry
 can be shared, but parser state, request IDs, supplied metadata, diagnostics,
-and provenance belong to that one operation. The application drives it without
-an async runtime requirement in core: repeatedly inspect `missing_resources`,
-supply each result with `provide` or `provide_failure`, then call `finish`.
+and limits belong to that one operation. The application drives it without
+an async runtime requirement in core: repeatedly ask for the next resource
+with `next_priority_need` (or all outstanding resources at once with
+`missing_resources`), supply each result with `provide` or
+`provide_failure`, then call `finish`.
 
-Requests are deduplicated by canonical `Request` (URI, ordered headers, and
-accepted content types) within one operation. A response fans out to every
+Requests are deduplicated by canonical `Request` (URI and ordered headers)
+within one operation. A response fans out to every
 candidate waiting for it. Request IDs are stable within an operation and the
 registry rejects duplicate stable IDs or ambiguous format/rule precedence.
 Candidate-local parse errors reject only that candidate, allowing automatic
@@ -47,8 +49,8 @@ discovery to continue.
 A catalog may contain `CatalogEntry::Deferred` values. This deliberately
 preserves current manifest and bulk behavior: the application can select one
 image before resolving its metadata, or expand deferred entries in its bulk
-queue. A parent title and provenance travel with the deferred entry; the native
-driver may retain a resource cache across child operations.
+queue. A parent title and warnings travel with the deferred entry; each child
+image gets its own discovery operation.
 
 ## Tile programs
 
@@ -58,16 +60,16 @@ ID, image and tile sizes, overlap, processing recipe, and request generation;
 the helper supplies row-major request and placement geometry.
 
 The application can create independent cursors with `plan.cursor()` and pull
-bounded batches using `take_ready`. A `TileSpec` states the request, optional
-source region, destination origin, optional expected dimensions, and processing recipe; it never
+bounded batches using `take_ready`. A `TileSpec` states the request,
+destination origin, optional expected dimensions, and processing recipe; it never
 commands the application to fetch or decode.
 
 Adaptive formats use an operation-owned adaptive `TileProgram` instead. The
 application requests a bounded ready batch and submits observations keyed by
-tile ID. Pure probes use `TileRole::Probe`; `TileRole::ProbeAndOutput` means a
-successful probe is also an output tile, while an expected miss is discovery
-information rather than a missing output pixel. `TileRole::Output` tiles always
-participate in output completeness.
+tile ID. `TileRole::ProbeAndOutput` means a successful probe is also an output
+tile, while an expected miss is discovery information rather than a missing
+output pixel. `TileRole::Output` tiles always participate in output
+completeness.
 
 ## Extension paths
 

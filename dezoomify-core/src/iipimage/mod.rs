@@ -10,8 +10,7 @@ use crate::core::tile_plan::RectangularSource;
 use crate::core::{
     CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
     DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
-    LevelPlan, ProcessingRecipe, Request, ResourceOutcome,
-    ResourceRequest, StableId,
+    LevelPlan, ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
 };
 
 /// `IIPImage` discovery program.
@@ -56,9 +55,7 @@ impl DiscoverySession for IipSession {
                     )
                 };
                 self.metadata = Some(meta.clone());
-                Ok(DiscoveryStep::Need(ResourceRequest::new(
-                    meta,
-                )))
+                Ok(DiscoveryStep::Need(ResourceRequest::new(meta)))
             }
             DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => catalog(
                 self.metadata.as_deref().unwrap_or(&self.input),

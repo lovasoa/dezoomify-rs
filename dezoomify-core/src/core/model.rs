@@ -78,7 +78,6 @@ pub enum ProcessingRecipe {
 /// How an acquired tile participates in adaptive probing and final output.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum TileRole {
-    Probe,
     Output,
     /// A successful probe is output; a missing probe is not an output failure.
     ProbeAndOutput,
@@ -138,31 +137,6 @@ impl Default for LevelDescriptor {
 }
 
 impl LevelDescriptor {
-    #[must_use]
-    pub fn new(id: StableId, plan: LevelPlan) -> Self {
-        Self {
-            id,
-            plan,
-            ..Self::default()
-        }
-    }
-
-    #[must_use]
-    pub fn known(
-        id: StableId,
-        size: Option<Vec2d>,
-        tile_size: Option<Vec2d>,
-        plan: LevelPlan,
-    ) -> Self {
-        Self {
-            id,
-            size,
-            tile_size,
-            plan,
-            ..Self::default()
-        }
-    }
-
     /// Human-readable label for interactive pickers.
     ///
     /// Shows the level title (or stable id as a fallback) followed by the
@@ -207,18 +181,6 @@ impl Default for ImageDescriptor {
             format: StableId::new(""),
             levels: Vec::new(),
             warnings: Vec::new(),
-        }
-    }
-}
-
-impl ImageDescriptor {
-    #[must_use]
-    pub fn new(id: StableId, format: StableId, levels: Vec<LevelDescriptor>) -> Self {
-        Self {
-            id,
-            format,
-            levels,
-            ..Self::default()
         }
     }
 }
@@ -318,7 +280,6 @@ impl ImageCatalog {
         }
         Ok(self)
     }
-
 }
 
 #[cfg(test)]
@@ -349,15 +310,11 @@ mod tests {
     fn level(id: &str, size: u32) -> LevelDescriptor {
         LevelDescriptor {
             id: StableId::new(id),
-            title: None,
             size: Some(Vec2d::square(size)),
-            tile_size: None,
-            scale_factor: None,
-            has_overlapping_tiles: false,
             plan: LevelPlan::Known(KnownTilePlan::rectangular(TestSource {
                 size: Vec2d::square(size),
             })),
-            warnings: Vec::new(),
+            ..Default::default()
         }
     }
 

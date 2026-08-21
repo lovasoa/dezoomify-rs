@@ -1,6 +1,5 @@
 //! Immutable, lazy and replayable known tile plans.
 
-use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
@@ -9,30 +8,11 @@ use crate::Vec2d;
 use super::adaptive::{AdaptivePlan, TileObservation, TileProgram, TileProgramError};
 use super::model::{ProcessingRecipe, Request, StableId, TileId, TileRole, TileSpec};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PlanError {
-    ZeroCapacity,
-    ArithmeticOverflow,
-    InvalidTile(String),
-}
-
-impl fmt::Display for PlanError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ZeroCapacity => f.write_str("tile batch capacity must be greater than zero"),
-            Self::ArithmeticOverflow => f.write_str("tile geometry overflowed u32"),
-            Self::InvalidTile(message) => f.write_str(message),
-        }
-    }
-}
-
-impl Error for PlanError {}
-
 /// Contract for a known plan: `tile(i)` is deterministic and returns `None`
 /// exactly when `i >= len()`.
 pub trait ReplayablePlan: fmt::Debug + Send + Sync {
     fn len(&self) -> u64;
-    fn tile(&self, ordinal: u64) -> Result<Option<TileSpec>, PlanError>;
+    fn tile(&self, ordinal: u64) -> Result<Option<TileSpec>, TileProgramError>;
 
     /// Whether the plan contains no tiles.
     fn is_empty(&self) -> bool {
@@ -72,7 +52,7 @@ impl KnownTilePlan {
         self.len() == 0
     }
 
-    pub fn tile(&self, ordinal: u64) -> Result<Option<TileSpec>, PlanError> {
+    pub fn tile(&self, ordinal: u64) -> Result<Option<TileSpec>, TileProgramError> {
         self.0.tile(ordinal)
     }
 
@@ -99,7 +79,7 @@ impl Default for LevelPlan {
             fn len(&self) -> u64 {
                 0
             }
-            fn tile(&self, _ordinal: u64) -> Result<Option<TileSpec>, PlanError> {
+            fn tile(&self, _ordinal: u64) -> Result<Option<TileSpec>, TileProgramError> {
                 Ok(None)
             }
         }
@@ -156,7 +136,7 @@ impl<S: RectangularSource> ReplayablePlan for RectangularPlan<S> {
         u64::from(size.x.div_ceil(tile.x)) * u64::from(size.y.div_ceil(tile.y))
     }
 
-    fn tile(&self, ordinal: u64) -> Result<Option<TileSpec>, PlanError> {
+    fn tile(&self, ordinal: u64) -> Result<Option<TileSpec>, TileProgramError> {
         if ordinal >= self.len() {
             return Ok(None);
         }
@@ -164,13 +144,15 @@ impl<S: RectangularSource> ReplayablePlan for RectangularPlan<S> {
         let tile = self.0.tile_size();
         let columns = image.x.div_ceil(tile.x);
         let x = u32::try_from(ordinal % u64::from(columns))
-            .map_err(|_| PlanError::ArithmeticOverflow)?;
+            .map_err(|_| TileProgramError::ArithmeticOverflow)?;
         let y = u32::try_from(ordinal / u64::from(columns))
-            .map_err(|_| PlanError::ArithmeticOverflow)?;
+            .map_err(|_| TileProgramError::ArithmeticOverflow)?;
         let cell = Vec2d { x, y };
         let origin = Vec2d {
-            x: x.checked_mul(tile.x).ok_or(PlanError::ArithmeticOverflow)?,
-            y: y.checked_mul(tile.y).ok_or(PlanError::ArithmeticOverflow)?,
+            x: x.checked_mul(tile.x)
+                .ok_or(TileProgramError::ArithmeticOverflow)?,
+            y: y.checked_mul(tile.y)
+                .ok_or(TileProgramError::ArithmeticOverflow)?,
         };
         let clipped = Vec2d {
             x: tile.x.min(image.x.saturating_sub(origin.x)),
@@ -207,8 +189,8 @@ pub struct KnownPlanCursor {
     next: u64,
 }
 
-impl KnownPlanCursor {
-    fn take_ready_inner(&mut self, capacity: usize) -> Result<Option<Vec<TileSpec>>, TileProgramError> {
+impl TileProgram for KnownPlanCursor {
+    fn take_ready(&mut self, capacity: usize) -> Result<Option<Vec<TileSpec>>, TileProgramError> {
         if capacity == 0 {
             return Err(TileProgramError::ZeroCapacity);
         }
@@ -216,18 +198,7 @@ impl KnownPlanCursor {
         let remaining = usize::try_from(remaining).unwrap_or(usize::MAX);
         let mut batch = Vec::with_capacity(capacity.min(remaining));
         while batch.len() < capacity {
-            let Some(spec) = self
-                .plan
-                .0
-                .tile(self.next)
-                .map_err(|error| match error {
-                    PlanError::ZeroCapacity => TileProgramError::ZeroCapacity,
-                    PlanError::ArithmeticOverflow => TileProgramError::ArithmeticOverflow,
-                    PlanError::InvalidTile(_) => {
-                        TileProgramError::ArithmeticOverflow
-                    }
-                })?
-            else {
+            let Some(spec) = self.plan.0.tile(self.next)? else {
                 break;
             };
             self.next = self
@@ -237,18 +208,6 @@ impl KnownPlanCursor {
             batch.push(spec);
         }
         Ok((!batch.is_empty()).then_some(batch))
-    }
-
-    /// Convenience for callers not going through the `TileProgram` trait.
-    pub fn take_ready(&mut self, capacity: usize) -> Result<Option<Vec<TileSpec>>, TileProgramError> {
-        self.take_ready_inner(capacity)
-    }
-
-}
-
-impl TileProgram for KnownPlanCursor {
-    fn take_ready(&mut self, capacity: usize) -> Result<Option<Vec<TileSpec>>, TileProgramError> {
-        self.take_ready_inner(capacity)
     }
 
     fn submit(&mut self, _observations: &[TileObservation]) -> Result<(), TileProgramError> {
@@ -296,18 +255,6 @@ mod tests {
 
     fn plan(overlap: Vec2d) -> KnownTilePlan {
         KnownTilePlan::rectangular(Grid { overlap })
-    }
-
-    #[allow(dead_code)]
-    fn spec(uri: &str, ordinal: u64) -> TileSpec {
-        TileSpec {
-            id: TileId::new("level".into(), ordinal),
-            request: Request::new(uri),
-            destination: Vec2d::default(),
-            expected_size: Some(Vec2d { x: 1, y: 1 }),
-            processing: ProcessingRecipe::None,
-            role: TileRole::Output,
-        }
     }
 
     #[test]

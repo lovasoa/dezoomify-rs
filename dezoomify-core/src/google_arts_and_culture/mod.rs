@@ -6,8 +6,7 @@ use crate::core::tile_plan::RectangularSource;
 use crate::core::{
     CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
     DiscoverySession, DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor,
-    LevelPlan, ProcessingRecipe, Request, ResourceOutcome,
-    ResourceRequest, StableId,
+    LevelPlan, ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
 };
 use std::sync::Arc;
 use tile_info::{PageInfo, TileInfo};
@@ -43,9 +42,7 @@ impl DiscoverySession for GapSession {
             }
             DiscoveryEvent::Start if !self.requested => {
                 self.requested = true;
-                Ok(DiscoveryStep::Need(ResourceRequest::new(
-                    self.uri.clone(),
-                )))
+                Ok(DiscoveryStep::Need(ResourceRequest::new(self.uri.clone())))
             }
             DiscoveryEvent::Resource(ResourceOutcome::Response(response))
                 if self.page.is_none() =>
@@ -57,9 +54,7 @@ impl DiscoverySession for GapSession {
                     .map_err(|error| DiscoveryError::Session(error.to_string()))?;
                 let next = page.tile_info_url();
                 self.page = Some(Arc::new(page));
-                Ok(DiscoveryStep::Need(ResourceRequest::new(
-                    next,
-                )))
+                Ok(DiscoveryStep::Need(ResourceRequest::new(next)))
             }
             DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
                 catalog(self.page.as_ref().expect("page set"), &response.bytes)
@@ -150,12 +145,13 @@ impl RectangularSource for GapLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::TileProgram;
     use crate::core::{RequestId, ResourceResponse};
 
     fn response(bytes: &[u8]) -> ResourceOutcome {
         ResourceOutcome::Response(ResourceResponse {
             id: RequestId(0),
-            bytes: bytes.to_vec()
+            bytes: bytes.to_vec(),
         })
     }
 

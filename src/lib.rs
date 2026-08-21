@@ -74,17 +74,8 @@ fn parse_level_index(input: &str, max_index: usize) -> Option<usize> {
     input.parse::<usize>().ok().filter(|&idx| idx < max_index)
 }
 
-/// Gets the actual level index to use, handling out-of-bounds requests
-fn resolve_level_index(requested: usize, available_count: usize) -> usize {
-    if requested < available_count {
-        requested
-    } else {
-        available_count - 1
-    }
-}
-
-/// Gets the actual image index to use, handling out-of-bounds requests
-fn resolve_image_index(requested: usize, available_count: usize) -> usize {
+/// Gets the actual index to use, handling out-of-bounds requests
+fn resolve_index(requested: usize, available_count: usize) -> usize {
     if requested < available_count {
         requested
     } else {
@@ -122,7 +113,7 @@ fn choose_level(
         1 => Ok(levels.swap_remove(0)),
         _ => {
             if let Some(requested_level) = args.zoom_level {
-                let actual_level = resolve_level_index(requested_level, levels.len());
+                let actual_level = resolve_index(requested_level, levels.len());
                 if actual_level == requested_level {
                     info!("Selected zoom level {requested_level} as requested");
                 } else {
@@ -172,7 +163,7 @@ fn choose_image(
         1 => Ok(images.swap_remove(0)),
         _ => {
             if let Some(requested_index) = args.image_index {
-                let actual_index = resolve_image_index(requested_index, images.len());
+                let actual_index = resolve_index(requested_index, images.len());
                 if actual_index == requested_index {
                     info!("Selected image {requested_index} as requested");
                 } else {
@@ -230,12 +221,8 @@ fn inherit_deferred_context(catalog: ImageCatalog, parent: &DeferredImage) -> Im
         .filter(|title| !title.trim().is_empty());
     ImageCatalog::new(catalog.into_entries().into_iter().map(|mut entry| {
         let (title, warnings) = match entry {
-            CatalogEntry::Ready(ref mut image) => {
-                (&mut image.title, &mut image.warnings)
-            }
-            CatalogEntry::Deferred(ref mut image) => {
-                (&mut image.title, &mut image.warnings)
-            }
+            CatalogEntry::Ready(ref mut image) => (&mut image.title, &mut image.warnings),
+            CatalogEntry::Deferred(ref mut image) => (&mut image.title, &mut image.warnings),
         };
         if title.as_deref().is_none_or(str::is_empty) {
             *title = parent_title.map(str::to_owned);
@@ -363,15 +350,6 @@ async fn dezoomify_source_pyramid(
 }
 
 fn source_level_scale_factor(
-    full_size: Vec2d,
-    level_size: Vec2d,
-    scale_factor: Option<u32>,
-    base_scale_factor: u32,
-) -> u32 {
-    source_level_scale_factor_from_hint(full_size, level_size, scale_factor, base_scale_factor)
-}
-
-fn source_level_scale_factor_from_hint(
     full_size: Vec2d,
     level_size: Vec2d,
     scale_factor_hint: Option<u32>,
@@ -821,11 +799,12 @@ async fn dezoomify_level_into_buffer(
     let level_size = level.size;
     let mut program = level.plan.start_program();
     loop {
-        let Some(specs) = program
-            .take_ready(args.parallelism)
-            .map_err(|error| ZoomError::Dezoomer {
-                message: error.to_string(),
-            })?
+        let Some(specs) =
+            program
+                .take_ready(args.parallelism)
+                .map_err(|error| ZoomError::Dezoomer {
+                    message: error.to_string(),
+                })?
         else {
             break;
         };
@@ -898,15 +877,16 @@ mod tests {
         }
         LevelDescriptor {
             id: "test-level".into(),
-            title: None,
             size,
             tile_size,
-            scale_factor: None,
             has_overlapping_tiles: overlaps,
             plan: LevelPlan::Known(dezoomify_core::core::KnownTilePlan::rectangular(
-                DummySource { size, tile: tile_size },
+                DummySource {
+                    size,
+                    tile: tile_size,
+                },
             )),
-            warnings: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -960,12 +940,13 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_level_index() {
-        assert_eq!(resolve_level_index(2, 5), 2); // Within bounds
-        assert_eq!(resolve_level_index(0, 5), 0); // First index
-        assert_eq!(resolve_level_index(4, 5), 4); // Last valid index
-        assert_eq!(resolve_level_index(10, 5), 4); // Out of bounds, use last
-        assert_eq!(resolve_level_index(100, 3), 2); // Way out of bounds
+    fn test_resolve_index() {
+        assert_eq!(resolve_index(2, 5), 2); // Within bounds
+        assert_eq!(resolve_index(0, 5), 0); // First index
+        assert_eq!(resolve_index(4, 5), 4); // Last valid index
+        assert_eq!(resolve_index(10, 5), 4); // Out of bounds, use last
+        assert_eq!(resolve_index(100, 3), 2); // Way out of bounds
+        assert_eq!(resolve_index(100, 1), 0); // Single item
     }
 
     #[test]
@@ -982,15 +963,6 @@ mod tests {
         args.zoom_level = Some(10);
         let selected = choose_level(test_levels(&[100, 200, 400]), &args).unwrap();
         assert_eq!(selected.size, Some(Vec2d::square(400)));
-    }
-
-    #[test]
-    fn test_resolve_image_index() {
-        assert_eq!(resolve_image_index(1, 3), 1); // Within bounds
-        assert_eq!(resolve_image_index(0, 3), 0); // First index
-        assert_eq!(resolve_image_index(2, 3), 2); // Last valid index
-        assert_eq!(resolve_image_index(5, 3), 2); // Out of bounds, use last
-        assert_eq!(resolve_image_index(100, 1), 0); // Way out of bounds
     }
 
     #[test]
@@ -1049,7 +1021,7 @@ mod tests {
     #[test]
     fn source_level_scale_factor_uses_relative_hints() {
         assert_eq!(
-            source_level_scale_factor_from_hint(
+            source_level_scale_factor(
                 Vec2d { x: 5156, y: 3816 },
                 Vec2d { x: 2578, y: 1908 },
                 Some(2),
@@ -1058,7 +1030,7 @@ mod tests {
             2
         );
         assert_eq!(
-            source_level_scale_factor_from_hint(
+            source_level_scale_factor(
                 Vec2d { x: 515, y: 381 },
                 Vec2d { x: 515, y: 381 },
                 Some(10),
@@ -1128,7 +1100,7 @@ mod tests {
     #[test]
     fn source_level_scale_factor_falls_back_for_unusable_hints() {
         assert_eq!(
-            source_level_scale_factor_from_hint(
+            source_level_scale_factor(
                 Vec2d { x: 5156, y: 3816 },
                 Vec2d { x: 2578, y: 1908 },
                 None,
@@ -1137,7 +1109,7 @@ mod tests {
             2
         );
         assert_eq!(
-            source_level_scale_factor_from_hint(
+            source_level_scale_factor(
                 Vec2d { x: 5156, y: 3816 },
                 Vec2d { x: 2578, y: 1908 },
                 Some(3),

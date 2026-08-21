@@ -247,12 +247,7 @@ impl DiscoveryOperation {
     /// Returns an error if a candidate cannot transition.
     pub fn missing_resources(&mut self) -> Result<Vec<ResourceNeed>, DiscoveryError> {
         self.drive()?;
-        Ok(self
-            .requests
-            .iter()
-            .filter(|(id, _)| !self.outcomes.contains_key(id))
-            .map(|(_, need)| need.clone())
-            .collect())
+        Ok(self.outstanding_needs().collect())
     }
 
     /// Return the outstanding resource needed by the highest-priority waiting candidate.
@@ -271,12 +266,15 @@ impl DiscoveryOperation {
                 return Ok(Some(need));
             }
         }
-        Ok(self
-            .requests
+        Ok(self.outstanding_needs().next())
+    }
+
+    /// Needs which have no outcome yet, in stable identifier order.
+    fn outstanding_needs(&self) -> impl Iterator<Item = ResourceNeed> + '_ {
+        self.requests
             .iter()
             .filter(|(id, _)| !self.outcomes.contains_key(id))
             .map(|(_, need)| need.clone())
-            .next())
     }
 
     /// Supply successfully acquired bytes.
@@ -386,18 +384,16 @@ impl DiscoveryOperation {
 
     fn apply_step(&mut self, index: usize, step: DiscoveryStep) -> Result<(), DiscoveryError> {
         match step {
-            DiscoveryStep::Need(request) => {
-                match self.register_request(request) {
-                    Ok(id) => self.candidates[index].state = CandidateState::Waiting(id),
-                    Err(DiscoveryError::ResourceLimitExceeded) => {
-                        self.reject_candidate(
-                            index,
-                            DiscoveryDiagnostic::from("discovery resource limit exceeded"),
-                        );
-                    }
-                    Err(error) => return Err(error),
+            DiscoveryStep::Need(request) => match self.register_request(request) {
+                Ok(id) => self.candidates[index].state = CandidateState::Waiting(id),
+                Err(DiscoveryError::ResourceLimitExceeded) => {
+                    self.reject_candidate(
+                        index,
+                        DiscoveryDiagnostic::from("discovery resource limit exceeded"),
+                    );
                 }
-            }
+                Err(error) => return Err(error),
+            },
             DiscoveryStep::Complete(catalog) => {
                 let catalog = catalog
                     .normalize()
@@ -627,15 +623,11 @@ mod tests {
             match (self.state, event) {
                 (0, DiscoveryEvent::Start) => {
                     self.state = 1;
-                    Ok(DiscoveryStep::Need(ResourceRequest::new(
-                        self.first,
-                    )))
+                    Ok(DiscoveryStep::Need(ResourceRequest::new(self.first)))
                 }
                 (1, DiscoveryEvent::Resource(ResourceOutcome::Response(_))) => {
                     self.state = 2;
-                    Ok(DiscoveryStep::Need(ResourceRequest::new(
-                        self.second,
-                    )))
+                    Ok(DiscoveryStep::Need(ResourceRequest::new(self.second)))
                 }
                 (2, DiscoveryEvent::Resource(ResourceOutcome::Response(_))) => {
                     Ok(DiscoveryStep::Complete(ImageCatalog::default()))
@@ -663,9 +655,7 @@ mod tests {
             match event {
                 DiscoveryEvent::Start if !self.requested => {
                     self.requested = true;
-                    Ok(DiscoveryStep::Need(ResourceRequest::new(
-                        self.uri,
-                    )))
+                    Ok(DiscoveryStep::Need(ResourceRequest::new(self.uri)))
                 }
                 DiscoveryEvent::Resource(ResourceOutcome::Response(_)) => {
                     Ok(DiscoveryStep::Complete(ImageCatalog::default()))
@@ -686,11 +676,7 @@ mod tests {
                 second: "memory://high2",
             }),
         );
-        registry.register(
-            "low",
-            Priority(1),
-            Arc::new(SingleProgram("memory://low1")),
-        );
+        registry.register("low", Priority(1), Arc::new(SingleProgram("memory://low1")));
 
         let mut operation = registry.start("memory://root").unwrap();
         let needs = operation.missing_resources().unwrap();
@@ -721,16 +707,20 @@ mod tests {
             }
         }
         impl DiscoverySession for LoopSession {
-            fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
+            fn advance(
+                &mut self,
+                event: DiscoveryEvent<'_>,
+            ) -> Result<DiscoveryStep, DiscoveryError> {
                 match event {
                     DiscoveryEvent::Start => Ok(DiscoveryStep::Need(ResourceRequest::new(
                         format!("memory://loop{}", self.0),
                     ))),
                     DiscoveryEvent::Resource(ResourceOutcome::Response(_)) => {
                         self.0 += 1;
-                        Ok(DiscoveryStep::Need(ResourceRequest::new(
-                            format!("memory://loop{}", self.0),
-                        )))
+                        Ok(DiscoveryStep::Need(ResourceRequest::new(format!(
+                            "memory://loop{}",
+                            self.0
+                        ))))
                     }
                     DiscoveryEvent::Resource(ResourceOutcome::Failure(_)) => {
                         Ok(DiscoveryStep::Reject("done".into()))
@@ -759,7 +749,10 @@ mod tests {
                 break;
             }
         }
-        assert!(matches!(result, Err(DiscoveryError::TransitionLimitExceeded)));
+        assert!(matches!(
+            result,
+            Err(DiscoveryError::TransitionLimitExceeded)
+        ));
     }
 
     #[test]
@@ -775,10 +768,12 @@ mod tests {
         let mut operation = registry.start_with_limits("memory://root", limits).unwrap();
         let needs = operation.missing_resources().unwrap();
         assert_eq!(needs.len(), 2);
-        assert!(operation
-            .diagnostics
-            .iter()
-            .any(|(id, msg)| id == "c" && msg.message.contains("resource limit")));
+        assert!(
+            operation
+                .diagnostics
+                .iter()
+                .any(|(id, msg)| id == "c" && msg.message.contains("resource limit"))
+        );
         for need in needs {
             operation
                 .provide(ResourceResponse {
