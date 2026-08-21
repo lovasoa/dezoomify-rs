@@ -82,6 +82,7 @@ struct ListedImage {
     title: String,
 }
 
+#[cfg(test)]
 fn parse_text_urls(content: &str) -> Result<Vec<ListedImage>, DiscoveryError> {
     parse_text_urls_with_base(content, "")
 }

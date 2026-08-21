@@ -298,6 +298,7 @@ mod tests {
         KnownTilePlan::rectangular(Grid { overlap })
     }
 
+    #[allow(dead_code)]
     fn spec(uri: &str, ordinal: u64) -> TileSpec {
         TileSpec {
             id: TileId::new("level".into(), ordinal),

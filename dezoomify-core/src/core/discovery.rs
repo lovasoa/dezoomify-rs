@@ -264,12 +264,11 @@ impl DiscoveryOperation {
     pub fn next_priority_need(&mut self) -> Result<Option<ResourceNeed>, DiscoveryError> {
         self.drive()?;
         for candidate in &self.candidates {
-            if let CandidateState::Waiting(id) = candidate.state {
-                if !self.outcomes.contains_key(&id) {
-                    if let Some(need) = self.requests.get(&id).cloned() {
-                        return Ok(Some(need));
-                    }
-                }
+            if let CandidateState::Waiting(id) = candidate.state
+                && !self.outcomes.contains_key(&id)
+                && let Some(need) = self.requests.get(&id).cloned()
+            {
+                return Ok(Some(need));
             }
         }
         Ok(self
@@ -733,7 +732,9 @@ mod tests {
                             format!("memory://loop{}", self.0),
                         )))
                     }
-                    _ => Ok(DiscoveryStep::Reject("done".into())),
+                    DiscoveryEvent::Resource(ResourceOutcome::Failure(_)) => {
+                        Ok(DiscoveryStep::Reject("done".into()))
+                    }
                 }
             }
         }

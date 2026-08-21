@@ -71,7 +71,7 @@ impl DiscoverySession for DziSession {
 
 fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
     let xml_result = serde_xml_rs::from_reader::<'_, DziFile, _>(contents);
-    let xml_err = xml_result.as_ref().err().map(|e| e.to_string());
+    let xml_err = xml_result.as_ref().err().map(ToString::to_string);
     let parsed = xml_result
         .ok()
         .into_iter()

@@ -195,7 +195,7 @@ impl TileDownloader {
         .bytes;
         match tile_spec.processing.clone() {
             ProcessingRecipe::None => {}
-            recipe => {
+            recipe @ ProcessingRecipe::GoogleArtsDecrypt => {
                 bytes = tokio::task::spawn_blocking(move || recipe.apply(bytes))
                     .await
                     .map_err(ZoomError::from)??;
@@ -422,13 +422,13 @@ mod tests {
         let a = "Referer".to_owned();
         let b = "X-Custom".to_owned();
         let c = "User-Agent".to_owned();
-        let set = user_header_names([(&a, &"v".to_owned()), (&b, &"v".to_owned())].into_iter());
+        let set = user_header_names([(&a, &"v".to_owned()), (&b, &"v".to_owned())]);
         assert!(set.contains("referer"));
         assert!(set.contains("x-custom"));
         assert!(!set.contains("user-agent"));
         // Mixing cases still normalises
         let d = "REFERER".to_owned();
-        let set2 = user_header_names([(&d, &"v".to_owned()), (&c, &"v".to_owned())].into_iter());
+        let set2 = user_header_names([(&d, &"v".to_owned()), (&c, &"v".to_owned())]);
         assert!(set2.contains("referer"));
         assert!(set2.contains("user-agent"));
     }

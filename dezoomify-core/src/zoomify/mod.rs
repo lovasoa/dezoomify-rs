@@ -111,7 +111,6 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
         format: StableId::new("zoomify"),
         levels,
         warnings,
-        ..Default::default()
     })]))
 }
 
