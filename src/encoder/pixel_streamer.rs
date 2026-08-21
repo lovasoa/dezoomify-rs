@@ -1,3 +1,5 @@
+//! Streams pixel rows from a level's tiles to an image encoder.
+
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::io::{self, Write};

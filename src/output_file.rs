@@ -1,3 +1,5 @@
+//! Output filename generation and reservation.
+
 use std::convert::TryFrom;
 use std::ffi::OsString;
 use std::fs::OpenOptions;

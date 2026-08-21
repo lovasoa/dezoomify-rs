@@ -1,3 +1,5 @@
+//! Minimum-interval throttling between successive tile downloads.
+
 use std::time::{Duration, Instant};
 
 pub struct Throttler {

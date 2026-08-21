@@ -1,3 +1,5 @@
+//! HTTP client construction, resource fetching and the on-disk tile cache.
+
 use std::collections::HashSet;
 use std::fmt::Write;
 use std::future::Future;

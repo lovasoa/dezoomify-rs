@@ -2,7 +2,7 @@
 name = "dezoomify-core"
 version = "2.18.1"
 edition = "2024"
-license-file = "LICENSE"
+license = "GPL-3.0-only"
 description = "Pure discovery core for dezoomify-rs: describes zoomable image resources from supplied bytes without performing any I/O."
 repository = "https://github.com/lovasoa/dezoomify-rs"
 keywords = ["image", "download"]

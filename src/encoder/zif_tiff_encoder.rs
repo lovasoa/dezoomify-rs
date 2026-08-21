@@ -1,3 +1,5 @@
+//! ZIF (zoomable image format) TIFF output encoder.
+
 use std::collections::HashSet;
 use std::io;
 use std::path::PathBuf;

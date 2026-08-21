@@ -1,4 +1,5 @@
-// download_state.rs
+//! Download bookkeeping, progress bars, and coordination of concurrent tile downloads.
+
 use crate::arguments::Arguments;
 use crate::encoder::tile_buffer::TileBuffer;
 use crate::errors::ZoomError;

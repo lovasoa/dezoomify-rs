@@ -1,3 +1,5 @@
+//! Output encoders: compositing tiles onto a canvas and writing image files.
+
 use std::path::PathBuf;
 
 use image::{DynamicImage, GenericImageView, Rgb, Rgba, SubImage};

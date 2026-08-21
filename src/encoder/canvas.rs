@@ -1,3 +1,5 @@
+//! In-memory RGBA canvas that composited tiles are read from when encoding.
+
 use image::{
     ExtendedColorType, GenericImageView, ImageBuffer, ImageEncoder, ImageResult, Pixel,
     PixelWithColorType, Rgb, Rgba,

@@ -1,3 +1,5 @@
+//! IIIF output: writes tile images and an `info.json` pyramid description.
+
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io;

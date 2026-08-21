@@ -1,3 +1,5 @@
+//! Application crate: discovers zoomable images, downloads their tiles and encodes the result.
+
 #![deny(clippy::cognitive_complexity)]
 #![deny(clippy::too_many_lines)]
 #![deny(clippy::missing_errors_doc)]

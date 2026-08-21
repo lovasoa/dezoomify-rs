@@ -1,3 +1,5 @@
+//! Command-line arguments and the CLI behaviors they drive.
+
 use std::path::PathBuf;
 use std::time::Duration;
 

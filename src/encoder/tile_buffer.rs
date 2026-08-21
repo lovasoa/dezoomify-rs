@@ -1,8 +1,7 @@
+//! Async channel feeding tiles to the encoder behind the output file.
+
 use std::path::PathBuf;
 
-/**
-Used to receive tiles asynchronously and provide them to the encoder
-*/
 use log::debug;
 use tokio::sync::mpsc;
 

@@ -1,3 +1,5 @@
+//! PNG output encoder.
+
 use std::borrow::Cow;
 use std::fs::{File, OpenOptions};
 use std::io;

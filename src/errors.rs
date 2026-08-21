@@ -1,3 +1,5 @@
+//! The application error type.
+
 use std::error::Error;
 use std::fmt;
 
