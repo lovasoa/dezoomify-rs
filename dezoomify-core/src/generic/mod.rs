@@ -1,10 +1,8 @@
 //! Generic URL-template discovery backed by core's executable adaptive plan.
 
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
-use regex::Regex;
-
-use crate::core::adaptive::GenericAdaptivePlan;
+use crate::core::adaptive::{GenericAdaptivePlan, is_generic_template};
 use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
     CatalogEntry, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryProgram,
@@ -33,7 +31,7 @@ struct GenericSession {
 impl DiscoverySession for GenericSession {
     fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
         match event {
-            DiscoveryEvent::Start if !TEMPLATE_RE.is_match(&self.template) => Ok(
+            DiscoveryEvent::Start if !is_generic_template(&self.template) => Ok(
                 DiscoveryStep::Reject(DiscoveryDiagnostic::from("not a generic X/Y tile template")),
             ),
             DiscoveryEvent::Start if !self.complete => {
@@ -73,7 +71,3 @@ impl DiscoverySession for GenericSession {
         }
     }
 }
-
-static TEMPLATE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?xi)\{\{\s*(x|y)(?::0\d+)?\s*\}\}").expect("constant generic template pattern")
-});

@@ -2,7 +2,10 @@
 
 use std::collections::HashMap;
 use std::error::Error;
-use std::fmt::{self, Write};
+use std::fmt;
+use std::sync::LazyLock;
+
+use regex::{Captures, Regex};
 
 use crate::Vec2d;
 
@@ -75,6 +78,42 @@ pub trait TileProgram: fmt::Debug + Send {
     fn take_ready(&mut self, capacity: usize) -> Result<Option<Vec<TileSpec>>, AdaptiveError>;
     fn submit(&mut self, observations: &[TileObservation]) -> Result<(), AdaptiveError>;
     fn image_size(&self) -> Option<Vec2d>;
+}
+
+static TEMPLATE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?xi)\{\{\s*(?P<dimension>x|y)(?::0(?P<zeroes>\d+))?\s*\}\}")
+        .expect("constant generic template pattern")
+});
+
+/// Returns true if the template contains at least one `{{x}}`/`{{y}}` placeholder.
+///
+/// The grammar is `{{x}}`, `{{y}}` (case-insensitive, optional whitespace) with an
+/// optional zero-padded width `{{x:02}}` / `{{y:05}}` requiring a leading `0`.
+#[must_use]
+pub fn is_generic_template(template: &str) -> bool {
+    TEMPLATE_RE.is_match(template)
+}
+
+pub(crate) fn render_template(template: &str, x: u32, y: u32) -> String {
+    TEMPLATE_RE
+        .replace_all(template, |caps: &Captures| {
+            let dimension = caps
+                .name("dimension")
+                .expect("missing dimension")
+                .as_str()
+                .to_ascii_lowercase();
+            let num = match dimension.as_str() {
+                "x" => x,
+                "y" => y,
+                _ => unreachable!("dimension is x or y"),
+            };
+            let padding: usize = caps
+                .name("zeroes")
+                .and_then(|m| m.as_str().parse().ok())
+                .unwrap_or(0);
+            format!("{num:0padding$}")
+        })
+        .into_owned()
 }
 
 /// Immutable descriptor for the Generic URL-template protocol.
@@ -271,35 +310,6 @@ impl TileProgram for GenericProgram {
     fn image_size(&self) -> Option<Vec2d> {
         self.image_size
     }
-}
-
-fn render_template(template: &str, x: u32, y: u32) -> String {
-    let mut output = String::with_capacity(template.len());
-    let mut rest = template;
-    while let Some(start) = rest.find("{{") {
-        output.push_str(&rest[..start]);
-        let open = &rest[start + 2..];
-        let Some(end) = open.find("}}") else { break };
-        let expression = open[..end].trim();
-        let (dimension, width) = expression
-            .split_once(':')
-            .map_or((expression, 0), |(d, w)| {
-                (d.trim(), w.trim_start_matches('0').parse().unwrap_or(0))
-            });
-        let value = match dimension.to_ascii_lowercase().as_str() {
-            "x" => Some(x),
-            "y" => Some(y),
-            _ => None,
-        };
-        if let Some(value) = value {
-            let _ = write!(output, "{value:0width$}");
-        } else {
-            output.push_str(&rest[start..start + end + 4]);
-        }
-        rest = &open[end + 2..];
-    }
-    output.push_str(rest);
-    output
 }
 
 #[derive(Debug, Default)]
