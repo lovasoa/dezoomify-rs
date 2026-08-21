@@ -5,8 +5,10 @@
 //! local filesystem.  Keeping the loop here also lets tests drive discovery
 //! with a different resolver without pulling a runtime into the core.
 
+use std::collections::HashSet;
+
 use crate::ZoomError;
-use crate::network::{FetchedResource, fetch_resource, request_headers};
+use crate::network::{FetchedResource, effective_request_headers, fetch_resource};
 use custom_error::custom_error;
 use dezoomify_core::core::discovery::{
     DiscoveryError, DiscoveryOperation, ResourceFailure, ResourceNeed, ResourceResponse,
@@ -28,16 +30,27 @@ custom_error! {pub NativeDiscoveryError
 /// shared state beyond the HTTP client.
 pub(crate) struct NativeDiscoveryDriver {
     http: reqwest::Client,
+    user_header_names: HashSet<String>,
 }
 
 impl NativeDiscoveryDriver {
     pub(crate) fn new(http: reqwest::Client) -> Self {
-        Self { http }
+        Self {
+            http,
+            user_header_names: HashSet::new(),
+        }
+    }
+
+    pub(crate) fn with_user_headers(http: reqwest::Client, user_header_names: HashSet<String>) -> Self {
+        Self {
+            http,
+            user_header_names,
+        }
     }
 
     /// Resolve one canonical resource request.
     pub(crate) async fn resolve(&self, request: &Request) -> Result<FetchedResource, ZoomError> {
-        let headers = request_headers(request);
+        let headers = effective_request_headers(request, &self.user_header_names);
         fetch_resource(
             &request.uri,
             &self.http,

@@ -3,7 +3,7 @@ use crate::arguments::Arguments;
 use crate::encoder::tile_buffer::TileBuffer;
 use crate::errors::ZoomError;
 use crate::max_size_in_rect;
-use crate::network::{TileDownloader, client as network_client};
+use crate::network::{TileDownloader, client as network_client, user_header_names};
 use crate::throttler::Throttler;
 use crate::tile::{EncodedTile, Tile, load_encoded_tile, load_tile_with_metadata};
 use dezoomify_core::Vec2d;
@@ -307,6 +307,7 @@ fn create_tile_downloader(args: &Arguments) -> Result<TileDownloader, ZoomError>
         retries: args.retries,
         retry_delay: args.retry_delay,
         tile_storage_folder: args.tile_storage_folder.clone(),
+        user_header_names: user_header_names(args.headers()),
     })
 }
 

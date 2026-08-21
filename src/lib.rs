@@ -394,7 +394,10 @@ fn level_area(size: Option<Vec2d>) -> u64 {
 pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
     let uri = args.choose_input_uri()?;
     let http_client = client(args.headers(), args, Some(&uri))?;
-    let resolver = NativeDiscoveryDriver::new(http_client);
+    let resolver = NativeDiscoveryDriver::with_user_headers(
+        http_client,
+        crate::network::user_header_names(args.headers()),
+    );
     debug!("Trying to locate a zoomable image...");
     let images = get_images_from_uri(args, &resolver, &uri).await?;
     debug!("Found {} zoomable images", images.len());

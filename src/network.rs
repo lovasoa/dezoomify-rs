@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 use std::future::Future;
 use std::iter::once;
@@ -86,6 +86,17 @@ pub(crate) async fn fetch_resource<'a>(
 }
 
 pub(crate) fn request_headers(request: &Request) -> Vec<(String, String)> {
+    effective_request_headers(request, &HashSet::new())
+}
+
+/// Same as `request_headers` but skips any header whose name (case-insensitive)
+/// already appears in `user_header_names`. Client default headers (from `-H`)
+/// take precedence over format-generated per-request headers, restoring the
+/// master behaviour where the user's `Referer` (or any other header) wins.
+pub(crate) fn effective_request_headers(
+    request: &Request,
+    user_header_names: &HashSet<String>,
+) -> Vec<(String, String)> {
     let mut headers = request.headers.clone();
     if !request.accepted_content_types.is_empty()
         && !headers
@@ -102,7 +113,22 @@ pub(crate) fn request_headers(request: &Request) -> Vec<(String, String)> {
                 .join(", "),
         );
     }
-    headers.into_iter().collect()
+    headers
+        .into_iter()
+        .filter(|(name, _)| !user_header_names.contains(&name.to_ascii_lowercase()))
+        .collect()
+}
+
+/// Helper to build a case-insensitive set of user-supplied header names
+/// from an iterator of `(name, value)` pairs (e.g. `args.headers()`).
+pub(crate) fn user_header_names<'a, I>(headers: I) -> HashSet<String>
+where
+    I: IntoIterator<Item = (&'a String, &'a String)>,
+{
+    headers
+        .into_iter()
+        .map(|(name, _)| name.to_ascii_lowercase())
+        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -116,6 +142,7 @@ pub struct TileDownloader {
     pub retries: usize,
     pub retry_delay: Duration,
     pub tile_storage_folder: Option<PathBuf>,
+    pub(crate) user_header_names: HashSet<String>,
 }
 
 impl TileDownloader {
@@ -169,7 +196,7 @@ impl TileDownloader {
     }
 
     async fn download_image_bytes(&self, tile_spec: &TileSpec) -> Result<Vec<u8>, ZoomError> {
-        let headers = request_headers(&tile_spec.request);
+        let headers = effective_request_headers(&tile_spec.request, &self.user_header_names);
         let mut bytes = fetch_resource(
             &tile_spec.request.uri,
             &self.http_client,
@@ -299,7 +326,11 @@ pub fn default_headers() -> HashMap<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Request, TileDownloader, request_headers, tile_cache_path, tile_cache_paths};
+    use super::{
+        Request, TileDownloader, effective_request_headers, request_headers, tile_cache_path,
+        tile_cache_paths, user_header_names,
+    };
+    use std::collections::HashSet;
     use std::path::Path;
     use tokio::time::Duration;
 
@@ -345,6 +376,7 @@ mod tests {
             retries: 0,
             retry_delay: Duration::ZERO,
             tile_storage_folder: Some(directory.path().to_path_buf()),
+            user_header_names: HashSet::new(),
         };
         assert_eq!(
             downloader.read_from_tile_cache(&request).await,
@@ -368,5 +400,72 @@ mod tests {
             request_headers(&request),
             vec![("Accept".to_owned(), "image/png".to_owned())]
         );
+    }
+
+    #[test]
+    fn user_referer_overrides_automatic_referer_on_tile_requests() {
+        // Rectangular formats inject Referer = tile (0,0) URL. A CLI `-H "Referer: …"`
+        // must win over that per-request header (reqwest per-request headers
+        // override client defaults, so we filter the format header instead).
+        let mut request = Request::new("https://example.test/tile/1/1");
+        request.headers.insert(
+            "Referer".to_owned(),
+            "https://example.test/tile/0/0".to_owned(),
+        );
+        // No user header -> auto Referer survives
+        assert_eq!(
+            effective_request_headers(&request, &HashSet::new()),
+            vec![("Referer".to_owned(), "https://example.test/tile/0/0".to_owned())]
+        );
+        // User supplied Referer -> auto one is filtered out (client default wins)
+        let user = HashSet::from(["referer".to_owned()]);
+        assert_eq!(
+            effective_request_headers(&request, &user),
+            Vec::<(String, String)>::new()
+        );
+        // Case-insensitive: user `REFERER` also wins
+        let user_upper = HashSet::from(["REFERER".to_ascii_lowercase()]);
+        assert_eq!(
+            effective_request_headers(&request, &user_upper),
+            Vec::<(String, String)>::new()
+        );
+    }
+
+    #[test]
+    fn user_headers_override_yaml_headers_and_other_format_headers() {
+        // custom_yaml puts its YAML `headers` map on each tile request.
+        // CLI headers must win for any colliding name.
+        let mut request = Request::new("https://example.test/tile");
+        request.headers.insert("Referer".to_owned(), "https://auto.test".to_owned());
+        request
+            .headers
+            .insert("X-Custom".to_owned(), "from-yaml".to_owned());
+        request
+            .headers
+            .insert("User-Agent".to_owned(), "from-yaml".to_owned());
+        let user = HashSet::from(["referer".to_owned(), "x-custom".to_owned()]);
+        let filtered = effective_request_headers(&request, &user);
+        // Referer and X-Custom are filtered, User-Agent survives (not in user set)
+        assert!(!filtered.iter().any(|(k, _)| k.eq_ignore_ascii_case("Referer")));
+        assert!(!filtered.iter().any(|(k, _)| k.eq_ignore_ascii_case("X-Custom")));
+        assert!(filtered
+            .iter()
+            .any(|(k, v)| k == "User-Agent" && v == "from-yaml"));
+    }
+
+    #[test]
+    fn user_header_names_helper_is_case_insensitive() {
+        let a = "Referer".to_owned();
+        let b = "X-Custom".to_owned();
+        let c = "User-Agent".to_owned();
+        let set = user_header_names([(&a, &"v".to_owned()), (&b, &"v".to_owned())].into_iter());
+        assert!(set.contains("referer"));
+        assert!(set.contains("x-custom"));
+        assert!(!set.contains("user-agent"));
+        // Mixing cases still normalises
+        let d = "REFERER".to_owned();
+        let set2 = user_header_names([(&d, &"v".to_owned()), (&c, &"v".to_owned())].into_iter());
+        assert!(set2.contains("referer"));
+        assert!(set2.contains("user-agent"));
     }
 }
