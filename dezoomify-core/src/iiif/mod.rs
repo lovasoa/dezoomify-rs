@@ -193,10 +193,10 @@ fn catalog_from_info(url: &str, raw_info: &[u8]) -> Result<ImageCatalog, Discove
     }
     Ok(ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
         id: StableId::new("iiif:image"),
-        title: None,
         format: StableId::new("iiif"),
         levels,
         warnings,
+        ..Default::default()
     })]))
 }
 
@@ -270,13 +270,19 @@ fn levels_from_info(url: &str, mut image_info: ImageInfo) -> Vec<LevelDescriptor
                         };
                         LevelDescriptor {
                             id,
-                            title: None,
+                            title: Some(format!(
+                                "IIIF level {} (scale 1:{} {}×{} pixels)",
+                                tile_ordinal,
+                                scale_factor,
+                                source.image_size().x,
+                                source.image_size().y
+                            )),
                             size: Some(source.image_size()),
                             tile_size: Some(tile_size),
                             scale_factor: Some(scale_factor),
-                            has_overlapping_tiles: false,
                             plan: LevelPlan::Known(KnownTilePlan::rectangular(source)),
                             warnings: warnings.clone(),
+                            ..Default::default()
                         }
                     },
                 )

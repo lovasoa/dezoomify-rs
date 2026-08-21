@@ -40,7 +40,7 @@ impl DiscoverySession for BulkSession {
                 let text = std::str::from_utf8(&response.bytes).map_err(|error| {
                     DiscoveryError::Session(format!("failed to parse bulk list as UTF-8: {error}"))
                 })?;
-                let images = parse_text_urls(text)?;
+                let images = parse_text_urls_with_base(text, &self.uri)?;
                 if images.is_empty() {
                     return Err(DiscoveryError::Session(
                         "no valid URLs found in text file".into(),
@@ -83,6 +83,10 @@ struct ListedImage {
 }
 
 fn parse_text_urls(content: &str) -> Result<Vec<ListedImage>, DiscoveryError> {
+    parse_text_urls_with_base(content, "")
+}
+
+fn parse_text_urls_with_base(content: &str, base_uri: &str) -> Result<Vec<ListedImage>, DiscoveryError> {
     content
         .lines()
         .enumerate()
@@ -92,18 +96,52 @@ fn parse_text_urls(content: &str) -> Result<Vec<ListedImage>, DiscoveryError> {
         })
         .map(|(line_number, line)| {
             let mut parts = line.splitn(2, char::is_whitespace);
-            let uri = parts.next().unwrap_or_default();
-            validate_uri(uri, line_number)?;
+            let raw_uri = parts.next().unwrap_or_default();
+            validate_uri(raw_uri, line_number)?;
+            let uri = normalize_uri(raw_uri, base_uri);
             let title = parts
                 .next()
                 .filter(|title| !title.is_empty())
-                .map_or_else(|| title_from_uri(uri, line_number), str::to_owned);
+                .map_or_else(|| title_from_uri(&uri, line_number), str::to_owned);
             Ok(ListedImage {
-                uri: uri.to_owned(),
+                uri,
                 title,
             })
         })
         .collect()
+}
+
+fn normalize_uri(uri: &str, base_uri: &str) -> String {
+    if url::Url::parse(uri).is_ok()
+        || uri.contains("{{X}}")
+        || uri.contains("{{Y}}")
+        || uri.starts_with(['/', '.', '\\'])
+        || uri.contains(['/', '\\'])
+        || (uri.len() >= 2
+            && uri.as_bytes()[1] == b':'
+            && uri.as_bytes()[0].is_ascii_alphabetic())
+    {
+        return uri.to_owned();
+    }
+    if base_uri.is_empty() {
+        return uri.to_owned();
+    }
+    let base_path = if let Ok(url) = url::Url::parse(base_uri) {
+        url.path().to_owned()
+    } else {
+        base_uri.to_owned()
+    };
+    if let Some(slash) = base_path.rfind('/') {
+        let dir = &base_path[..=slash];
+        if let Ok(url) = url::Url::parse(base_uri) {
+            if let Ok(joined) = url.join(uri) {
+                return joined.to_string();
+            }
+            return format!("{dir}{uri}");
+        }
+        return format!("{dir}{uri}");
+    }
+    uri.to_owned()
 }
 
 fn validate_uri(input: &str, line: usize) -> Result<(), DiscoveryError> {
@@ -115,6 +153,7 @@ fn validate_uri(input: &str, line: usize) -> Result<(), DiscoveryError> {
         || (input.len() >= 2
             && input.as_bytes()[1] == b':'
             && input.as_bytes()[0].is_ascii_alphabetic())
+        || (input.contains('.') && !input.contains(' ') && !input.contains("://"))
     {
         return Ok(());
     }

@@ -70,6 +70,12 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
         .next()
         .unwrap_or(url)
         .into();
+    let base_name = base_url
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or("Zoomify");
     let (level_info, warnings) = properties.levels_with_warnings();
     let levels = level_info
         .into_iter()
@@ -85,13 +91,11 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
             };
             LevelDescriptor {
                 id: level.level_id.clone(),
-                title: None,
+                title: Some(format!("{base_name} Zoomify level {index} ({}×{} pixels)", size.x, size.y)),
                 size: Some(size),
                 tile_size: Some(tile_size),
-                scale_factor: None,
-                has_overlapping_tiles: false,
                 plan: LevelPlan::Known(KnownTilePlan::rectangular(level)),
-                warnings: Vec::new(),
+                ..Default::default()
             }
         })
         .collect();
@@ -107,6 +111,7 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
         format: StableId::new("zoomify"),
         levels,
         warnings,
+        ..Default::default()
     })]))
 }
 

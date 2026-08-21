@@ -70,15 +70,20 @@ impl DiscoverySession for DziSession {
 }
 
 fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
-    let parsed = serde_xml_rs::from_reader::<'_, DziFile, _>(contents)
+    let xml_result = serde_xml_rs::from_reader::<'_, DziFile, _>(contents);
+    let xml_err = xml_result.as_ref().err().map(|e| e.to_string());
+    let parsed = xml_result
         .ok()
         .into_iter()
         .chain(all_json::<DziFile>(contents))
         .collect::<Vec<_>>();
     if parsed.is_empty() {
-        return Err(DiscoveryError::Session(
-            "unable to parse DZI metadata".into(),
-        ));
+        let detail = xml_err
+            .map(|e| format!(": {e}"))
+            .unwrap_or_default();
+        return Err(DiscoveryError::Session(format!(
+            "unable to parse DZI metadata{detail}"
+        )));
     }
     let mut entries = Vec::new();
     for (image_index, image) in parsed.into_iter().enumerate() {
@@ -107,13 +112,12 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
             };
             LevelDescriptor {
                 id,
-                title: None,
+                title: Some(format!("DZI level {ordinal} ({}×{} pixels)", size.x, size.y)),
                 size: Some(size),
                 tile_size: Some(tile_size),
-                scale_factor: None,
                 has_overlapping_tiles: image.overlap > 0,
                 plan: LevelPlan::Known(KnownTilePlan::rectangular(level)),
-                warnings: Vec::new(),
+                ..Default::default()
             }
         })
         .collect();
@@ -128,7 +132,7 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
             title,
             format: StableId::new("deepzoom"),
             levels,
-            warnings: Vec::new(),
+            ..Default::default()
         }));
     }
     Ok(ImageCatalog::new(entries))

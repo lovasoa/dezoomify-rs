@@ -85,13 +85,22 @@ fn image_id(uri: &str) -> Option<String> {
         .map(|match_| match_.as_str().to_owned())
 }
 fn catalog(uri: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
-    let root: MetadataRoot = serde_json::from_slice(bytes)
-        .map_err(|error| DiscoveryError::Session(format!("invalid NYPL metadata: {error}")))?;
-    let metadata = root
-        .configs
-        .get("0")
-        .ok_or_else(|| DiscoveryError::Session("NYPL metadata contains no primary image".into()))?
-        .clone();
+    if bytes.is_empty() {
+        return Err(DiscoveryError::Session(
+            "No metadata found. This image is probably not tiled, and you can download it directly by right-clicking on it from your browser without any external tool.".into(),
+        ));
+    }
+    let root: MetadataRoot = serde_json::from_slice(bytes).map_err(|error| {
+        DiscoveryError::Session(format!(
+            "Failed to parse NYPL Image meta as json, got content(blank shows the site has no zoom function for this one):\n {}: {error}",
+            String::from_utf8_lossy(bytes).chars().take(200).collect::<String>()
+        ))
+    })?;
+    let metadata = root.configs.get("0").ok_or_else(|| {
+        DiscoveryError::Session(
+            "No metadata found. This image is probably not tiled, and you can download it directly by right-clicking on it from your browser without any external tool.".into(),
+        )
+    })?.clone();
     let id = uri
         .strip_prefix(META)
         .unwrap_or(uri)
@@ -110,23 +119,21 @@ fn catalog(uri: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
             };
             LevelDescriptor {
                 id: level_id,
-                title: None,
+                title: Some(format!("NYPL level {index} ({}×{} pixels)", size.x, size.y)),
                 size: Some(size),
                 tile_size: Some(Vec2d::square(metadata.tile_size)),
-                scale_factor: None,
                 has_overlapping_tiles: metadata.overlap > 0,
                 plan: LevelPlan::Known(KnownTilePlan::rectangular(source)),
-                warnings: Vec::new(),
+                ..Default::default()
             }
         })
         .collect();
     levels.sort_by_key(|level| level.size.map_or(0, Vec2d::area));
     Ok(ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
         id: StableId::new("nypl:image"),
-        title: None,
         format: StableId::new("nypl"),
         levels,
-        warnings: Vec::new(),
+        ..Default::default()
     })]))
 }
 

@@ -91,6 +91,22 @@ pub enum LevelPlan {
     Adaptive(Arc<dyn AdaptivePlan>),
 }
 
+impl Default for LevelPlan {
+    fn default() -> Self {
+        #[derive(Debug)]
+        struct EmptyPlan;
+        impl ReplayablePlan for EmptyPlan {
+            fn len(&self) -> u64 {
+                0
+            }
+            fn tile(&self, _ordinal: u64) -> Result<Option<TileSpec>, PlanError> {
+                Ok(None)
+            }
+        }
+        Self::Known(KnownTilePlan::new(EmptyPlan))
+    }
+}
+
 impl LevelPlan {
     #[must_use]
     pub fn start_program(&self) -> Box<dyn TileProgram> {

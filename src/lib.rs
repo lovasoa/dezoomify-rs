@@ -250,10 +250,23 @@ async fn discover_images(
     registry: &dezoomify_core::core::Registry,
     uri: &str,
 ) -> Result<ImageCatalog, String> {
-    let catalog = driver
-        .discover(registry, uri)
-        .await
-        .map_err(|error| error.to_string())?;
+    let catalog = driver.discover(registry, uri).await.map_err(|error| {
+        let mut msg = error.to_string();
+        if matches!(
+            error,
+            crate::native::NativeDiscoveryError::Discovery { source } if matches!(source, dezoomify_core::core::DiscoveryError::NoCandidateAccepted { .. })
+        ) || msg.contains("no discovery candidate accepted") {
+            msg.push_str(
+                "\n\nTried all of the dezoomers, none succeeded.\n\
+                dezoomify-rs expects a zoomable image meta-information file URL. \
+                To find this URL, you can use the dezoomify browser extension, which you can download at\n \
+                - https://lovasoa.github.io/dezoomify-extension/ \n\
+                If this doesn't help, then your image may be in a format that is not yet supported by dezoomify-rs.\n\
+                You can ask for a new format to be supported by opening a new issue on https://github.com/lovasoa/dezoomify-rs/issues",
+            );
+        }
+        msg
+    })?;
     Ok(catalog)
 }
 

@@ -90,19 +90,15 @@ fn catalog_from_yaml(bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
         format: StableId::new("custom"),
         levels: vec![LevelDescriptor {
             id: StableId::new("custom:level"),
-            title: None,
             size,
-            tile_size: None,
-            scale_factor: None,
-            has_overlapping_tiles: false,
             plan: LevelPlan::Known(KnownTilePlan::new(CustomPlan {
                 tile_set: yaml.tile_set,
                 headers: Arc::new(headers),
                 tile_count,
             })),
-            warnings: Vec::new(),
+            ..Default::default()
         }],
-        warnings: Vec::new(),
+        ..Default::default()
     })]))
 }
 

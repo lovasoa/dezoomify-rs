@@ -77,14 +77,16 @@ impl NativeDiscoveryDriver {
         mut operation: DiscoveryOperation,
     ) -> Result<ImageCatalog, NativeDiscoveryError> {
         loop {
-            let needs = operation.missing_resources()?;
-            if operation.is_complete() || needs.is_empty() {
+            if operation.is_complete() {
                 return operation.finish().map_err(Into::into);
             }
+            let Some(next) = operation.next_priority_need()? else {
+                return operation.finish().map_err(Into::into);
+            };
             // Drive again after every supplied resource so a successful,
             // higher-priority candidate can finish before unrelated candidate
             // metadata is acquired.
-            self.satisfy(&mut operation, needs[0].clone()).await?;
+            self.satisfy(&mut operation, next).await?;
         }
     }
 

@@ -47,15 +47,10 @@ impl DiscoverySession for GenericSession {
                         format: StableId::new("generic"),
                         levels: vec![LevelDescriptor {
                             id: level_id,
-                            title: None,
-                            size: None,
-                            tile_size: None,
-                            scale_factor: None,
-                            has_overlapping_tiles: false,
                             plan: LevelPlan::Adaptive(plan),
-                            warnings: Vec::new(),
+                            ..Default::default()
                         }],
-                        warnings: Vec::new(),
+                        ..Default::default()
                     }),
                 ])))
             }

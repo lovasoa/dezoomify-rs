@@ -122,7 +122,47 @@ pub struct LevelDescriptor {
     pub warnings: Vec<String>,
 }
 
+impl Default for LevelDescriptor {
+    fn default() -> Self {
+        Self {
+            id: StableId::new(""),
+            title: None,
+            size: None,
+            tile_size: None,
+            scale_factor: None,
+            has_overlapping_tiles: false,
+            plan: LevelPlan::default(),
+            warnings: Vec::new(),
+        }
+    }
+}
+
 impl LevelDescriptor {
+    #[must_use]
+    pub fn new(id: StableId, plan: LevelPlan) -> Self {
+        Self {
+            id,
+            plan,
+            ..Self::default()
+        }
+    }
+
+    #[must_use]
+    pub fn known(
+        id: StableId,
+        size: Option<Vec2d>,
+        tile_size: Option<Vec2d>,
+        plan: LevelPlan,
+    ) -> Self {
+        Self {
+            id,
+            size,
+            tile_size,
+            plan,
+            ..Self::default()
+        }
+    }
+
     /// Human-readable label for interactive pickers.
     ///
     /// Shows the level title (or stable id as a fallback) followed by the
@@ -157,6 +197,30 @@ pub struct ImageDescriptor {
     pub format: StableId,
     pub levels: Vec<LevelDescriptor>,
     pub warnings: Vec<String>,
+}
+
+impl Default for ImageDescriptor {
+    fn default() -> Self {
+        Self {
+            id: StableId::new(""),
+            title: None,
+            format: StableId::new(""),
+            levels: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+}
+
+impl ImageDescriptor {
+    #[must_use]
+    pub fn new(id: StableId, format: StableId, levels: Vec<LevelDescriptor>) -> Self {
+        Self {
+            id,
+            format,
+            levels,
+            ..Self::default()
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

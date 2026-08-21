@@ -91,23 +91,20 @@ fn catalog(uri: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
             };
             LevelDescriptor {
                 id,
-                title: None,
+                title: Some(format!("IIP level {index} ({}×{} pixels)", size.x, size.y)),
                 size: Some(size),
                 tile_size: Some(metadata.tile_size),
-                scale_factor: None,
-                has_overlapping_tiles: false,
                 plan: LevelPlan::Known(KnownTilePlan::rectangular(source)),
-                warnings: Vec::new(),
+                ..Default::default()
             }
         })
         .collect();
     levels.sort_by_key(|level| level.size.map_or(0, Vec2d::area));
     Ok(ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
         id: StableId::new("iip:image"),
-        title: None,
         format: StableId::new("iipimage"),
         levels,
-        warnings: Vec::new(),
+        ..Default::default()
     })]))
 }
 

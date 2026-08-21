@@ -9,6 +9,7 @@ use regex::Regex;
 
 use krpano_decrypt::{decrypt_xml, is_encrypted_xml};
 use krpano_metadata::{KrpanoMetadata, TemplateString, TemplateStringPart, XY};
+use log::{debug, info, warn};
 
 use crate::Vec2d;
 use crate::core::discovery::DiscoveryEvent;
@@ -83,6 +84,7 @@ impl DiscoverySession for KrpanoSession {
 
 impl KrpanoSession {
     fn handle_failure(&mut self, message: &str) -> Result<DiscoveryStep, DiscoveryError> {
+        debug!("krpano: resource failure: {}", message);
         let state = std::mem::replace(&mut self.state, SessionState::Complete);
         match state {
             SessionState::NeedViewerJs {
@@ -90,7 +92,9 @@ impl KrpanoSession {
                 xml_contents,
                 mut remaining_js_uris,
             } => {
+                warn!("krpano: viewer JS fetch failed for {}: {}", xml_uri, message);
                 if let Some(next_js_uri) = next_js_candidate(&mut remaining_js_uris) {
+                    debug!("krpano: trying next viewer JS candidate {}", next_js_uri);
                     self.state = SessionState::NeedViewerJs {
                         xml_uri,
                         xml_contents,
@@ -138,7 +142,9 @@ impl KrpanoSession {
     }
 
     fn handle_initial(&mut self, contents: &[u8]) -> Result<DiscoveryStep, DiscoveryError> {
+        debug!("krpano: handling initial response for {}", self.input_uri);
         if !looks_like_krpano_xml(contents) && looks_like_viewer_js(contents) {
+            debug!("krpano: initial response looks like viewer JS, requesting tour.xml sibling");
             let xml_uri = sibling_uri(&self.input_uri, "tour.xml");
             self.state = SessionState::NeedXml {
                 xml_uri: xml_uri.clone(),
@@ -149,12 +155,15 @@ impl KrpanoSession {
         }
 
         if !looks_like_krpano_xml(contents) && looks_like_krpano_html(contents) {
+            debug!("krpano: initial response looks like HTML, extracting XML and JS candidates");
             let html = String::from_utf8_lossy(contents);
             let remaining_js_uris = extract_js_candidates_from_html(&html, &self.input_uri);
+            debug!("krpano: found {} JS candidates in HTML", remaining_js_uris.len());
             let xml_uri = extract_xml_from_embedpano(&html).map_or_else(
                 || sibling_uri(&self.input_uri, "tour.xml"),
                 |reference| resolve_relative(&self.input_uri, &reference),
             );
+            debug!("krpano: resolved XML URI {}", xml_uri);
             self.state = SessionState::NeedXml {
                 xml_uri: xml_uri.clone(),
                 viewer_js: Vec::new(),
@@ -164,9 +173,12 @@ impl KrpanoSession {
         }
 
         if is_encrypted_xml(contents) {
+            debug!("krpano: initial XML is encrypted, attempting decryption without viewer JS");
             if let Ok(decrypted) = decrypt_xml(contents, None) {
+                debug!("krpano: decrypted XML without viewer JS");
                 return self.complete(&self.input_uri.clone(), &decrypted);
             }
+            debug!("krpano: decryption without viewer JS failed, trying viewer JS candidates");
             let mut candidates = viewer_js_candidates_for_xml(&self.input_uri);
             let viewer_uri = next_js_candidate(&mut candidates)
                 .unwrap_or_else(|| sibling_uri(&self.input_uri, "tour.js"));
@@ -179,6 +191,7 @@ impl KrpanoSession {
         }
 
         if looks_like_krpano_xml(contents) {
+            debug!("krpano: initial response is plain XML, completing");
             return self.complete(&self.input_uri.clone(), contents);
         }
 
@@ -195,17 +208,24 @@ impl KrpanoSession {
         mut remaining_js_uris: Vec<String>,
     ) -> Result<DiscoveryStep, DiscoveryError> {
         if !is_encrypted_xml(contents) {
+            debug!("krpano: XML at {} is not encrypted, completing", xml_uri);
             return self.complete(&xml_uri, contents);
         }
+        debug!("krpano: XML at {} is encrypted, attempting decryption", xml_uri);
 
         match decrypt_xml(contents, (!viewer_js.is_empty()).then_some(viewer_js)) {
-            Ok(decrypted) => self.complete(&xml_uri, &decrypted),
+            Ok(decrypted) => {
+                debug!("krpano: successfully decrypted XML at {}", xml_uri);
+                self.complete(&xml_uri, &decrypted)
+            },
             Err(error) => {
+                warn!("krpano: failed to decrypt XML at {}: {}", xml_uri, error);
                 let Some(viewer_uri) = next_js_candidate(&mut remaining_js_uris) else {
                     return Err(DiscoveryError::Session(format!(
                         "unable to decrypt krpano XML: {error}"
                     )));
                 };
+                debug!("krpano: trying next viewer JS candidate {}", viewer_uri);
                 self.state = SessionState::NeedViewerJs {
                     xml_uri,
                     xml_contents: contents.to_vec(),
@@ -223,15 +243,22 @@ impl KrpanoSession {
         xml_contents: Vec<u8>,
         mut remaining_js_uris: Vec<String>,
     ) -> Result<DiscoveryStep, DiscoveryError> {
+        debug!("krpano: received viewer JS for {}, attempting decryption", xml_uri);
         let viewer_js = extract_viewer_js(contents).unwrap_or_else(|| contents.to_vec());
+        debug!("krpano: extracted {} bytes of viewer JS", viewer_js.len());
         match decrypt_xml(&xml_contents, Some(&viewer_js)) {
-            Ok(decrypted) => self.complete(&xml_uri, &decrypted),
+            Ok(decrypted) => {
+                info!("krpano: successfully decrypted XML using viewer JS");
+                self.complete(&xml_uri, &decrypted)
+            },
             Err(error) => {
+                warn!("krpano: decryption failed with viewer JS: {}", error);
                 let Some(viewer_uri) = next_js_candidate(&mut remaining_js_uris) else {
                     return Err(DiscoveryError::Session(format!(
                         "unable to decrypt krpano XML: {error}"
                     )));
                 };
+                debug!("krpano: trying next viewer JS candidate {}", viewer_uri);
                 self.state = SessionState::NeedViewerJs {
                     xml_uri,
                     xml_contents,
@@ -524,10 +551,8 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
                         title: level_title(&global_title, &name, &face),
                         size: Some(size),
                         tile_size: Some(tile_size),
-                        scale_factor: None,
-                        has_overlapping_tiles: false,
                         plan: LevelPlan::Known(KnownTilePlan::rectangular(source)),
-                        warnings: Vec::new(),
+                        ..Default::default()
                     });
                 }
             }
@@ -539,6 +564,7 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
             format: StableId::new("krpano"),
             levels,
             warnings,
+            ..Default::default()
         }));
     }
     Ok(ImageCatalog::new(entries))
@@ -558,7 +584,7 @@ fn face_label(shape: &str, side: &str) -> String {
 }
 
 fn level_title(global: &str, scene: &str, face: &str) -> Option<String> {
-    let title = [global, scene, face]
+    let title = ["Krpano", global, scene, face]
         .into_iter()
         .filter(|part| !part.is_empty())
         .join(" ");

@@ -700,6 +700,7 @@ dependencies = [
  "itertools 0.15.0",
  "json5",
  "krpano-decrypt",
+ "log",
  "regex",
  "serde",
  "serde-xml-rs",

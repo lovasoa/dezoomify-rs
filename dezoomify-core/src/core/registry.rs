@@ -111,6 +111,19 @@ impl Registry {
         &self,
         input: impl Into<DiscoveryInput>,
     ) -> Result<DiscoveryOperation, RegistryError> {
+        self.start_with_limits(input, DiscoveryLimits::default())
+    }
+
+    /// Start independent parser state with explicit operation limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns registration errors before any program executes.
+    pub fn start_with_limits(
+        &self,
+        input: impl Into<DiscoveryInput>,
+        limits: DiscoveryLimits,
+    ) -> Result<DiscoveryOperation, RegistryError> {
         self.validate()?;
         let input = input.into();
         let mut programs = self.programs.clone();
@@ -125,7 +138,7 @@ impl Registry {
                 .into_iter()
                 .map(|registered| (registered.id, registered.program))
                 .collect(),
-            DiscoveryLimits::default(),
+            limits,
         ))
     }
 }

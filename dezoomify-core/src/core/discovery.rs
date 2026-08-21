@@ -255,6 +255,31 @@ impl DiscoveryOperation {
             .collect())
     }
 
+    /// Return the outstanding resource needed by the highest-priority waiting candidate.
+    ///
+    /// When candidates wait on different URIs, this picks the resource of the
+    /// first waiting candidate in registry order, preserving depth-first
+    /// priority. If no candidate is waiting, falls back to the first
+    /// outstanding request.
+    pub fn next_priority_need(&mut self) -> Result<Option<ResourceNeed>, DiscoveryError> {
+        self.drive()?;
+        for candidate in &self.candidates {
+            if let CandidateState::Waiting(id) = candidate.state {
+                if !self.outcomes.contains_key(&id) {
+                    if let Some(need) = self.requests.get(&id).cloned() {
+                        return Ok(Some(need));
+                    }
+                }
+            }
+        }
+        Ok(self
+            .requests
+            .iter()
+            .filter(|(id, _)| !self.outcomes.contains_key(id))
+            .map(|(_, need)| need.clone())
+            .next())
+    }
+
     /// Supply successfully acquired bytes.
     ///
     /// # Errors
@@ -363,9 +388,16 @@ impl DiscoveryOperation {
     fn apply_step(&mut self, index: usize, step: DiscoveryStep) -> Result<(), DiscoveryError> {
         match step {
             DiscoveryStep::Need(request) => {
-                self.candidates[index].state = CandidateState::Waiting(
-                    self.register_request(request)?,
-                );
+                match self.register_request(request) {
+                    Ok(id) => self.candidates[index].state = CandidateState::Waiting(id),
+                    Err(DiscoveryError::ResourceLimitExceeded) => {
+                        self.reject_candidate(
+                            index,
+                            DiscoveryDiagnostic::from("discovery resource limit exceeded"),
+                        );
+                    }
+                    Err(error) => return Err(error),
+                }
             }
             DiscoveryStep::Complete(catalog) => {
                 let catalog = catalog
@@ -568,5 +600,217 @@ mod tests {
         assert!(first.is_complete());
         assert!(!second.is_complete());
         assert_eq!(second.missing_resources().unwrap().len(), 1);
+    }
+
+    struct ChainProgram {
+        first: &'static str,
+        second: &'static str,
+    }
+
+    struct ChainSession {
+        first: &'static str,
+        second: &'static str,
+        state: u8,
+    }
+
+    impl DiscoveryProgram for ChainProgram {
+        fn start(&self, _: &DiscoveryInput) -> Box<dyn DiscoverySession> {
+            Box::new(ChainSession {
+                first: self.first,
+                second: self.second,
+                state: 0,
+            })
+        }
+    }
+
+    impl DiscoverySession for ChainSession {
+        fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
+            match (self.state, event) {
+                (0, DiscoveryEvent::Start) => {
+                    self.state = 1;
+                    Ok(DiscoveryStep::Need(ResourceRequest::new(
+                        self.first,
+                    )))
+                }
+                (1, DiscoveryEvent::Resource(ResourceOutcome::Response(_))) => {
+                    self.state = 2;
+                    Ok(DiscoveryStep::Need(ResourceRequest::new(
+                        self.second,
+                    )))
+                }
+                (2, DiscoveryEvent::Resource(ResourceOutcome::Response(_))) => {
+                    Ok(DiscoveryStep::Complete(ImageCatalog::default()))
+                }
+                _ => Ok(DiscoveryStep::Reject("unexpected".into())),
+            }
+        }
+    }
+
+    struct SingleProgram(&'static str);
+    struct SingleSession {
+        uri: &'static str,
+        requested: bool,
+    }
+    impl DiscoveryProgram for SingleProgram {
+        fn start(&self, _: &DiscoveryInput) -> Box<dyn DiscoverySession> {
+            Box::new(SingleSession {
+                uri: self.0,
+                requested: false,
+            })
+        }
+    }
+    impl DiscoverySession for SingleSession {
+        fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
+            match event {
+                DiscoveryEvent::Start if !self.requested => {
+                    self.requested = true;
+                    Ok(DiscoveryStep::Need(ResourceRequest::new(
+                        self.uri,
+                    )))
+                }
+                DiscoveryEvent::Resource(ResourceOutcome::Response(_)) => {
+                    Ok(DiscoveryStep::Complete(ImageCatalog::default()))
+                }
+                _ => Ok(DiscoveryStep::Reject("unexpected".into())),
+            }
+        }
+    }
+
+    #[test]
+    fn priority_scheduling_fetches_higher_priority_chain_first() {
+        let mut registry = Registry::new();
+        registry.register(
+            "high",
+            Priority(0),
+            Arc::new(ChainProgram {
+                first: "memory://high1",
+                second: "memory://high2",
+            }),
+        );
+        registry.register(
+            "low",
+            Priority(1),
+            Arc::new(SingleProgram("memory://low1")),
+        );
+
+        let mut operation = registry.start("memory://root").unwrap();
+        let needs = operation.missing_resources().unwrap();
+        assert_eq!(needs.len(), 2);
+        assert!(needs.iter().any(|n| n.request.uri == "memory://high1"));
+        assert!(needs.iter().any(|n| n.request.uri == "memory://low1"));
+        let next = operation.next_priority_need().unwrap().unwrap();
+        assert_eq!(next.request.uri, "memory://high1");
+        provide_response(&mut operation, next.id, b"");
+        let needs = operation.missing_resources().unwrap();
+        assert_eq!(needs.len(), 2);
+        let prio = operation.next_priority_need().unwrap().unwrap();
+        assert_eq!(
+            prio.request.uri, "memory://high2",
+            "higher-priority second request must be fetched before lower-priority first"
+        );
+        provide_response(&mut operation, prio.id, b"");
+        assert!(operation.is_complete());
+    }
+
+    #[test]
+    fn transition_limit_is_enforced() {
+        struct LoopProgram;
+        struct LoopSession(usize);
+        impl DiscoveryProgram for LoopProgram {
+            fn start(&self, _: &DiscoveryInput) -> Box<dyn DiscoverySession> {
+                Box::new(LoopSession(0))
+            }
+        }
+        impl DiscoverySession for LoopSession {
+            fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
+                match event {
+                    DiscoveryEvent::Start => Ok(DiscoveryStep::Need(ResourceRequest::new(
+                        format!("memory://loop{}", self.0),
+                    ))),
+                    DiscoveryEvent::Resource(ResourceOutcome::Response(_)) => {
+                        self.0 += 1;
+                        Ok(DiscoveryStep::Need(ResourceRequest::new(
+                            format!("memory://loop{}", self.0),
+                        )))
+                    }
+                    _ => Ok(DiscoveryStep::Reject("done".into())),
+                }
+            }
+        }
+        let mut registry = Registry::new();
+        registry.register("loop", Priority(0), Arc::new(LoopProgram));
+        let limits = DiscoveryLimits {
+            transitions: 3,
+            ..Default::default()
+        };
+        let mut operation = registry.start_with_limits("memory://root", limits).unwrap();
+        let mut result = Ok(());
+        for _ in 0..5 {
+            let needs = operation.missing_resources().unwrap();
+            if needs.is_empty() {
+                break;
+            }
+            result = operation.provide(ResourceResponse {
+                id: needs[0].id,
+                bytes: vec![],
+            });
+            if result.is_err() {
+                break;
+            }
+        }
+        assert!(matches!(result, Err(DiscoveryError::TransitionLimitExceeded)));
+    }
+
+    #[test]
+    fn resource_limit_rejects_offending_candidate_instead_of_aborting() {
+        let mut registry = Registry::new();
+        registry.register("a", Priority(0), Arc::new(SingleProgram("memory://a")));
+        registry.register("b", Priority(1), Arc::new(SingleProgram("memory://b")));
+        registry.register("c", Priority(2), Arc::new(SingleProgram("memory://c")));
+        let limits = DiscoveryLimits {
+            resources: 2,
+            ..Default::default()
+        };
+        let mut operation = registry.start_with_limits("memory://root", limits).unwrap();
+        let needs = operation.missing_resources().unwrap();
+        assert_eq!(needs.len(), 2);
+        assert!(operation
+            .diagnostics
+            .iter()
+            .any(|(id, msg)| id == "c" && msg.message.contains("resource limit")));
+        for need in needs {
+            operation
+                .provide(ResourceResponse {
+                    id: need.id,
+                    bytes: vec![],
+                })
+                .unwrap();
+        }
+        assert!(operation.is_complete());
+    }
+
+    #[test]
+    fn retained_bytes_limit_is_enforced() {
+        let mut registry = Registry::new();
+        registry.register(
+            "one",
+            Priority(0),
+            need_program("memory://meta", NeedResult::Complete),
+        );
+        let limits = DiscoveryLimits {
+            retained_bytes: 10,
+            ..Default::default()
+        };
+        let mut operation = registry.start_with_limits("memory://root", limits).unwrap();
+        let needs = operation.missing_resources().unwrap();
+        assert_eq!(needs.len(), 1);
+        let large = vec![0u8; 20];
+        let err = operation
+            .provide(ResourceResponse {
+                id: needs[0].id,
+                bytes: large,
+            })
+            .unwrap_err();
+        assert_eq!(err, DiscoveryError::MetadataSizeLimitExceeded);
     }
 }

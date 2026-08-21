@@ -107,10 +107,8 @@ fn catalog(page: &Arc<PageInfo>, bytes: &[u8]) -> Result<ImageCatalog, Discovery
                 title: Some(page.name.clone()),
                 size: Some(size),
                 tile_size: Some(source.tile_size),
-                scale_factor: None,
-                has_overlapping_tiles: false,
                 plan: LevelPlan::Known(KnownTilePlan::rectangular(source)),
-                warnings: Vec::new(),
+                ..Default::default()
             }
         })
         .collect();
@@ -120,7 +118,7 @@ fn catalog(page: &Arc<PageInfo>, bytes: &[u8]) -> Result<ImageCatalog, Discovery
         title: Some(page.name.clone()),
         format: StableId::new("google_arts_and_culture"),
         levels,
-        warnings: Vec::new(),
+        ..Default::default()
     })]))
 }
 #[derive(Debug)]
