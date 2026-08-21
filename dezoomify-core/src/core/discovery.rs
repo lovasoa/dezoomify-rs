@@ -167,7 +167,7 @@ pub fn erase<T: DezoomerMeta + 'static>(input: &DiscoveryInput) -> Box<dyn Dezoo
 
 /// The single declaration point for a format: its name, URL hints, and
 /// constructor, all derived from a concrete [`DezoomerMeta`] type.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct DezoomerSpec {
     pub name: &'static str,
     pub url_hints: &'static [&'static str],
@@ -183,6 +183,12 @@ impl DezoomerSpec {
             url_hints: T::URL_HINTS,
             start: erase::<T>,
         }
+    }
+}
+
+impl PartialEq for DezoomerSpec {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
     }
 }
 

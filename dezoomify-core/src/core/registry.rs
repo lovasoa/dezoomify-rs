@@ -70,7 +70,7 @@ fn preferred_name(uri: &str) -> Option<&'static DezoomerSpec> {
 #[must_use]
 pub fn default_registry(uri: &str) -> Registry {
     let preferred = preferred_name(uri);
-    let is_other = |d| !preferred.is_some_and(|p| std::ptr::eq(p, *d));
+    let is_other = |&b: &&DezoomerSpec| !preferred.is_some_and(|d| b == d);
     let others = BUILTINS.iter().filter(is_other);
     let specs = preferred.iter().copied().chain(others).copied().collect();
     Registry { specs }
