@@ -11,6 +11,7 @@ use crate::core::{
 };
 use std::sync::Arc;
 use tile_info::{PageInfo, TileInfo};
+pub(crate) mod decryption;
 mod tile_info;
 mod url;
 
@@ -148,7 +149,7 @@ impl RectangularSource for GapLevel {
         Request::new(url::compute_url(&self.page, cell.x, cell.y, self.z))
     }
     fn processing(&self) -> ProcessingRecipe {
-        ProcessingRecipe::Named(StableId::new("google-arts-decrypt"))
+        ProcessingRecipe::GoogleArtsDecrypt
     }
 }
 
@@ -240,10 +241,7 @@ mod tests {
             panic!("Google Arts geometry is known");
         };
         let tile = plan.cursor().take_ready(1).unwrap().unwrap().pop().unwrap();
-        assert_eq!(
-            tile.processing,
-            ProcessingRecipe::Named(StableId::new("google-arts-decrypt"))
-        );
+        assert_eq!(tile.processing, ProcessingRecipe::GoogleArtsDecrypt);
     }
 
     #[test]
@@ -277,10 +275,7 @@ mod tests {
         assert_eq!(first.destination, Vec2d::default());
         assert_eq!(first.expected_size, Some(Vec2d { x: 512, y: 512 }));
         assert!(first.request.uri.contains("=x0-y0-z4-t"));
-        assert_eq!(
-            first.processing,
-            ProcessingRecipe::Named(StableId::new("google-arts-decrypt"))
-        );
+        assert_eq!(first.processing, ProcessingRecipe::GoogleArtsDecrypt);
         let last = plan.tile(87).unwrap().unwrap();
         assert_eq!(last.destination, Vec2d { x: 5120, y: 3584 });
         assert_eq!(last.expected_size, Some(Vec2d { x: 316, y: 496 }));

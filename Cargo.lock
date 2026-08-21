@@ -691,7 +691,9 @@ dependencies = [
 name = "dezoomify-core"
 version = "2.18.1"
 dependencies = [
+ "aes",
  "base64",
+ "cbc",
  "custom_error",
  "evalexpr",
  "hmac",
@@ -711,9 +713,7 @@ dependencies = [
 name = "dezoomify-rs"
 version = "2.18.1"
 dependencies = [
- "aes",
  "base64",
- "cbc",
  "clap",
  "colour",
  "criterion",
@@ -723,7 +723,6 @@ dependencies = [
  "evalexpr",
  "fixedbitset",
  "futures",
- "hmac",
  "human-panic",
  "image",
  "image_hasher",

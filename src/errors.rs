@@ -3,7 +3,7 @@ use std::fmt;
 
 use crate::encoder::tile_buffer::TileBufferMsg;
 use custom_error::custom_error;
-use dezoomify_core::core::TileSpec;
+use dezoomify_core::core::{ProcessingError, TileSpec};
 use reqwest::{self, header};
 use tokio::sync::mpsc::error::SendError;
 
@@ -59,10 +59,20 @@ impl From<reqwest::Error> for ZoomError {
     }
 }
 
+impl From<ProcessingError> for ZoomError {
+    fn from(source: ProcessingError) -> Self {
+        match source {
+            ProcessingError::Unsupported { name } => Self::UnsupportedProcessingRecipe { name },
+            source @ ProcessingError::GoogleArtsDecrypt { .. } => Self::PostProcessing {
+                source: Box::new(source),
+            },
+        }
+    }
+}
+
 custom_error! {
     pub BufferToImageError
     Image{source: image::ImageError} = "invalid image error: {source}",
-    PostProcessing{e: Box<dyn Error + Send>} = "unable to process the downloaded tile: {e}",
 }
 
 pub fn image_error_to_io_error(err: image::ImageError) -> std::io::Error {

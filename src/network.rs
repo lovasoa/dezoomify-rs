@@ -14,7 +14,6 @@ use tokio::time::Duration;
 
 use crate::arguments::Arguments;
 use crate::binary_display::display_bytes;
-use crate::errors::BufferToImageError;
 use crate::errors::{TileDownloadError, ZoomError};
 use dezoomify_core::core::{ProcessingRecipe, Request, TileSpec};
 
@@ -180,19 +179,12 @@ impl TileDownloader {
         )
         .await?
         .bytes;
-        match &tile_spec.processing {
+        match tile_spec.processing.clone() {
             ProcessingRecipe::None => {}
-            ProcessingRecipe::Named(name) if name.as_str() == "google-arts-decrypt" => {
-                bytes = tokio::task::spawn_blocking(move || {
-                    crate::native::decrypt_google_arts_tile(bytes)
-                        .map_err(|e| BufferToImageError::PostProcessing { e })
-                })
-                .await??;
-            }
-            ProcessingRecipe::Named(name) => {
-                return Err(ZoomError::UnsupportedProcessingRecipe {
-                    name: name.to_string(),
-                });
+            recipe => {
+                bytes = tokio::task::spawn_blocking(move || recipe.apply(bytes))
+                    .await
+                    .map_err(ZoomError::from)??;
             }
         }
         Ok(bytes)

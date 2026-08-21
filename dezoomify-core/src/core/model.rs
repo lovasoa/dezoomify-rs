@@ -80,10 +80,19 @@ impl Region {
     }
 }
 
-/// A byte-processing operation named by the core and implemented by an application.
+/// A byte-processing operation applied to a fetched tile payload before it
+/// is decoded as an image.
+///
+/// Recipes with a first-class variant are implemented by
+/// [`ProcessingRecipe::apply`]. [`ProcessingRecipe::Named`] remains an
+/// extension point for applications that inject their own processing.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ProcessingRecipe {
     None,
+    /// Strips Google Arts & Culture tile encryption (see
+    /// `google_arts_and_culture::decryption`).
+    GoogleArtsDecrypt,
+    /// An application-provided operation identified by a stable name.
     Named(StableId),
 }
 

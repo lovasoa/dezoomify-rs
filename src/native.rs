@@ -5,8 +5,6 @@
 //! local filesystem.  Keeping the loop here also lets tests drive discovery
 //! with a different resolver without pulling a runtime into the core.
 
-use std::error::Error;
-
 use crate::ZoomError;
 use crate::network::{FetchedResource, fetch_resource, request_headers};
 use custom_error::custom_error;
@@ -15,16 +13,6 @@ use dezoomify_core::core::discovery::{
 };
 use dezoomify_core::core::model::{ImageCatalog, Request};
 use dezoomify_core::core::registry::{Registry, RegistryError};
-
-#[path = "google_arts_decryption.rs"]
-mod google_arts_decryption;
-
-pub(crate) fn decrypt_google_arts_tile(
-    data: Vec<u8>,
-) -> Result<Vec<u8>, Box<dyn Error + Send + 'static>> {
-    google_arts_decryption::decrypt(data)
-        .map_err(|error| Box::new(error) as Box<dyn Error + Send + 'static>)
-}
 
 // Errors which can occur while the native application drives discovery.
 custom_error! {pub NativeDiscoveryError

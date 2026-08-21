@@ -6,6 +6,7 @@
 pub mod adaptive;
 pub mod discovery;
 pub mod model;
+pub mod processing;
 pub mod registry;
 pub mod tile_plan;
 pub mod uri;
@@ -21,6 +22,7 @@ pub use model::{
     CatalogEntry, DeferredImage, ImageCatalog, ImageDescriptor, LevelDescriptor, ProcessingRecipe,
     Provenance, ProvenanceStep, Request, StableId, TileId, TileRole, TileSpec,
 };
+pub use processing::ProcessingError;
 pub use registry::{Priority, Registry};
 pub use tile_plan::{KnownTilePlan, LevelPlan, PlanError, ReplayablePlan};
 pub use uri::resolve_relative;

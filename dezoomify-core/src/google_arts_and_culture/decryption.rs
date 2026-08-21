@@ -1,23 +1,26 @@
-//! Native processing for Google Arts & Culture encrypted tile payloads.
+//! Pure decryption of Google Arts & Culture encrypted tile payloads.
+//!
+//! Google Arts serves image tiles whose header and footer are stored in
+//! plaintext while a middle chunk is AES-128-CBC encrypted with a fixed key.
+//! [`decrypt`] strips the framing and returns the reassembled plaintext
+//! payload, ready for normal image decoding.
 
-use crate::binary_display::display_bytes;
 use aes::cipher::{BlockModeDecrypt, KeyIvInit, block_padding::NoPadding};
 use custom_error::custom_error;
-use log::trace;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 
-/// Decrypt an encrypted image
+/// Decrypt an encrypted image, returning the original bytes when the payload
+/// does not carry the encryption marker.
 pub fn decrypt(encrypted: Vec<u8>) -> Result<Vec<u8>, InvalidEncryptedImage> {
     let mut c = Cursor::new(encrypted);
 
     let marker = read_u32_as_u64_le(&mut c)?;
     if marker != 0x0A_0A_0A_0A {
         // The file is not encrypted
-        trace!("Image is not encrypted (marker: 0x{marker:08x})");
         return Ok(c.into_inner());
     }
-    trace!("Found encrypted image marker");
 
     let end_position = c.seek(SeekFrom::End(-4))?;
     let header_size = read_u32_as_u64_le(&mut c)?;
@@ -36,17 +39,7 @@ pub fn decrypt(encrypted: Vec<u8>) -> Result<Vec<u8>, InvalidEncryptedImage> {
     }
     let mut encrypted = Vec::new();
     c = read_size(c, &mut encrypted, encrypted_size)?;
-    trace!(
-        "Encrypted data ({} bytes): {}",
-        encrypted.len(),
-        display_bytes(&encrypted[..encrypted.len().min(64)])
-    );
     let decrypted_chunk = aes_decrypt_buffer(&mut encrypted)?;
-    trace!(
-        "Decrypted data ({} bytes): {}",
-        decrypted_chunk.len(),
-        display_bytes(&decrypted_chunk[..decrypted_chunk.len().min(64)])
-    );
     decrypted.write_all(decrypted_chunk)?;
 
     let footer_size = end_position - encrypted_size - 4 - header_size - 4;
