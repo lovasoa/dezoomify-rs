@@ -40,11 +40,10 @@ with `next_priority_need` (or all outstanding resources at once with
 `provide_failure`, then call `finish`.
 
 Requests are deduplicated by canonical `Request` (URI and ordered headers)
-within one operation. A response fans out to every
-candidate waiting for it. Request IDs are stable within an operation and the
-registry rejects duplicate stable IDs or ambiguous format/rule precedence.
-Candidate-local parse errors reject only that candidate, allowing automatic
-discovery to continue.
+within one operation. A response fans out to every candidate waiting for it.
+Request IDs are stable within an operation and the registry rejects duplicate
+stable IDs or ambiguous format/rule precedence. Candidate-local parse errors
+reject only that candidate, allowing automatic discovery to continue.
 
 A catalog may contain `CatalogEntry::Deferred` values. This deliberately
 preserves current manifest and bulk behavior: the application can select one
@@ -61,8 +60,8 @@ the helper supplies row-major request and placement geometry.
 
 The application can create independent cursors with `plan.cursor()` and pull
 bounded batches using `take_ready`. A `TileSpec` states the request,
-destination origin, optional expected dimensions, and processing recipe; it never
-commands the application to fetch or decode.
+destination origin, optional expected dimensions, and processing recipe; it
+never commands the application to fetch or decode.
 
 Adaptive formats use an operation-owned adaptive `TileProgram` instead. The
 application requests a bounded ready batch and submits observations keyed by

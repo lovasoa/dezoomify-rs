@@ -20,7 +20,6 @@ custom_error! {
     Image{source: image::ImageError} = "invalid image error: {source}",
     PostProcessing{source: Box<dyn Error>} = "unable to process the downloaded tile: {source}",
     Io{source: std::io::Error} = "Input/Output error: {source}",
-    Yaml{source: serde_yaml::Error} = "Invalid YAML configuration file: {source}",
     TileCopyError{x:u32, y:u32, twidth:u32, theight:u32, width:u32, height:u32} =
                                 "Unable to copy a {twidth}x{theight} tile \
                                  at position {x},{y} \
