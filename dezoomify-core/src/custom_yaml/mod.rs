@@ -18,7 +18,7 @@ mod tile_set;
 mod variable;
 
 fn default_headers() -> HashMap<String, String> {
-    serde_yaml::from_str(include_str!("../default_headers.yaml"))
+    serde_yaml::from_str(include_str!("../../../src/default_headers.yaml"))
         .expect("bundled default headers must be valid YAML")
 }
 
@@ -152,11 +152,11 @@ mod tests {
 
     #[test]
     fn parses_bundled_example_headers() {
-        let yaml_path = format!("{}/tiles.yaml", env!("CARGO_MANIFEST_DIR"));
+        let yaml_path = format!("{}/../tiles.yaml", env!("CARGO_MANIFEST_DIR"));
         let yaml: CustomYamlTiles =
             serde_yaml::from_reader(std::fs::File::open(yaml_path).unwrap()).unwrap();
         assert!(yaml.headers.contains_key("Referer"));
-        let catalog = catalog_from_yaml(include_bytes!("../../tiles.yaml")).unwrap();
+        let catalog = catalog_from_yaml(include_bytes!("../../../tiles.yaml")).unwrap();
         let CatalogEntry::Ready(image) = &catalog.entries()[0] else {
             panic!("custom YAML is immediately ready")
         };
