@@ -135,7 +135,7 @@ impl TileDownloader {
         &self,
         tile_spec: TileSpec,
         mut process: F,
-    ) -> Result<T, TileDownloadError>
+    ) -> Result<T, Box<TileDownloadError>>
     where
         F: FnMut(DownloadedTile) -> Fut,
         Fut: Future<Output = Result<T, ZoomError>>,
@@ -154,7 +154,7 @@ impl TileDownloader {
                 Ok(processed) => return Ok(processed),
                 Err(cause) => {
                     if failures >= self.retries {
-                        return Err(TileDownloadError { tile_spec, cause });
+                        return Err(Box::new(TileDownloadError { tile_spec, cause }));
                     }
                     failures += 1;
                     warn!("{cause}. Retrying tile download in {wait_time:?}.");

@@ -203,7 +203,7 @@ impl<'a> TileDownloadCoordinator<'a> {
                             Ok((spec, tile))
                         })
                         .await
-                        .map_err(WorkError::Download)
+                        .map_err(|error| WorkError::Download(*error))
                 }
             })
             .buffer_unordered(self.args.parallelism);
@@ -277,7 +277,7 @@ impl<'a> TileDownloadCoordinator<'a> {
                             Ok((spec, tile))
                         })
                         .await
-                        .map_err(WorkError::Download)
+                        .map_err(|error| WorkError::Download(*error))
                 }
             })
             .buffer_unordered(self.args.parallelism);

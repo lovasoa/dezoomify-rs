@@ -349,7 +349,7 @@ fn parse_jpeg_start_of_frame(segment: &[u8]) -> io::Result<JpegTileInfo> {
 
     let mut max_h = 1u16;
     let mut max_v = 1u16;
-    for component in segment[6..6 + components * 3].chunks_exact(3) {
+    for component in segment[6..6 + components * 3].as_chunks::<3>().0 {
         let sampling = component[1];
         max_h = max_h.max(u16::from(sampling >> 4));
         max_v = max_v.max(u16::from(sampling & 0x0f));
