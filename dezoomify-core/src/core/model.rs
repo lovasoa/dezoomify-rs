@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::Vec2d;
 
-use super::tile_plan::LevelPlan;
+use super::tile_plan::TileSource;
 
 /// A deterministic identifier within one discovery/planning operation.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -111,53 +111,67 @@ pub struct TileSpec {
 
 #[derive(Clone, Debug)]
 pub struct LevelDescriptor {
-    pub id: StableId,
     pub title: Option<String>,
-    pub size: Option<Vec2d>,
-    pub tile_size: Option<Vec2d>,
     pub scale_factor: Option<u32>,
-    pub has_overlapping_tiles: bool,
-    pub plan: LevelPlan,
+    pub source: TileSource,
     pub warnings: Vec<String>,
 }
 
-impl Default for LevelDescriptor {
-    fn default() -> Self {
+impl LevelDescriptor {
+    #[must_use]
+    pub fn new(source: impl Into<TileSource>) -> Self {
         Self {
-            id: StableId::new(""),
             title: None,
-            size: None,
-            tile_size: None,
             scale_factor: None,
-            has_overlapping_tiles: false,
-            plan: LevelPlan::default(),
+            source: source.into(),
             warnings: Vec::new(),
         }
     }
-}
 
-impl LevelDescriptor {
+    #[must_use]
+    pub fn with_title(mut self, title: Option<String>) -> Self {
+        self.title = title;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_scale_factor(mut self, scale_factor: Option<u32>) -> Self {
+        self.scale_factor = scale_factor;
+        self
+    }
+
+    #[must_use]
+    pub fn with_warnings(mut self, warnings: Vec<String>) -> Self {
+        self.warnings = warnings;
+        self
+    }
+
+    #[must_use]
+    pub fn id(&self) -> &StableId {
+        self.source.id()
+    }
+
     /// Human-readable label for interactive pickers.
     ///
     /// Shows the level title (or stable id as a fallback) followed by the
     /// image size, tile size and tile count whenever they are known.
     #[must_use]
     pub fn display_label(&self) -> String {
-        let label = self.title.clone().unwrap_or_else(|| self.id.to_string());
-        let has_size = self.size.is_some();
-        let has_plan = matches!(&self.plan, LevelPlan::Known(_));
-        if !has_size && !has_plan {
+        let label = self.title.clone().unwrap_or_else(|| self.id().to_string());
+        let size = self.source.image_size();
+        let count = self.source.count();
+        if size.is_none() && count.is_none() {
             return label;
         }
         let mut out = String::with_capacity(label.len() + 40);
         let _ = write!(out, "{label} (");
         let mut sep = "";
-        if let Some(Vec2d { x, y }) = self.size {
+        if let Some(Vec2d { x, y }) = size {
             let _ = write!(out, "{x: >5} x {y} pixels");
             sep = ",";
         }
-        if let LevelPlan::Known(plan) = &self.plan {
-            let _ = write!(out, "{sep}{: >4} tiles", plan.len());
+        if let Some(count) = count {
+            let _ = write!(out, "{sep}{count: >4} tiles");
         }
         let _ = write!(out, ")");
         out
@@ -258,17 +272,21 @@ impl ImageCatalog {
                 CatalogEntry::Ready(image) => {
                     let mut level_ids = BTreeSet::new();
                     for level in &image.levels {
-                        if !level_ids.insert(level.id.clone()) {
+                        if !level_ids.insert(level.id().clone()) {
                             return Err(CatalogError::DuplicateLevelId {
                                 image_id: image.id.clone(),
-                                level_id: level.id.clone(),
+                                level_id: level.id().clone(),
                             });
                         }
                     }
-                    if image.levels.iter().all(|level| level.size.is_some()) {
-                        image
-                            .levels
-                            .sort_by_key(|level| level.size.expect("all sizes checked").area());
+                    if image
+                        .levels
+                        .iter()
+                        .all(|level| level.source.image_size().is_some())
+                    {
+                        image.levels.sort_by_key(|level| {
+                            level.source.image_size().expect("all sizes checked").area()
+                        });
                     }
                     image.id.clone()
                 }
@@ -285,46 +303,42 @@ impl ImageCatalog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{KnownTilePlan, LevelPlan};
+    use crate::core::{Grid, GridRequests, GridTile};
 
     #[derive(Debug)]
-    struct TestSource {
-        size: Vec2d,
-    }
+    struct TestSource;
 
-    impl crate::core::tile_plan::RectangularSource for TestSource {
-        fn level_id(&self) -> crate::core::StableId {
-            "level".into()
-        }
-        fn image_size(&self) -> Vec2d {
-            self.size
-        }
-        fn tile_size(&self) -> Vec2d {
-            Vec2d::square(1)
-        }
-        fn request(&self, p: Vec2d) -> Request {
-            Request::new(format!("memory://{}/{}", p.x, p.y))
+    impl GridRequests for TestSource {
+        fn request(&self, tile: GridTile) -> Request {
+            Request::new(format!("memory://{}/{}", tile.coord.column, tile.coord.row))
         }
     }
 
     fn level(id: &str, size: u32) -> LevelDescriptor {
-        LevelDescriptor {
-            id: StableId::new(id),
-            size: Some(Vec2d::square(size)),
-            plan: LevelPlan::Known(KnownTilePlan::rectangular(TestSource {
-                size: Vec2d::square(size),
-            })),
-            ..Default::default()
-        }
+        LevelDescriptor::new(
+            Grid::new(
+                id.into(),
+                Vec2d::square(size),
+                Vec2d::square(1),
+                Vec2d::default(),
+                TestSource,
+            )
+            .unwrap(),
+        )
     }
 
     #[test]
     fn display_label_includes_geometry_and_tile_count() {
         let mut level = level("gap:0", 100);
-        level.tile_size = Some(Vec2d::square(100));
-        level.plan = LevelPlan::Known(KnownTilePlan::rectangular(TestSource {
-            size: Vec2d::square(1),
-        }));
+        level.source = Grid::new(
+            "level".into(),
+            Vec2d::square(100),
+            Vec2d::square(100),
+            Vec2d::default(),
+            TestSource,
+        )
+        .unwrap()
+        .into();
         let label = level.display_label();
         assert!(label.contains("100 x 100 pixels"));
         assert!(label.contains("1 tiles"));
@@ -346,7 +360,7 @@ mod tests {
         let CatalogEntry::Ready(image) = &catalog.entries()[0] else {
             unreachable!()
         };
-        assert_eq!(image.levels[0].id.as_str(), "small");
+        assert_eq!(image.levels[0].id().as_str(), "small");
 
         let duplicate = ImageCatalog::new([
             CatalogEntry::Deferred(DeferredImage {

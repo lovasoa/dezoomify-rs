@@ -7,11 +7,10 @@ use regex::Regex;
 
 use crate::Vec2d;
 use crate::core::discovery::DiscoveryEvent;
-use crate::core::tile_plan::RectangularSource;
 use crate::core::{
-    CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryError, DiscoveryInput, DiscoveryStep,
-    ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor, LevelPlan, ProcessingRecipe,
-    Request, ResourceOutcome, ResourceRequest, StableId,
+    CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryError, DiscoveryInput, DiscoveryStep, Grid,
+    GridRequests, GridTile, ImageCatalog, ImageDescriptor, LevelDescriptor, Request,
+    ResourceOutcome, ResourceRequest, StableId,
 };
 use crate::json_utils::all_json;
 
@@ -85,6 +84,11 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
         if image.tile_size == 0 {
             return Err(DiscoveryError::Session("invalid DZI zero tile size".into()));
         }
+        if image.get_size().x == 0 || image.get_size().y == 0 {
+            return Err(DiscoveryError::Session(
+                "invalid DZI zero image size".into(),
+            ));
+        }
         let base_url: Arc<str> = image.base_url(url).into();
         let image_size = image.get_size();
         let tile_size = image.get_tile_size();
@@ -98,27 +102,17 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
             let id = StableId::new(format!("dzi:{image_index}:{ordinal}"));
             let level = DziLevel {
                 base_url: Arc::clone(&base_url),
-                size,
-                tile_size,
                 format: image.format.clone(),
-                overlap: image.overlap,
                 zoom,
-                id: id.clone(),
             };
-            LevelDescriptor {
-                id,
-                title: Some(format!(
-                    "DZI level {ordinal} ({}×{} pixels)",
-                    size.x, size.y
-                )),
-                size: Some(size),
-                tile_size: Some(tile_size),
-                has_overlapping_tiles: image.overlap > 0,
-                plan: LevelPlan::Known(KnownTilePlan::rectangular(level)),
-                ..Default::default()
-            }
+            let source = Grid::new(id, size, tile_size, Vec2d::square(image.overlap), level)
+                .map_err(|error| DiscoveryError::Session(format!("invalid DZI grid: {error}")))?;
+            Ok(LevelDescriptor::new(source).with_title(Some(format!(
+                "DZI level {ordinal} ({}×{} pixels)",
+                size.x, size.y
+            ))))
         })
-        .collect();
+        .collect::<Result<Vec<_>, DiscoveryError>>()?;
         levels.reverse();
         let title = base_url
             .trim_end_matches('/')
@@ -139,42 +133,24 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
 #[derive(Debug)]
 struct DziLevel {
     base_url: Arc<str>,
-    size: Vec2d,
-    tile_size: Vec2d,
     format: String,
-    overlap: u32,
     zoom: u32,
-    id: StableId,
 }
 
-impl RectangularSource for DziLevel {
-    fn level_id(&self) -> StableId {
-        self.id.clone()
-    }
-    fn image_size(&self) -> Vec2d {
-        self.size
-    }
-    fn tile_size(&self) -> Vec2d {
-        self.tile_size
-    }
-    fn request(&self, cell: Vec2d) -> Request {
+impl GridRequests for DziLevel {
+    fn request(&self, tile: GridTile) -> Request {
+        let cell: Vec2d = tile.coord.into();
         Request::new(format!(
             "{}/{}/{}_{}.{}",
             self.base_url, self.zoom, cell.x, cell.y, self.format
         ))
-    }
-    fn overlap(&self) -> Vec2d {
-        Vec2d::square(self.overlap)
-    }
-    fn processing(&self) -> ProcessingRecipe {
-        ProcessingRecipe::None
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::TileProgram;
+    use crate::core::TileSource;
 
     fn ready_image(catalog: ImageCatalog) -> ImageDescriptor {
         match catalog.into_entries().pop().unwrap() {
@@ -196,18 +172,16 @@ mod tests {
         assert!(
             levels
                 .windows(2)
-                .all(|pair| pair[0].size.unwrap().area() <= pair[1].size.unwrap().area())
+                .all(|pair| pair[0].source.image_size().unwrap().area()
+                    <= pair[1].source.image_size().unwrap().area())
         );
-        let plan = match &levels[9].plan {
-            LevelPlan::Known(plan) => plan,
-            LevelPlan::Adaptive(_) => panic!("DZI is known"),
+        let TileSource::Grid(plan) = &levels[9].source else {
+            panic!("DZI is a grid");
         };
         let urls: Vec<_> = plan
-            .cursor()
-            .take_ready(10)
-            .unwrap()
-            .unwrap()
-            .into_iter()
+            .tiles_row_major()
+            .take(10)
+            .map(Result::unwrap)
             .map(|tile| tile.request.uri)
             .collect();
         assert_eq!(
@@ -226,7 +200,7 @@ mod tests {
         assert_eq!(catalog.len(), 1);
         let image = ready_image(catalog);
         assert_eq!(
-            image.levels.last().unwrap().size,
+            image.levels.last().unwrap().source.image_size(),
             Some(Vec2d { x: 6261, y: 6047 })
         );
         let script = r#"OpenSeadragon({tileSources:{Image:{Url:"/example-images/highsmith/highsmith_files/",Format:"jpg",Overlap:"2",TileSize:"256",Size:{Height:"9221",Width:"7026"}}}});"#;
@@ -234,13 +208,12 @@ mod tests {
             ready_image(load_catalog("http://test.com/x/test.xml", script.as_bytes()).unwrap())
                 .levels;
         let large = levels.last().unwrap();
-        assert_eq!(large.size, Some(Vec2d { x: 7026, y: 9221 }));
-        let plan = match &large.plan {
-            LevelPlan::Known(plan) => plan,
-            LevelPlan::Adaptive(_) => unreachable!(),
+        assert_eq!(large.source.image_size(), Some(Vec2d { x: 7026, y: 9221 }));
+        let TileSource::Grid(plan) = &large.source else {
+            unreachable!()
         };
         assert_eq!(
-            plan.cursor().take_ready(1).unwrap().unwrap()[0].request.uri,
+            plan.tiles_row_major().next().unwrap().unwrap().request.uri,
             "http://test.com/example-images/highsmith/highsmith_files/14/0_0.jpg"
         );
     }

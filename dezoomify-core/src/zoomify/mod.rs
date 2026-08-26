@@ -2,15 +2,14 @@
 
 use std::sync::Arc;
 
-use image_properties::{ImageProperties, ZoomLevelInfo};
+use image_properties::ImageProperties;
 
 use crate::Vec2d;
 use crate::core::discovery::DiscoveryEvent;
-use crate::core::tile_plan::RectangularSource;
 use crate::core::{
     CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
-    DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor, LevelPlan,
-    ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
+    DiscoveryStep, Grid, GridRequests, GridTile, ImageCatalog, ImageDescriptor, LevelDescriptor,
+    Request, ResourceOutcome, ResourceRequest, StableId,
 };
 
 mod image_properties;
@@ -80,25 +79,21 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
         .map(|(index, info)| {
             let size = info.size;
             let tile_size = info.tile_size;
+            let id = StableId::new(format!("zoomify:{index}"));
             let level = ZoomifyLevel {
                 base_url: Arc::clone(&base_url),
-                info,
+                tiles_before: info.tiles_before,
                 index,
-                level_id: StableId::new(format!("zoomify:{index}")),
             };
-            LevelDescriptor {
-                id: level.level_id.clone(),
-                title: Some(format!(
-                    "{base_name} Zoomify level {index} ({}×{} pixels)",
-                    size.x, size.y
-                )),
-                size: Some(size),
-                tile_size: Some(tile_size),
-                plan: LevelPlan::Known(KnownTilePlan::rectangular(level)),
-                ..Default::default()
-            }
+            let source = Grid::new(id.clone(), size, tile_size, Vec2d::default(), level).map_err(
+                |error| DiscoveryError::Session(format!("invalid Zoomify grid: {error}")),
+            )?;
+            Ok(LevelDescriptor::new(source).with_title(Some(format!(
+                "{base_name} Zoomify level {index} ({}×{} pixels)",
+                size.x, size.y
+            ))))
         })
-        .collect();
+        .collect::<Result<Vec<_>, DiscoveryError>>()?;
     let title = base_url
         .trim_end_matches('/')
         .rsplit('/')
@@ -117,40 +112,25 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
 #[derive(Debug)]
 struct ZoomifyLevel {
     base_url: Arc<str>,
-    info: ZoomLevelInfo,
+    tiles_before: u32,
     index: usize,
-    level_id: StableId,
 }
 
-impl RectangularSource for ZoomifyLevel {
-    fn level_id(&self) -> StableId {
-        self.level_id.clone()
-    }
-    fn image_size(&self) -> Vec2d {
-        self.info.size
-    }
-    fn tile_size(&self) -> Vec2d {
-        self.info.tile_size
-    }
-    fn request(&self, cell: Vec2d) -> Request {
+impl GridRequests for ZoomifyLevel {
+    fn request(&self, tile: GridTile) -> Request {
+        let cell: Vec2d = tile.coord.into();
+        let tile_group = (u64::from(self.tiles_before) + tile.row_major_ordinal) / 256;
         Request::new(format!(
             "{}/TileGroup{}/{}-{}-{}.jpg",
-            self.base_url,
-            self.info.tile_group(cell),
-            self.index,
-            cell.x,
-            cell.y
+            self.base_url, tile_group, self.index, cell.x, cell.y
         ))
-    }
-    fn processing(&self) -> ProcessingRecipe {
-        ProcessingRecipe::None
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::TileProgram;
+    use crate::core::TileSource;
 
     fn ready_image(url: &str, contents: &[u8]) -> ImageDescriptor {
         match load_catalog(url, contents)
@@ -176,18 +156,16 @@ mod tests {
         assert!(
             levels
                 .windows(2)
-                .all(|pair| pair[0].size.unwrap().area() <= pair[1].size.unwrap().area())
+                .all(|pair| pair[0].source.image_size().unwrap().area()
+                    <= pair[1].source.image_size().unwrap().area())
         );
-        let plan = match &levels[3].plan {
-            LevelPlan::Known(plan) => plan,
-            LevelPlan::Adaptive(_) => unreachable!(),
+        let TileSource::Grid(plan) = &levels[3].source else {
+            unreachable!()
         };
         let urls: Vec<_> = plan
-            .cursor()
-            .take_ready(6)
-            .unwrap()
-            .unwrap()
-            .into_iter()
+            .tiles_row_major()
+            .take(6)
+            .map(Result::unwrap)
             .map(|tile| tile.request.uri)
             .collect();
         assert_eq!(
@@ -211,16 +189,12 @@ mod tests {
             contents,
         );
         assert_eq!(image.title.as_deref(), Some("manuscript123"));
-        let plan = match &image.levels[5].plan {
-            LevelPlan::Known(plan) => plan,
-            LevelPlan::Adaptive(_) => unreachable!(),
+        let TileSource::Grid(plan) = &image.levels[5].source else {
+            unreachable!()
         };
         let urls: std::collections::HashSet<_> = plan
-            .cursor()
-            .take_ready(usize::MAX)
-            .unwrap()
-            .unwrap()
-            .into_iter()
+            .tiles_row_major()
+            .map(Result::unwrap)
             .map(|tile| tile.request.uri)
             .collect();
         assert!(urls.contains("http://example.com/images/manuscript123/TileGroup1/5-0-14.jpg"));

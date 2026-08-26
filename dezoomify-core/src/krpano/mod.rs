@@ -1,7 +1,7 @@
 //! Pure, resumable discovery for krpano panoramas.
 
 use std::collections::HashSet;
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::sync::{Arc, LazyLock};
 
 use itertools::Itertools;
@@ -14,11 +14,10 @@ use log::{debug, info, warn};
 use crate::Vec2d;
 use crate::core::discovery::DiscoveryEvent;
 use crate::core::resolve_relative;
-use crate::core::tile_plan::RectangularSource;
 use crate::core::{
     CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
-    DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor, LevelPlan,
-    ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
+    DiscoveryStep, Grid, GridRequests, GridTile, ImageCatalog, ImageDescriptor, LevelDescriptor,
+    Request, ResourceOutcome, ResourceRequest, StableId,
 };
 use crate::krpano::krpano_metadata::{ImageInfo, LevelDesc};
 
@@ -541,21 +540,23 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
                     let face = face_label(shape_name, side_name);
                     let source = KrpanoLevel {
                         base_url: Arc::from(url),
-                        size,
-                        tile_size,
                         base_index,
                         template,
                         label: format_level_label(shape_name, side_name, &name),
-                        id: id.clone(),
                     };
-                    levels.push(LevelDescriptor {
-                        id,
-                        title: level_title(&global_title, &name, &face),
-                        size: Some(size),
-                        tile_size: Some(tile_size),
-                        plan: LevelPlan::Known(KnownTilePlan::rectangular(source)),
-                        ..Default::default()
-                    });
+                    let source =
+                        match Grid::new(id.clone(), size, tile_size, Vec2d::default(), source) {
+                            Ok(source) => source,
+                            Err(error) => {
+                                warnings.push(format!("bad krpano level: {error}"));
+                                continue;
+                            }
+                        };
+                    levels.push(LevelDescriptor::new(source).with_title(level_title(
+                        &global_title,
+                        &name,
+                        &face,
+                    )));
                 }
             }
         }
@@ -600,12 +601,9 @@ fn format_level_label(shape: &str, side: &str, scene: &str) -> String {
 
 struct KrpanoLevel {
     base_url: Arc<str>,
-    size: Vec2d,
-    tile_size: Vec2d,
     base_index: u32,
     template: TemplateString<XY>,
     label: String,
-    id: StableId,
 }
 
 impl fmt::Debug for KrpanoLevel {
@@ -614,21 +612,9 @@ impl fmt::Debug for KrpanoLevel {
     }
 }
 
-impl RectangularSource for KrpanoLevel {
-    fn level_id(&self) -> StableId {
-        self.id.clone()
-    }
-
-    fn image_size(&self) -> Vec2d {
-        self.size
-    }
-
-    fn tile_size(&self) -> Vec2d {
-        self.tile_size
-    }
-
-    fn request(&self, cell: Vec2d) -> Request {
-        use std::fmt::Write;
+impl GridRequests for KrpanoLevel {
+    fn request(&self, tile: GridTile) -> Request {
+        let cell: Vec2d = tile.coord.into();
         let mut relative = String::new();
         for part in &self.template.0 {
             match part {
@@ -650,16 +636,12 @@ impl RectangularSource for KrpanoLevel {
         }
         Request::new(resolve_relative(&self.base_url, &relative))
     }
-
-    fn processing(&self) -> ProcessingRecipe {
-        ProcessingRecipe::None
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::TileProgram;
+    use crate::core::TileSource;
 
     fn image(catalog: ImageCatalog) -> ImageDescriptor {
         match catalog.into_entries().into_iter().next().unwrap() {
@@ -669,15 +651,12 @@ mod tests {
     }
 
     fn tile_requests(level: &LevelDescriptor, count: usize) -> Vec<(String, Vec2d)> {
-        let plan = match &level.plan {
-            LevelPlan::Known(plan) => plan,
-            LevelPlan::Adaptive(_) => panic!("krpano plans are known"),
+        let TileSource::Grid(plan) = &level.source else {
+            panic!("krpano levels are grids");
         };
-        plan.cursor()
-            .take_ready(count)
-            .unwrap()
-            .unwrap_or_default()
-            .into_iter()
+        plan.tiles_row_major()
+            .take(count)
+            .map(Result::unwrap)
             .map(|tile| (tile.request.uri, tile.destination))
             .collect()
     }
@@ -721,7 +700,10 @@ mod tests {
             </krpano>"#,
         ));
         assert_eq!(image.levels.len(), 6);
-        assert_eq!(image.levels[0].size, Some(Vec2d { x: 1000, y: 100 }));
+        assert_eq!(
+            image.levels[0].source.image_size(),
+            Some(Vec2d { x: 1000, y: 100 })
+        );
         // Cube faces must remain distinguishable in interactive level pickers.
         let labels: Vec<String> = image
             .levels
@@ -755,7 +737,10 @@ mod tests {
             br#"<krpano><image><flat url="level=%l x=%0x y=%0y" multires="1,2x3,3x4x3"/></image></krpano>"#,
         ));
         assert_eq!(image.levels.len(), 2);
-        assert_eq!(image.levels[1].size, Some(Vec2d { x: 3, y: 4 }));
+        assert_eq!(
+            image.levels[1].source.image_size(),
+            Some(Vec2d { x: 3, y: 4 })
+        );
         assert_eq!(format_level_label("Flat", "", ""), "Krpano Flat");
         assert_eq!(
             tile_requests(&image.levels[1], 2),
@@ -789,16 +774,19 @@ mod tests {
         ];
         assert_eq!(levels.len(), expected_sizes.len());
         assert_eq!(
-            levels.iter().map(|level| level.size).collect::<Vec<_>>(),
+            levels
+                .iter()
+                .map(|level| level.source.image_size())
+                .collect::<Vec<_>>(),
             expected_sizes.into_iter().map(Some).collect::<Vec<_>>()
         );
-        let plan = match &levels[7].plan {
-            LevelPlan::Known(plan) => plan,
-            LevelPlan::Adaptive(_) => unreachable!(),
+        let TileSource::Grid(plan) = &levels[7].source else {
+            unreachable!()
         };
-        assert_eq!(plan.len(), 5859);
+        assert_eq!(plan.count(), 5859);
         assert_eq!(
-            plan.tile(0)
+            plan.tiles_row_major()
+                .next()
                 .unwrap()
                 .unwrap()
                 .request

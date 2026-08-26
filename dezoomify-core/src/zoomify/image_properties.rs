@@ -117,13 +117,6 @@ pub struct ZoomLevelInfo {
     pub tiles_before: u32,
 }
 
-impl ZoomLevelInfo {
-    pub fn tile_group(&self, pos: Vec2d) -> u32 {
-        let num_tiles_x = (self.size.ceil_div(self.tile_size)).x;
-        (self.tiles_before + pos.x + pos.y * num_tiles_x) / 256
-    }
-}
-
 #[test]
 fn test_deserialize() {
     let src = r#"

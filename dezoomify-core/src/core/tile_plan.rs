@@ -1,121 +1,71 @@
-//! Immutable, lazy and replayable known tile plans.
+//! Closed tile-source descriptions used by every zoom level.
 
+use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
 use crate::Vec2d;
 
-use super::adaptive::{AdaptivePlan, TileObservation, TileProgram, TileProgramError};
+use super::adaptive::DiscoverableGrid;
 use super::model::{ProcessingRecipe, Request, StableId, TileId, TileRole, TileSpec};
 
-/// Contract for a known plan: `tile(i)` is deterministic and returns `None`
-/// exactly when `i >= len()`.
-pub trait ReplayablePlan: fmt::Debug + Send + Sync {
-    fn len(&self) -> u64;
-    fn tile(&self, ordinal: u64) -> Result<Option<TileSpec>, TileProgramError>;
-
-    /// Whether the plan contains no tiles.
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TileSourceError {
+    ZeroImageDimensions,
+    ZeroTileDimensions,
+    ArithmeticOverflow,
+    InvalidTile(String),
+    InvalidDimensions,
 }
 
-#[derive(Clone)]
-pub struct KnownTilePlan(Arc<dyn ReplayablePlan>);
-
-impl fmt::Debug for KnownTilePlan {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("KnownTilePlan")
-            .field("len", &self.len())
-            .finish_non_exhaustive()
-    }
-}
-
-impl KnownTilePlan {
-    #[must_use]
-    pub(crate) fn new(plan: impl ReplayablePlan + 'static) -> Self {
-        Self(Arc::new(plan))
-    }
-
-    #[must_use]
-    pub fn rectangular(source: impl RectangularSource + 'static) -> Self {
-        Self::new(RectangularPlan(source))
-    }
-
-    #[must_use]
-    pub fn len(&self) -> u64 {
-        self.0.len()
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub fn tile(&self, ordinal: u64) -> Result<Option<TileSpec>, TileProgramError> {
-        self.0.tile(ordinal)
-    }
-
-    #[must_use]
-    pub fn cursor(&self) -> KnownPlanCursor {
-        KnownPlanCursor {
-            plan: self.clone(),
-            next: 0,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub enum LevelPlan {
-    Known(KnownTilePlan),
-    Adaptive(Arc<dyn AdaptivePlan>),
-}
-
-impl Default for LevelPlan {
-    fn default() -> Self {
-        #[derive(Debug)]
-        struct EmptyPlan;
-        impl ReplayablePlan for EmptyPlan {
-            fn len(&self) -> u64 {
-                0
-            }
-            fn tile(&self, _ordinal: u64) -> Result<Option<TileSpec>, TileProgramError> {
-                Ok(None)
-            }
-        }
-        Self::Known(KnownTilePlan::new(EmptyPlan))
-    }
-}
-
-impl LevelPlan {
-    #[must_use]
-    pub fn start_program(&self) -> Box<dyn TileProgram> {
-        match self {
-            Self::Known(plan) => Box::new(plan.cursor()),
-            Self::Adaptive(plan) => plan.start(),
-        }
-    }
-}
-
-impl fmt::Debug for LevelPlan {
+impl fmt::Display for TileSourceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Known(plan) => fmt::Debug::fmt(plan, f),
-            Self::Adaptive(plan) => f.debug_tuple("Adaptive").field(plan).finish(),
+            Self::ZeroImageDimensions => f.write_str("image dimensions must be greater than zero"),
+            Self::ZeroTileDimensions => f.write_str("tile dimensions must be greater than zero"),
+            Self::ArithmeticOverflow => f.write_str("tile geometry overflowed u32"),
+            Self::InvalidTile(message) => f.write_str(message),
+            Self::InvalidDimensions => f.write_str("a tile has invalid dimensions"),
         }
     }
 }
 
-/// Common rectangular protocol surface. Format structs remain immutable and
-/// supply only geometry, request generation, and optional overlap/processing.
-pub trait RectangularSource: fmt::Debug + Send + Sync {
-    fn level_id(&self) -> StableId;
-    fn image_size(&self) -> Vec2d;
-    fn tile_size(&self) -> Vec2d;
-    fn request(&self, cell: Vec2d) -> Request;
+impl Error for TileSourceError {}
 
-    fn overlap(&self) -> Vec2d {
-        Vec2d::default()
+/// A meaningful coordinate in a grid's standardized row-major domain.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct GridCoord {
+    pub column: u32,
+    pub row: u32,
+}
+
+impl From<GridCoord> for Vec2d {
+    fn from(value: GridCoord) -> Self {
+        Self {
+            x: value.column,
+            y: value.row,
+        }
+    }
+}
+
+/// Geometry and identity of one cell in a validated grid.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GridTile {
+    pub coord: GridCoord,
+    pub row_major_ordinal: u64,
+    pub image_size: Vec2d,
+    pub cell_size: Vec2d,
+    pub cell_extent: Vec2d,
+    pub destination: Vec2d,
+    pub expected_size: Vec2d,
+}
+
+/// Format-specific request behavior for a geometrically known grid.
+pub trait GridRequests: fmt::Debug + Send + Sync {
+    fn request(&self, tile: GridTile) -> Request;
+
+    fn use_first_tile_as_referer(&self) -> bool {
+        true
     }
 
     fn processing(&self) -> ProcessingRecipe {
@@ -123,99 +73,366 @@ pub trait RectangularSource: fmt::Debug + Send + Sync {
     }
 }
 
-#[derive(Debug)]
-struct RectangularPlan<S>(S);
+#[derive(Clone)]
+pub struct Grid {
+    level: StableId,
+    image_size: Vec2d,
+    tile_size: Vec2d,
+    overlap: Vec2d,
+    shape: Vec2d,
+    count: u64,
+    requests: Arc<dyn GridRequests>,
+}
 
-impl<S: RectangularSource> ReplayablePlan for RectangularPlan<S> {
-    fn len(&self) -> u64 {
-        let size = self.0.image_size();
-        let tile = self.0.tile_size();
-        if tile.x == 0 || tile.y == 0 {
-            return 0;
+impl fmt::Debug for Grid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Grid")
+            .field("level", &self.level)
+            .field("image_size", &self.image_size)
+            .field("tile_size", &self.tile_size)
+            .field("overlap", &self.overlap)
+            .field("shape", &self.shape)
+            .field("count", &self.count)
+            .field("requests", &self.requests)
+            .finish()
+    }
+}
+
+impl Grid {
+    pub fn new(
+        level: StableId,
+        image_size: Vec2d,
+        tile_size: Vec2d,
+        overlap: Vec2d,
+        requests: impl GridRequests + 'static,
+    ) -> Result<Self, TileSourceError> {
+        if image_size.x == 0 || image_size.y == 0 {
+            return Err(TileSourceError::ZeroImageDimensions);
         }
-        u64::from(size.x.div_ceil(tile.x)) * u64::from(size.y.div_ceil(tile.y))
+        if tile_size.x == 0 || tile_size.y == 0 {
+            return Err(TileSourceError::ZeroTileDimensions);
+        }
+        let shape = image_size.ceil_div(tile_size);
+        let count = u64::from(shape.x)
+            .checked_mul(u64::from(shape.y))
+            .ok_or(TileSourceError::ArithmeticOverflow)?;
+        // Validate every multiplication used by iteration up front.
+        shape
+            .x
+            .saturating_sub(1)
+            .checked_mul(tile_size.x)
+            .ok_or(TileSourceError::ArithmeticOverflow)?;
+        shape
+            .y
+            .saturating_sub(1)
+            .checked_mul(tile_size.y)
+            .ok_or(TileSourceError::ArithmeticOverflow)?;
+        Ok(Self {
+            level,
+            image_size,
+            tile_size,
+            overlap,
+            shape,
+            count,
+            requests: Arc::new(requests),
+        })
     }
 
-    fn tile(&self, ordinal: u64) -> Result<Option<TileSpec>, TileProgramError> {
-        if ordinal >= self.len() {
-            return Ok(None);
+    #[must_use]
+    pub const fn image_size(&self) -> Vec2d {
+        self.image_size
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> &StableId {
+        &self.level
+    }
+
+    #[must_use]
+    pub const fn tile_size(&self) -> Vec2d {
+        self.tile_size
+    }
+
+    #[must_use]
+    pub const fn overlap(&self) -> Vec2d {
+        self.overlap
+    }
+
+    #[must_use]
+    pub const fn shape(&self) -> Vec2d {
+        self.shape
+    }
+
+    #[must_use]
+    pub const fn count(&self) -> u64 {
+        self.count
+    }
+
+    /// Iterate tiles lazily in standardized row-major order.
+    #[must_use]
+    pub fn tiles_row_major(&self) -> GridTiles {
+        GridTiles {
+            grid: self.clone(),
+            next: 0,
         }
-        let image = self.0.image_size();
-        let tile = self.0.tile_size();
-        let columns = image.x.div_ceil(tile.x);
-        let x = u32::try_from(ordinal % u64::from(columns))
-            .map_err(|_| TileProgramError::ArithmeticOverflow)?;
-        let y = u32::try_from(ordinal / u64::from(columns))
-            .map_err(|_| TileProgramError::ArithmeticOverflow)?;
-        let cell = Vec2d { x, y };
+    }
+
+    fn grid_tile(&self, ordinal: u64) -> GridTile {
+        let coord = GridCoord {
+            column: u32::try_from(ordinal % u64::from(self.shape.x)).unwrap(),
+            row: u32::try_from(ordinal / u64::from(self.shape.x)).unwrap(),
+        };
         let origin = Vec2d {
-            x: x.checked_mul(tile.x)
-                .ok_or(TileProgramError::ArithmeticOverflow)?,
-            y: y.checked_mul(tile.y)
-                .ok_or(TileProgramError::ArithmeticOverflow)?,
+            x: coord.column * self.tile_size.x,
+            y: coord.row * self.tile_size.y,
         };
-        let clipped = Vec2d {
-            x: tile.x.min(image.x.saturating_sub(origin.x)),
-            y: tile.y.min(image.y.saturating_sub(origin.y)),
-        };
-        let overlap = self.0.overlap();
+        let cell = self.tile_size.min(self.image_size - origin);
         let leading = Vec2d {
-            x: if x == 0 { 0 } else { overlap.x },
-            y: if y == 0 { 0 } else { overlap.y },
+            x: self.overlap.x.min(origin.x),
+            y: self.overlap.y.min(origin.y),
         };
-        let destination = Vec2d {
-            x: origin.x.saturating_sub(leading.x),
-            y: origin.y.saturating_sub(leading.y),
-        };
-        let mut request = self.0.request(cell);
-        request
-            .headers
-            .entry("Referer".into())
-            .or_insert_with(|| self.0.request(Vec2d::default()).uri);
-        Ok(Some(TileSpec {
-            id: TileId::new(self.0.level_id(), ordinal),
-            request,
+        let remaining = self.image_size - origin - cell;
+        let trailing = self.overlap.min(remaining);
+        let destination = origin - leading;
+        let expected_size = cell + leading + trailing;
+        GridTile {
+            coord,
+            row_major_ordinal: ordinal,
+            image_size: self.image_size,
+            cell_size: self.tile_size,
+            cell_extent: cell,
             destination,
-            expected_size: (overlap == Vec2d::default()).then_some(clipped),
-            processing: self.0.processing(),
+            expected_size,
+        }
+    }
+
+    fn tile(&self, ordinal: u64) -> TileSpec {
+        let tile = self.grid_tile(ordinal);
+        let mut request = self.requests.request(tile);
+        if self.requests.use_first_tile_as_referer() {
+            request
+                .headers
+                .entry("Referer".into())
+                .or_insert_with(|| self.requests.request(self.grid_tile(0)).uri);
+        }
+        TileSpec {
+            id: TileId::new(self.level.clone(), ordinal),
+            request,
+            destination: tile.destination,
+            expected_size: Some(tile.expected_size),
+            processing: self.requests.processing(),
+            role: TileRole::Output,
+        }
+    }
+}
+
+pub struct GridTiles {
+    grid: Grid,
+    next: u64,
+}
+
+impl Iterator for GridTiles {
+    type Item = Result<TileSpec, TileSourceError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.next >= self.grid.count {
+            return None;
+        }
+        let ordinal = self.next;
+        self.next += 1;
+        Some(Ok(self.grid.tile(ordinal)))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = usize::try_from(self.grid.count - self.next).unwrap_or(usize::MAX);
+        (remaining, Some(remaining))
+    }
+}
+
+pub(crate) trait PositionedGenerator: fmt::Debug + Send + Sync {
+    fn count(&self) -> u64;
+    fn tile(&self, ordinal: u64) -> Result<PositionedTile, TileSourceError>;
+}
+
+#[derive(Clone, Debug)]
+pub struct PositionedTile {
+    pub request: Request,
+    pub destination: Vec2d,
+    pub processing: ProcessingRecipe,
+}
+
+#[derive(Debug)]
+struct ExplicitPositioned(Arc<[PositionedTile]>);
+
+impl PositionedGenerator for ExplicitPositioned {
+    fn count(&self) -> u64 {
+        self.0.len() as u64
+    }
+
+    fn tile(&self, ordinal: u64) -> Result<PositionedTile, TileSourceError> {
+        usize::try_from(ordinal)
+            .ok()
+            .and_then(|index| self.0.get(index))
+            .cloned()
+            .ok_or_else(|| TileSourceError::InvalidTile("tile ordinal is out of bounds".into()))
+    }
+}
+
+#[derive(Clone)]
+pub struct Positioned {
+    level: StableId,
+    canvas_size: Option<Vec2d>,
+    generator: Arc<dyn PositionedGenerator>,
+}
+
+impl fmt::Debug for Positioned {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Positioned")
+            .field("level", &self.level)
+            .field("canvas_size", &self.canvas_size)
+            .field("count", &self.count())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Positioned {
+    #[must_use]
+    pub fn from_tiles(
+        level: StableId,
+        canvas_size: Option<Vec2d>,
+        tiles: Vec<PositionedTile>,
+    ) -> Self {
+        Self::from_generator(level, canvas_size, ExplicitPositioned(tiles.into()))
+    }
+
+    pub(crate) fn from_generator(
+        level: StableId,
+        canvas_size: Option<Vec2d>,
+        generator: impl PositionedGenerator + 'static,
+    ) -> Self {
+        Self {
+            level,
+            canvas_size,
+            generator: Arc::new(generator),
+        }
+    }
+
+    #[must_use]
+    pub const fn image_size(&self) -> Option<Vec2d> {
+        self.canvas_size
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> &StableId {
+        &self.level
+    }
+
+    #[must_use]
+    pub fn count(&self) -> u64 {
+        self.generator.count()
+    }
+
+    #[must_use]
+    pub fn tiles(&self) -> PositionedTiles {
+        PositionedTiles {
+            source: self.clone(),
+            next: 0,
+        }
+    }
+}
+
+pub struct PositionedTiles {
+    source: Positioned,
+    next: u64,
+}
+
+impl Iterator for PositionedTiles {
+    type Item = Result<TileSpec, TileSourceError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.next >= self.source.count() {
+            return None;
+        }
+        let ordinal = self.next;
+        self.next += 1;
+        Some(self.source.generator.tile(ordinal).map(|tile| TileSpec {
+            id: TileId::new(self.source.level.clone(), ordinal),
+            request: tile.request,
+            destination: tile.destination,
+            expected_size: None,
+            processing: tile.processing,
             role: TileRole::Output,
         }))
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct KnownPlanCursor {
-    plan: KnownTilePlan,
-    next: u64,
+pub enum TileSource {
+    Grid(Grid),
+    Positioned(Positioned),
+    DiscoverableGrid(DiscoverableGrid),
 }
 
-impl TileProgram for KnownPlanCursor {
-    fn take_ready(&mut self, capacity: usize) -> Result<Option<Vec<TileSpec>>, TileProgramError> {
-        if capacity == 0 {
-            return Err(TileProgramError::ZeroCapacity);
+impl TileSource {
+    #[must_use]
+    pub fn id(&self) -> &StableId {
+        match self {
+            Self::Grid(grid) => grid.id(),
+            Self::Positioned(positioned) => positioned.id(),
+            Self::DiscoverableGrid(discoverable) => discoverable.id(),
         }
-        let remaining = self.plan.len().saturating_sub(self.next);
-        let remaining = usize::try_from(remaining).unwrap_or(usize::MAX);
-        let mut batch = Vec::with_capacity(capacity.min(remaining));
-        while batch.len() < capacity {
-            let Some(spec) = self.plan.0.tile(self.next)? else {
-                break;
-            };
-            self.next = self
-                .next
-                .checked_add(1)
-                .ok_or(TileProgramError::ArithmeticOverflow)?;
-            batch.push(spec);
-        }
-        Ok((!batch.is_empty()).then_some(batch))
     }
 
-    fn submit(&mut self, _observations: &[TileObservation]) -> Result<(), TileProgramError> {
-        Ok(())
+    #[must_use]
+    pub fn image_size(&self) -> Option<Vec2d> {
+        match self {
+            Self::Grid(grid) => Some(grid.image_size()),
+            Self::Positioned(positioned) => positioned.image_size(),
+            Self::DiscoverableGrid(_) => None,
+        }
     }
 
-    fn image_size(&self) -> Option<Vec2d> {
-        None
+    #[must_use]
+    pub fn tile_size(&self) -> Option<Vec2d> {
+        match self {
+            Self::Grid(grid) => Some(grid.tile_size()),
+            Self::Positioned(_) | Self::DiscoverableGrid(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub fn overlap(&self) -> Option<Vec2d> {
+        match self {
+            Self::Grid(grid) => Some(grid.overlap()),
+            Self::Positioned(_) | Self::DiscoverableGrid(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub fn count(&self) -> Option<u64> {
+        match self {
+            Self::Grid(grid) => Some(grid.count()),
+            Self::Positioned(positioned) => Some(positioned.count()),
+            Self::DiscoverableGrid(_) => None,
+        }
+    }
+}
+
+impl From<Grid> for TileSource {
+    fn from(value: Grid) -> Self {
+        Self::Grid(value)
+    }
+}
+
+impl From<Positioned> for TileSource {
+    fn from(value: Positioned) -> Self {
+        Self::Positioned(value)
+    }
+}
+
+impl From<DiscoverableGrid> for TileSource {
+    fn from(value: DiscoverableGrid) -> Self {
+        Self::DiscoverableGrid(value)
     }
 }
 
@@ -227,87 +444,75 @@ impl fmt::Display for TileId {
 
 #[cfg(test)]
 mod tests {
-    use super::super::adaptive::TileProgramError;
     use super::*;
 
     #[derive(Debug)]
-    struct Grid {
-        overlap: Vec2d,
-    }
+    struct Requests;
 
-    impl RectangularSource for Grid {
-        fn level_id(&self) -> StableId {
-            "level".into()
-        }
-        fn image_size(&self) -> Vec2d {
-            Vec2d { x: 5, y: 4 }
-        }
-        fn tile_size(&self) -> Vec2d {
-            Vec2d { x: 3, y: 2 }
-        }
-        fn request(&self, p: Vec2d) -> Request {
-            Request::new(format!("memory://{}/{}", p.x, p.y))
-        }
-        fn overlap(&self) -> Vec2d {
-            self.overlap
+    impl GridRequests for Requests {
+        fn request(&self, tile: GridTile) -> Request {
+            Request::new(format!("memory://{}/{}", tile.coord.column, tile.coord.row))
         }
     }
 
-    fn plan(overlap: Vec2d) -> KnownTilePlan {
-        KnownTilePlan::rectangular(Grid { overlap })
+    fn grid(overlap: Vec2d) -> Grid {
+        Grid::new(
+            "level".into(),
+            Vec2d { x: 5, y: 4 },
+            Vec2d { x: 3, y: 2 },
+            overlap,
+            Requests,
+        )
+        .unwrap()
     }
 
     #[test]
-    fn rectangular_plan_is_lazy_row_major_and_replayable() {
-        let plan = plan(Vec2d::default());
-        assert_eq!(plan.len(), 4);
-        let collect = || {
-            let mut cursor = plan.cursor();
-            cursor.take_ready(10).unwrap().unwrap()
-        };
-        let first = collect();
-        assert_eq!(first, collect());
-        assert_eq!(first[3].request.uri, "memory://1/1");
-        assert_eq!(first[3].expected_size, Some(Vec2d { x: 2, y: 2 }));
+    fn exact_count_and_row_major_coordinates() {
+        let grid = grid(Vec2d::default());
+        assert_eq!(grid.shape(), Vec2d { x: 2, y: 2 });
+        assert_eq!(grid.count(), 4);
+        let tiles: Vec<_> = grid.tiles_row_major().collect::<Result<_, _>>().unwrap();
+        assert_eq!(tiles[0].request.uri, "memory://0/0");
+        assert_eq!(tiles[1].request.uri, "memory://1/0");
+        assert_eq!(tiles[2].request.uri, "memory://0/1");
+        assert_eq!(tiles[3].expected_size, Some(Vec2d { x: 2, y: 2 }));
+    }
+
+    #[test]
+    fn overlap_rectangles_are_clipped_at_image_edges() {
+        let tiles: Vec<_> = grid(Vec2d { x: 1, y: 1 })
+            .tiles_row_major()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(tiles[0].destination, Vec2d { x: 0, y: 0 });
+        assert_eq!(tiles[0].expected_size, Some(Vec2d { x: 4, y: 3 }));
+        assert_eq!(tiles[3].destination, Vec2d { x: 2, y: 1 });
+        assert_eq!(tiles[3].expected_size, Some(Vec2d { x: 3, y: 3 }));
+    }
+
+    #[test]
+    fn zero_geometry_is_rejected() {
         assert_eq!(
-            first[3].request.headers.get("Referer").map(String::as_str),
-            Some("memory://0/0")
-        );
-    }
-
-    #[test]
-    fn cursor_batches_without_mutating_plan() {
-        let plan = plan(Vec2d::default());
-        let mut cursor = plan.cursor();
-        assert_eq!(cursor.take_ready(3).unwrap().unwrap().len(), 3);
-        assert_eq!(cursor.take_ready(3).unwrap().unwrap().len(), 1);
-        assert_eq!(cursor.take_ready(3).unwrap(), None);
-        // After consuming all tiles, further calls return None
-        assert_eq!(plan.len(), 4);
-    }
-
-    #[test]
-    fn zero_capacity_is_typed_error() {
-        assert_eq!(
-            plan(Vec2d::default()).cursor().take_ready(0),
-            Err(TileProgramError::ZeroCapacity)
-        );
-    }
-
-    #[test]
-    fn overlap_is_applied_only_after_leading_edges() {
-        let plan = plan(Vec2d { x: 1, y: 1 });
-        let origins: Vec<_> = (0..plan.len())
-            .map(|i| plan.tile(i).unwrap().unwrap().destination)
-            .collect();
-        assert_eq!(
-            origins,
-            [
-                Vec2d { x: 0, y: 0 },
-                Vec2d { x: 2, y: 0 },
+            Grid::new(
+                "level".into(),
                 Vec2d { x: 0, y: 1 },
-                Vec2d { x: 2, y: 1 }
-            ]
+                Vec2d::square(1),
+                Vec2d::default(),
+                Requests,
+            )
+            .unwrap_err(),
+            TileSourceError::ZeroImageDimensions
+        );
+        assert_eq!(
+            Grid::new(
+                "level".into(),
+                Vec2d::square(1),
+                Vec2d { x: 0, y: 1 },
+                Vec2d::default(),
+                Requests,
+            )
+            .unwrap_err(),
+            TileSourceError::ZeroTileDimensions
         );
     }
 }

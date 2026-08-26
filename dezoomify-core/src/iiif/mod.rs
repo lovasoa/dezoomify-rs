@@ -5,10 +5,9 @@ use tile_info::ImageInfo;
 
 use crate::Vec2d;
 use crate::core::discovery::DiscoveryEvent;
-use crate::core::tile_plan::RectangularSource;
 use crate::core::{
     CatalogEntry, DeferredImage, Dezoomer, DezoomerMeta, DiscoveryError, DiscoveryInput,
-    DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor, LevelPlan,
+    DiscoveryStep, Grid, GridRequests, GridTile, ImageCatalog, ImageDescriptor, LevelDescriptor,
     Request, ResourceOutcome, ResourceRequest, StableId,
 };
 use crate::iiif::tile_info::TileSizeFormat;
@@ -16,9 +15,6 @@ use crate::json_utils::all_json;
 
 pub mod manifest_types;
 pub mod tile_info;
-
-#[cfg(test)]
-use crate::core::TileProgram;
 
 #[cfg(test)]
 mod title_tests;
@@ -61,6 +57,7 @@ pub fn determine_title(image_info: &manifest_types::ExtractedImageInfo) -> Optio
 custom_error! {pub IIIFError
     JsonError{source: serde_json::Error} = "Invalid IIIF info.json file: {source}",
     ManifestParseError{description: String} = "Could not parse IIIF manifest: {description}",
+    GeometryError{description: String} = "Invalid IIIF tile grid: {description}",
 }
 
 impl From<IIIFError> for DiscoveryError {
@@ -214,14 +211,17 @@ fn manifest_type_warning(contents: &[u8]) -> Option<String> {
 
 fn levels(url: &str, raw_info: &[u8]) -> Result<Vec<LevelDescriptor>, IIIFError> {
     match serde_json::from_slice(raw_info) {
-        Ok(info) => Ok(levels_from_info(url, info)),
+        Ok(info) => levels_from_info(url, info),
         Err(e) => {
             // Due to the very fault-tolerant way we parse iiif manifests, a single javascript
             // object with a 'width' and a 'height' field is enough to be detected as an IIIF level
             // See https://github.com/lovasoa/dezoomify-rs/issues/80
             let levels: Vec<LevelDescriptor> = all_json::<ImageInfo>(raw_info)
                 .filter(ImageInfo::has_distinctive_iiif_properties)
-                .flat_map(|info| levels_from_info(url, info))
+                .map(|info| levels_from_info(url, info))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .flatten()
                 .collect();
             if levels.is_empty() {
                 Err(e.into())
@@ -232,7 +232,10 @@ fn levels(url: &str, raw_info: &[u8]) -> Result<Vec<LevelDescriptor>, IIIFError>
     }
 }
 
-fn levels_from_info(url: &str, mut image_info: ImageInfo) -> Vec<LevelDescriptor> {
+fn levels_from_info(
+    url: &str,
+    mut image_info: ImageInfo,
+) -> Result<Vec<LevelDescriptor>, IIIFError> {
     let removed_test_id = image_info.remove_test_id();
     image_info.resolve_relative_urls(url);
     let mut warnings = image_info.warnings();
@@ -256,47 +259,50 @@ fn levels_from_info(url: &str, mut image_info: ImageInfo) -> Vec<LevelDescriptor
                 let warnings = warnings.clone();
                 tile_info.scale_factors.iter().enumerate().map(
                     move |(scale_ordinal, &scale_factor)| {
+                        if scale_factor == 0 {
+                            return Err(IIIFError::GeometryError {
+                                description: "scale factor must be greater than zero".into(),
+                            });
+                        }
                         let id = StableId::new(format!(
                             "iiif:level:{tile_ordinal}:{scale_factor}:{scale_ordinal}"
                         ));
                         let source = IIIFLevel {
-                            id: id.clone(),
                             scale_factor,
-                            tile_size,
                             page_info: Arc::clone(page_info),
                             base_url: Arc::clone(base_url),
                             quality: Arc::clone(&quality),
                             format: Arc::clone(&format),
                             size_format,
                         };
-                        LevelDescriptor {
-                            id,
-                            title: Some(format!(
+                        let source = Grid::new(
+                            id.clone(),
+                            source.image_size(),
+                            tile_size,
+                            Vec2d::default(),
+                            source,
+                        )
+                        .map_err(|error| IIIFError::GeometryError {
+                            description: error.to_string(),
+                        })?;
+                        let level_size = source.image_size();
+                        Ok(LevelDescriptor::new(source)
+                            .with_title(Some(format!(
                                 "IIIF level {} (scale 1:{} {}×{} pixels)",
-                                tile_ordinal,
-                                scale_factor,
-                                source.image_size().x,
-                                source.image_size().y
-                            )),
-                            size: Some(source.image_size()),
-                            tile_size: Some(tile_size),
-                            scale_factor: Some(scale_factor),
-                            plan: LevelPlan::Known(KnownTilePlan::rectangular(source)),
-                            warnings: warnings.clone(),
-                            ..Default::default()
-                        }
+                                tile_ordinal, scale_factor, level_size.x, level_size.y
+                            )))
+                            .with_scale_factor(Some(scale_factor))
+                            .with_warnings(warnings.clone()))
                     },
                 )
             })
-            .collect();
-    levels.sort_by_key(|level| level.size.map_or(0, Vec2d::area));
-    levels
+            .collect::<Result<Vec<_>, IIIFError>>()?;
+    levels.sort_by_key(|level| level.source.image_size().map_or(0, Vec2d::area));
+    Ok(levels)
 }
 
 struct IIIFLevel {
-    id: StableId,
     scale_factor: u32,
-    tile_size: Vec2d,
     page_info: Arc<ImageInfo>,
     base_url: Arc<str>,
     quality: Arc<str>,
@@ -304,21 +310,16 @@ struct IIIFLevel {
     size_format: TileSizeFormat,
 }
 
-impl RectangularSource for IIIFLevel {
-    fn level_id(&self) -> StableId {
-        self.id.clone()
-    }
-
+impl IIIFLevel {
     fn image_size(&self) -> Vec2d {
         self.page_info.size() / self.scale_factor
     }
+}
 
-    fn tile_size(&self) -> Vec2d {
-        self.tile_size
-    }
-
-    fn request(&self, col_and_row_pos: Vec2d) -> Request {
-        let scaled_tile_size = self.tile_size * self.scale_factor;
+impl GridRequests for IIIFLevel {
+    fn request(&self, tile: GridTile) -> Request {
+        let col_and_row_pos: Vec2d = tile.coord.into();
+        let scaled_tile_size = tile.cell_size * self.scale_factor;
         let xy_pos = col_and_row_pos * scaled_tile_size;
         let scaled_tile_size = (xy_pos + scaled_tile_size).min(self.page_info.size()) - xy_pos;
         let tile_size = scaled_tile_size / self.scale_factor;
@@ -577,7 +578,7 @@ fn test_qualities() {
     }"#;
     let levels = levels("test.com", data).unwrap();
     let level = level_with_scale(&levels, 10);
-    assert_eq!(level.size, Some(Vec2d { x: 515, y: 381 })); // 5156/10, 3816/10
+    assert_eq!(level.source.image_size(), Some(Vec2d { x: 515, y: 381 })); // 5156/10, 3816/10
     let tiles = tile_urls(level);
     assert_eq!(
         tiles,
@@ -597,14 +598,11 @@ fn level_with_scale(levels: &[LevelDescriptor], scale_factor: u32) -> &LevelDesc
 
 #[cfg(test)]
 fn tile_urls(level: &LevelDescriptor) -> Vec<String> {
-    let LevelPlan::Known(plan) = &level.plan else {
-        panic!("IIIF levels have known tile plans");
+    let crate::core::TileSource::Grid(plan) = &level.source else {
+        panic!("IIIF levels are grids");
     };
-    plan.cursor()
-        .take_ready(usize::MAX)
-        .unwrap()
-        .unwrap_or_default()
-        .into_iter()
+    plan.tiles_row_major()
+        .map(Result::unwrap)
         .map(|tile| tile.request.uri)
         .collect()
 }
@@ -640,14 +638,15 @@ fn discovery_requests_metadata_then_returns_normalized_replayable_levels() {
         image
             .levels
             .windows(2)
-            .all(|pair| pair[0].size.unwrap().area() <= pair[1].size.unwrap().area())
+            .all(|pair| pair[0].source.image_size().unwrap().area()
+                <= pair[1].source.image_size().unwrap().area())
     );
     let level = level_with_scale(&image.levels, 1);
-    let LevelPlan::Known(plan) = &level.plan else {
-        panic!("IIIF tile geometry is fixed");
+    let crate::core::TileSource::Grid(plan) = &level.source else {
+        panic!("IIIF tile geometry is a grid");
     };
-    let first = plan.cursor().take_ready(1).unwrap().unwrap().pop().unwrap();
-    assert_eq!(first.id.level, level.id);
+    let first = plan.tiles_row_major().next().unwrap().unwrap();
+    assert_eq!(&first.id.level, level.id());
     assert_eq!(
         first.request.headers.get("Referer").map(String::as_str),
         Some("https://images.example/item/0,0,512,512/512,512/0/default.jpg")

@@ -2,13 +2,13 @@
 
 use crate::arguments::Arguments;
 use crate::encoder::tile_buffer::TileBuffer;
-use crate::errors::ZoomError;
+use crate::errors::{TileDownloadError, ZoomError};
 use crate::max_size_in_rect;
 use crate::network::{TileDownloader, client as network_client, user_header_names};
 use crate::throttler::Throttler;
 use crate::tile::{EncodedTile, Tile, load_encoded_tile, load_tile_with_metadata};
 use dezoomify_core::Vec2d;
-use dezoomify_core::core::{TileObservation, TileRole, TileSpec};
+use dezoomify_core::core::{ObservationResult, TileRole, TileSourceError, TileSpec};
 
 use futures::stream::StreamExt;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -29,8 +29,8 @@ impl DownloadState {
         Self::default()
     }
 
-    pub(crate) fn add_batch(&mut self, count: u64) {
-        self.total_tiles += count;
+    pub(crate) fn set_total_tiles(&mut self, count: u64) {
+        self.total_tiles = count;
     }
 
     pub(crate) fn record_output_success(&mut self) {
@@ -74,6 +74,11 @@ impl ProgressManager {
 
     pub(crate) fn set_total_tiles(&self, total: u64) {
         self.progress.set_length(total);
+    }
+
+    pub(crate) fn set_resolved_tiles(&self, total: u64, completed: u64) {
+        self.progress.set_length(total);
+        self.progress.set_position(completed);
     }
 
     pub(crate) fn set_computing_urls(&self) {
@@ -154,16 +159,14 @@ impl<'a> TileDownloadCoordinator<'a> {
         })
     }
 
-    pub(crate) async fn download_batch(
+    pub(crate) async fn download_tiles(
         &mut self,
-        tile_specs: Vec<TileSpec>,
+        tile_specs: impl IntoIterator<Item = Result<TileSpec, TileSourceError>>,
         canvas: &mut TileBuffer,
         state: &mut DownloadState,
         progress: &ProgressManager,
         canvas_size: Option<Vec2d>,
-    ) -> Result<Vec<TileObservation>, ZoomError> {
-        state.add_batch(output_tile_count(&tile_specs));
-        progress.set_total_tiles(state.total_tiles); // Update progress bar length with cumulative total
+    ) -> Result<Vec<ObservationResult>, ZoomError> {
         progress.set_requesting_tiles();
 
         prepare_canvas_size(canvas, canvas_size)?;
@@ -178,24 +181,30 @@ impl<'a> TileDownloadCoordinator<'a> {
     }
     async fn download_decoded_batch(
         &mut self,
-        tile_specs: Vec<TileSpec>,
+        tile_specs: impl IntoIterator<Item = Result<TileSpec, TileSourceError>>,
         canvas: &mut TileBuffer,
         state: &mut DownloadState,
         progress: &ProgressManager,
         canvas_size: Option<Vec2d>,
-    ) -> Result<Vec<TileObservation>, ZoomError> {
+    ) -> Result<Vec<ObservationResult>, ZoomError> {
         let mut stream = futures::stream::iter(tile_specs)
             .map(|tile_spec| {
-                self.downloader
-                    .download_tile_and_then(tile_spec, |downloaded| async move {
-                        let spec = downloaded.spec.clone();
-                        let tile = tokio::task::spawn_blocking(move || {
-                            load_tile_with_metadata(spec.destination, &downloaded.bytes)
+                let downloader = &self.downloader;
+                async move {
+                    let tile_spec = tile_spec.map_err(WorkError::Source)?;
+                    downloader
+                        .download_tile_and_then(tile_spec, |downloaded| async move {
+                            let spec = downloaded.spec.clone();
+                            let tile = tokio::task::spawn_blocking(move || {
+                                load_tile_with_metadata(spec.destination, &downloaded.bytes)
+                            })
+                            .await?
+                            .map_err(ZoomError::from)?;
+                            Ok((spec, tile))
                         })
-                        .await?
-                        .map_err(ZoomError::from)?;
-                        Ok((spec, tile))
-                    })
+                        .await
+                        .map_err(WorkError::Download)
+                }
             })
             .buffer_unordered(self.args.parallelism);
 
@@ -208,19 +217,26 @@ impl<'a> TileDownloadCoordinator<'a> {
                     state.set_tile_size(tile.size());
                     (spec, Some(tile), true)
                 }
-                Err(error) => {
+                Err(WorkError::Download(error)) => {
                     let spec = error.tile_spec;
                     let tile = (spec.role == TileRole::Output)
                         .then(|| empty_tile_for(spec.destination, state.tile_size, canvas_size))
                         .flatten();
                     (spec, tile, false)
                 }
+                Err(WorkError::Source(error)) => {
+                    return Err(ZoomError::Dezoomer {
+                        message: error.to_string(),
+                    });
+                }
             };
             if spec.role != TileRole::Output {
                 observations.push(if success {
-                    TileObservation::available(spec.id.clone(), state.tile_size.unwrap())
+                    ObservationResult::Available {
+                        size: state.tile_size.unwrap(),
+                    }
                 } else {
-                    TileObservation::missing(spec.id.clone())
+                    ObservationResult::Missing
                 });
             }
             progress.update_for_tile(tile.as_ref(), success);
@@ -240,23 +256,29 @@ impl<'a> TileDownloadCoordinator<'a> {
 
     async fn download_encoded_batch(
         &mut self,
-        tile_specs: Vec<TileSpec>,
+        tile_specs: impl IntoIterator<Item = Result<TileSpec, TileSourceError>>,
         canvas: &mut TileBuffer,
         state: &mut DownloadState,
         progress: &ProgressManager,
-    ) -> Result<Vec<TileObservation>, ZoomError> {
+    ) -> Result<Vec<ObservationResult>, ZoomError> {
         let mut stream = futures::stream::iter(tile_specs)
             .map(|tile_spec| {
-                self.downloader
-                    .download_tile_and_then(tile_spec, |downloaded| async move {
-                        let spec = downloaded.spec.clone();
-                        let tile = tokio::task::spawn_blocking(move || {
-                            load_encoded_tile(spec.destination, downloaded.bytes)
+                let downloader = &self.downloader;
+                async move {
+                    let tile_spec = tile_spec.map_err(WorkError::Source)?;
+                    downloader
+                        .download_tile_and_then(tile_spec, |downloaded| async move {
+                            let spec = downloaded.spec.clone();
+                            let tile = tokio::task::spawn_blocking(move || {
+                                load_encoded_tile(spec.destination, downloaded.bytes)
+                            })
+                            .await?
+                            .map_err(ZoomError::from)?;
+                            Ok((spec, tile))
                         })
-                        .await?
-                        .map_err(ZoomError::from)?;
-                        Ok((spec, tile))
-                    })
+                        .await
+                        .map_err(WorkError::Download)
+                }
             })
             .buffer_unordered(self.args.parallelism);
 
@@ -270,13 +292,20 @@ impl<'a> TileDownloadCoordinator<'a> {
                     state.set_tile_size(tile.size);
                     (spec, Some(tile), true)
                 }
-                Err(error) => (error.tile_spec, None, false),
+                Err(WorkError::Download(error)) => (error.tile_spec, None, false),
+                Err(WorkError::Source(error)) => {
+                    return Err(ZoomError::Dezoomer {
+                        message: error.to_string(),
+                    });
+                }
             };
             if spec.role != TileRole::Output {
                 observations.push(if success {
-                    TileObservation::available(spec.id.clone(), state.tile_size.unwrap())
+                    ObservationResult::Available {
+                        size: state.tile_size.unwrap(),
+                    }
                 } else {
-                    TileObservation::missing(spec.id.clone())
+                    ObservationResult::Missing
                 });
             }
             progress.update_for_encoded_tile(tile.as_ref(), success);
@@ -293,6 +322,12 @@ impl<'a> TileDownloadCoordinator<'a> {
         }
         Ok(observations)
     }
+}
+
+#[derive(Debug)]
+enum WorkError {
+    Source(TileSourceError),
+    Download(TileDownloadError),
 }
 
 // Helper function, private to this module
@@ -334,19 +369,11 @@ fn empty_tile_for(
     }
 }
 
-fn output_tile_count(tile_specs: &[TileSpec]) -> u64 {
-    tile_specs
-        .iter()
-        .filter(|spec| spec.role == TileRole::Output)
-        .count() as u64
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{empty_tile_for, output_tile_count};
+    use super::{ProgressManager, empty_tile_for};
     use crate::max_size_in_rect;
     use dezoomify_core::Vec2d;
-    use dezoomify_core::core::{ProcessingRecipe, Request, StableId, TileId, TileRole, TileSpec};
 
     #[test]
     fn empty_tiles_are_clipped_to_canvas() {
@@ -366,7 +393,6 @@ mod tests {
     #[test]
     fn missing_probe_and_output_is_not_a_partial_output() {
         let mut state = super::DownloadState::new();
-        state.add_batch(0);
         assert!(!state.has_partial_failure());
         state.record_probe_output_success();
         assert_eq!(state.total_tiles, 1);
@@ -375,16 +401,12 @@ mod tests {
     }
 
     #[test]
-    fn probe_and_output_is_not_precounted() {
-        let spec = |role| TileSpec {
-            id: TileId::new(StableId::from("level"), 0),
-            request: Request::new("memory://tile"),
-            destination: Vec2d { x: 0, y: 0 },
-            expected_size: None,
-            processing: ProcessingRecipe::None,
-            role,
-        };
-        assert_eq!(output_tile_count(&[spec(TileRole::ProbeAndOutput)]), 0);
-        assert_eq!(output_tile_count(&[spec(TileRole::Output)]), 1);
+    fn resolved_progress_discards_out_of_grid_probes() {
+        let progress = ProgressManager::new();
+        progress.increment();
+        progress.increment();
+        progress.set_resolved_tiles(4, 1);
+        assert_eq!(progress.progress.position(), 1);
+        assert_eq!(progress.progress.length(), Some(4));
     }
 }

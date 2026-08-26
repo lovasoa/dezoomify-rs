@@ -1,12 +1,10 @@
 //! Generic URL-template discovery backed by core's executable adaptive plan.
 
-use std::sync::Arc;
-
-use crate::core::adaptive::{GenericAdaptivePlan, is_generic_template};
+use crate::core::adaptive::is_generic_template;
 use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
-    CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
-    DiscoveryStep, ImageCatalog, ImageDescriptor, LevelDescriptor, LevelPlan, StableId,
+    CatalogEntry, Dezoomer, DezoomerMeta, DiscoverableGrid, DiscoveryDiagnostic, DiscoveryError,
+    DiscoveryInput, DiscoveryStep, ImageCatalog, ImageDescriptor, LevelDescriptor, StableId,
 };
 
 /// Generic template dezoomer.
@@ -24,20 +22,15 @@ impl Dezoomer for Generic {
             DiscoveryEvent::Start if !self.complete => {
                 self.complete = true;
                 let level_id = StableId::new("generic:level");
-                let plan = Arc::new(GenericAdaptivePlan::new(
-                    level_id.clone(),
-                    self.template.clone(),
-                ));
                 Ok(DiscoveryStep::Complete(ImageCatalog::new([
                     CatalogEntry::Ready(ImageDescriptor {
                         id: StableId::new("generic:image"),
                         title: Some(self.template.clone()),
                         format: StableId::new("generic"),
-                        levels: vec![LevelDescriptor {
-                            id: level_id,
-                            plan: LevelPlan::Adaptive(plan),
-                            ..Default::default()
-                        }],
+                        levels: vec![LevelDescriptor::new(DiscoverableGrid::new(
+                            level_id,
+                            self.template.clone(),
+                        ))],
                         ..Default::default()
                     }),
                 ])))

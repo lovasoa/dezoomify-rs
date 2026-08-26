@@ -28,7 +28,8 @@ use crate::encoder::tile_buffer::TileBuffer;
 use crate::native::NativeDiscoveryDriver;
 use crate::output_file::reserve_output_file;
 use dezoomify_core::core::{
-    CatalogEntry, DeferredImage, ImageCatalog, ImageDescriptor, LevelDescriptor, default_registry,
+    CatalogEntry, DeferredImage, DiscoverableStep, ImageCatalog, ImageDescriptor, LevelDescriptor,
+    TileSource, default_registry,
 };
 
 use crate::registry::registry_for_cli;
@@ -87,7 +88,9 @@ fn resolve_index(requested: usize, available_count: usize) -> usize {
 
 /// Finds the position of a level with the specified size hint
 fn find_level_with_size(levels: &[LevelDescriptor], target_size: Vec2d) -> Option<usize> {
-    levels.iter().position(|l| l.size == Some(target_size))
+    levels
+        .iter()
+        .position(|level| level.source.image_size() == Some(target_size))
 }
 
 /// An interactive level picker
@@ -126,7 +129,8 @@ fn choose_level(
                 return Ok(levels.swap_remove(actual_level));
             }
 
-            if let Some(best_size) = args.best_size(levels.iter().filter_map(|l| l.size))
+            if let Some(best_size) =
+                args.best_size(levels.iter().filter_map(|level| level.source.image_size()))
                 && let Some(pos) = find_level_with_size(&levels, best_size)
             {
                 return Ok(levels.swap_remove(pos));
@@ -298,7 +302,9 @@ fn can_dezoomify_source_pyramid(path: &Path, args: &Arguments, levels: &[LevelDe
     output_prefers_source_pyramid(path, args)
         && largest_level_size(levels).is_some()
         && levels.iter().all(|level| {
-            level.size.is_some() && level.tile_size.is_some() && !level.has_overlapping_tiles
+            level.source.image_size().is_some()
+                && level.source.tile_size().is_some()
+                && level.source.overlap() == Some(Vec2d::default())
         })
 }
 
@@ -311,17 +317,17 @@ async fn dezoomify_source_pyramid(
     let full_size = largest_level_size(&levels).ok_or(ZoomError::NoLevels)?;
     let base_scale_factor = levels
         .iter()
-        .filter(|level| level.size == Some(full_size))
+        .filter(|level| level.source.image_size() == Some(full_size))
         .filter_map(|level| level.scale_factor)
         .filter(|&scale_factor| scale_factor > 0)
         .min()
         .unwrap_or(1);
-    levels.sort_by_key(|level| std::cmp::Reverse(level_area(level.size)));
+    levels.sort_by_key(|level| std::cmp::Reverse(level_area(level.source.image_size())));
 
     let mut total_tiles = 0;
     let mut successful_tiles = 0;
     for (index, level) in levels.into_iter().enumerate() {
-        let level_size = level.size.unwrap_or(full_size);
+        let level_size = level.source.image_size().unwrap_or(full_size);
         let scale_factor =
             source_level_scale_factor(full_size, level_size, level.scale_factor, base_scale_factor);
         canvas
@@ -329,8 +335,8 @@ async fn dezoomify_source_pyramid(
                 index,
                 size: full_size,
                 scale_factor,
-                tile_size: level.tile_size,
-                has_overlapping_tiles: level.has_overlapping_tiles,
+                tile_size: level.source.tile_size(),
+                has_overlapping_tiles: level.source.overlap() != Some(Vec2d::default()),
             })
             .await?;
         let state = dezoomify_level_into_buffer(args, level, &mut canvas).await?;
@@ -369,7 +375,7 @@ fn source_level_scale_factor(
 fn largest_level_size(levels: &[LevelDescriptor]) -> Option<Vec2d> {
     levels
         .iter()
-        .filter_map(|level| level.size)
+        .filter_map(|level| level.source.image_size())
         .max_by_key(|size| level_area(Some(*size)))
 }
 
@@ -429,7 +435,7 @@ pub async fn dezoomify(args: &Arguments) -> Result<PathBuf, ZoomError> {
             output_file.as_deref(),
             title.as_deref(),
             &base_dir,
-            zoom_level.size,
+            zoom_level.source.image_size(),
         )?;
         let tile_buffer = create_tile_buffer(save_as.clone(), args.compression);
         info!(
@@ -650,8 +656,8 @@ async fn process_bulk_image(
         "Selected zoom level for image {}: {} ({}x{})",
         index + 1,
         zoom_level.title.as_deref().unwrap_or("level"),
-        zoom_level.size.map_or(0, |s| s.x),
-        zoom_level.size.map_or(0, |s| s.y)
+        zoom_level.source.image_size().map_or(0, |s| s.x),
+        zoom_level.source.image_size().map_or(0, |s| s.y)
     );
 
     let level_title = zoom_level
@@ -663,7 +669,7 @@ async fn process_bulk_image(
         indexed_outfile.as_deref(),
         Some(&level_title),
         base_dir,
-        zoom_level.size,
+        zoom_level.source.image_size(),
     );
     if let Err(error) = reserve_output_file(&save_as) {
         let file_name = save_as
@@ -776,7 +782,7 @@ pub async fn dezoomify_level(
     level: LevelDescriptor,
     tile_buffer: TileBuffer,
 ) -> Result<(), ZoomError> {
-    debug!("Starting to dezoomify level {:?}", level.id);
+    debug!("Starting to dezoomify level {:?}", level.id());
     let mut canvas = tile_buffer;
     let state = dezoomify_level_into_buffer(args, level, &mut canvas).await?;
     validate_download_success(&state)?;
@@ -796,33 +802,84 @@ async fn dezoomify_level_into_buffer(
 
     progress.set_computing_urls();
 
-    let level_size = level.size;
-    let mut program = level.plan.start_program();
-    loop {
-        let Some(specs) =
-            program
-                .take_ready(args.parallelism)
-                .map_err(|error| ZoomError::Dezoomer {
-                    message: error.to_string(),
-                })?
-        else {
-            break;
-        };
-        let observations = coordinator
-            .download_batch(
-                specs,
-                canvas,
-                &mut state,
-                &progress,
-                program.image_size().or(level_size),
-            )
-            .await?;
-        if !observations.is_empty() {
-            program
-                .submit(&observations)
-                .map_err(|error| ZoomError::Dezoomer {
-                    message: error.to_string(),
-                })?;
+    match level.source {
+        TileSource::Grid(grid) => {
+            state.set_total_tiles(grid.count());
+            progress.set_total_tiles(grid.count());
+            coordinator
+                .download_tiles(
+                    grid.tiles_row_major(),
+                    canvas,
+                    &mut state,
+                    &progress,
+                    Some(grid.image_size()),
+                )
+                .await?;
+        }
+        TileSource::Positioned(positioned) => {
+            state.set_total_tiles(positioned.count());
+            progress.set_total_tiles(positioned.count());
+            coordinator
+                .download_tiles(
+                    positioned.tiles(),
+                    canvas,
+                    &mut state,
+                    &progress,
+                    positioned.image_size(),
+                )
+                .await?;
+        }
+        TileSource::DiscoverableGrid(discoverable) => {
+            let mut step = discoverable.start();
+            loop {
+                step = match step {
+                    DiscoverableStep::Probe { tile, continuation } => {
+                        let result = coordinator
+                            .download_tiles(
+                                std::iter::once(Ok(tile)),
+                                canvas,
+                                &mut state,
+                                &progress,
+                                None,
+                            )
+                            .await?
+                            .pop()
+                            .ok_or_else(|| ZoomError::Dezoomer {
+                                message: "generic probe produced no observation".into(),
+                            })?;
+                        continuation
+                            .submit(result)
+                            .map_err(|error| ZoomError::Dezoomer {
+                                message: error.to_string(),
+                            })?
+                    }
+                    DiscoverableStep::Resolved {
+                        grid,
+                        previously_output,
+                    } => {
+                        state.set_total_tiles(grid.count());
+                        progress.set_resolved_tiles(grid.count(), state.successful_tiles);
+                        let remaining = grid.tiles_row_major().filter(move |tile| {
+                            tile.as_ref()
+                                .map_or(true, |tile| !previously_output.contains(&tile.destination))
+                        });
+                        coordinator
+                            .download_tiles(
+                                remaining,
+                                canvas,
+                                &mut state,
+                                &progress,
+                                Some(grid.image_size()),
+                            )
+                            .await?;
+                        break;
+                    }
+                    DiscoverableStep::Empty => {
+                        progress.set_resolved_tiles(0, 0);
+                        break;
+                    }
+                };
+            }
         }
     }
 
@@ -848,46 +905,40 @@ pub fn max_size_in_rect(position: Vec2d, tile_size: Vec2d, canvas_size: Vec2d) -
 mod tests {
     use super::*;
     use clap::Parser;
-    use dezoomify_core::core::LevelPlan;
+    use dezoomify_core::core::{DiscoverableGrid, Grid, GridRequests, GridTile, Request};
 
     fn test_level(
         size: Option<Vec2d>,
         tile_size: Option<Vec2d>,
         overlaps: bool,
     ) -> LevelDescriptor {
-        // Minimal rectangular source for tests
         #[derive(Debug)]
-        struct DummySource {
-            size: Option<Vec2d>,
-            tile: Option<Vec2d>,
-        }
-        impl dezoomify_core::core::tile_plan::RectangularSource for DummySource {
-            fn level_id(&self) -> dezoomify_core::core::StableId {
-                "test-level".into()
-            }
-            fn image_size(&self) -> Vec2d {
-                self.size.unwrap_or(Vec2d::square(1))
-            }
-            fn tile_size(&self) -> Vec2d {
-                self.tile.unwrap_or(Vec2d::square(256))
-            }
-            fn request(&self, p: Vec2d) -> dezoomify_core::core::Request {
-                dezoomify_core::core::Request::new(format!("memory://{}/{}", p.x, p.y))
+        struct DummyRequests;
+        impl GridRequests for DummyRequests {
+            fn request(&self, tile: GridTile) -> Request {
+                Request::new(format!("memory://{}/{}", tile.coord.column, tile.coord.row))
             }
         }
-        LevelDescriptor {
-            id: "test-level".into(),
-            size,
-            tile_size,
-            has_overlapping_tiles: overlaps,
-            plan: LevelPlan::Known(dezoomify_core::core::KnownTilePlan::rectangular(
-                DummySource {
-                    size,
-                    tile: tile_size,
+        let Some(size) = size else {
+            return LevelDescriptor::new(DiscoverableGrid::new(
+                "test-level".into(),
+                "memory://{{x}}/{{y}}".into(),
+            ));
+        };
+        LevelDescriptor::new(
+            Grid::new(
+                "test-level".into(),
+                size,
+                tile_size.unwrap_or(Vec2d::square(256)),
+                if overlaps {
+                    Vec2d::square(1)
+                } else {
+                    Vec2d::default()
                 },
-            )),
-            ..Default::default()
-        }
+                DummyRequests,
+            )
+            .unwrap(),
+        )
     }
 
     fn test_levels(sizes: &[u32]) -> Vec<LevelDescriptor> {
@@ -954,15 +1005,15 @@ mod tests {
         let mut args = Arguments::default();
         args.zoom_level = Some(0);
         let selected = choose_level(test_levels(&[100, 200, 400]), &args).unwrap();
-        assert_eq!(selected.size, Some(Vec2d::square(100)));
+        assert_eq!(selected.source.image_size(), Some(Vec2d::square(100)));
 
         args.zoom_level = Some(1);
         let selected = choose_level(test_levels(&[100, 200, 400]), &args).unwrap();
-        assert_eq!(selected.size, Some(Vec2d::square(200)));
+        assert_eq!(selected.source.image_size(), Some(Vec2d::square(200)));
 
         args.zoom_level = Some(10);
         let selected = choose_level(test_levels(&[100, 200, 400]), &args).unwrap();
-        assert_eq!(selected.size, Some(Vec2d::square(400)));
+        assert_eq!(selected.source.image_size(), Some(Vec2d::square(400)));
     }
 
     #[test]
@@ -1078,13 +1129,6 @@ mod tests {
             &missing_size
         ));
 
-        let missing_tile_size = vec![test_level(Some(Vec2d::square(512)), None, false)];
-        assert!(!can_dezoomify_source_pyramid(
-            Path::new("output.tiff"),
-            &Arguments::default(),
-            &missing_tile_size
-        ));
-
         let overlapping = vec![test_level(
             Some(Vec2d::square(512)),
             Some(Vec2d::square(256)),
@@ -1135,7 +1179,7 @@ mod tests {
 
         // Complete success - no partial failure
         let mut success_state = download_state::DownloadState::new();
-        success_state.add_batch(10);
+        success_state.set_total_tiles(10);
         for _ in 0..10 {
             success_state.record_output_success();
         }
@@ -1143,7 +1187,7 @@ mod tests {
 
         // Partial failure
         let mut partial_state = download_state::DownloadState::new();
-        partial_state.add_batch(10);
+        partial_state.set_total_tiles(10);
         for _ in 0..8 {
             partial_state.record_output_success();
         }

@@ -8,11 +8,10 @@ use serde::Deserialize;
 
 use crate::Vec2d;
 use crate::core::discovery::DiscoveryEvent;
-use crate::core::tile_plan::RectangularSource;
 use crate::core::{
     CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
-    DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor, LevelPlan,
-    ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
+    DiscoveryStep, Grid, GridRequests, GridTile, ImageCatalog, ImageDescriptor, LevelDescriptor,
+    Request, ResourceOutcome, ResourceRequest, StableId,
 };
 use crate::json_utils::number_or_string;
 
@@ -108,27 +107,32 @@ fn catalog(uri: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
         .to_owned();
     let metadata = Arc::new(metadata);
     let mut levels: Vec<_> = (0..=metadata.level_count())
-        .map(|index| {
+        .filter_map(|index| {
             let size = Vec2d::from(metadata.size) / 2_u32.pow(metadata.level_count() - index);
+            (size.x > 0 && size.y > 0).then_some((index, size))
+        })
+        .map(|(index, size)| {
             let level_id = StableId::new(format!("nypl:{index}"));
             let source = NyplLevel {
                 id: Arc::from(id.as_str()),
                 metadata: Arc::clone(&metadata),
                 index,
-                level_id: level_id.clone(),
             };
-            LevelDescriptor {
-                id: level_id,
-                title: Some(format!("NYPL level {index} ({}×{} pixels)", size.x, size.y)),
-                size: Some(size),
-                tile_size: Some(Vec2d::square(metadata.tile_size)),
-                has_overlapping_tiles: metadata.overlap > 0,
-                plan: LevelPlan::Known(KnownTilePlan::rectangular(source)),
-                ..Default::default()
-            }
+            let source = Grid::new(
+                level_id.clone(),
+                size,
+                Vec2d::square(metadata.tile_size),
+                Vec2d::square(metadata.overlap),
+                source,
+            )
+            .map_err(|error| DiscoveryError::Session(format!("invalid NYPL grid: {error}")))?;
+            Ok(LevelDescriptor::new(source).with_title(Some(format!(
+                "NYPL level {index} ({}×{} pixels)",
+                size.x, size.y
+            ))))
         })
-        .collect();
-    levels.sort_by_key(|level| level.size.map_or(0, Vec2d::area));
+        .collect::<Result<Vec<_>, DiscoveryError>>()?;
+    levels.sort_by_key(|level| level.source.image_size().map_or(0, Vec2d::area));
     Ok(ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
         id: StableId::new("nypl:image"),
         format: StableId::new("nypl"),
@@ -142,29 +146,14 @@ struct NyplLevel {
     id: Arc<str>,
     metadata: Arc<Metadata>,
     index: u32,
-    level_id: StableId,
 }
-impl RectangularSource for NyplLevel {
-    fn level_id(&self) -> StableId {
-        self.level_id.clone()
-    }
-    fn image_size(&self) -> Vec2d {
-        Vec2d::from(self.metadata.size) / 2_u32.pow(self.metadata.level_count() - self.index)
-    }
-    fn tile_size(&self) -> Vec2d {
-        Vec2d::square(self.metadata.tile_size)
-    }
-    fn request(&self, cell: Vec2d) -> Request {
+impl GridRequests for NyplLevel {
+    fn request(&self, tile: GridTile) -> Request {
+        let cell: Vec2d = tile.coord.into();
         Request::new(format!(
             "{META}{}/tiles/0/{}/{}_{}.{}",
             self.id, self.index, cell.x, cell.y, self.metadata.format
         ))
-    }
-    fn overlap(&self) -> Vec2d {
-        Vec2d::square(self.metadata.overlap)
-    }
-    fn processing(&self) -> ProcessingRecipe {
-        ProcessingRecipe::None
     }
 }
 
@@ -205,7 +194,7 @@ impl From<MetadataSize> for Vec2d {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::TileProgram;
+    use crate::core::TileSource;
     #[test]
     fn parses_metadata_and_tile_url() {
         let bytes = br#"{"configs":{"0":{"size":{"width":"2422","height":"3000"},"tilesize":"256","overlap":"2","format":"png"}}}"#;
@@ -215,14 +204,14 @@ mod tests {
             unreachable!()
         };
         assert_eq!(
-            image.levels.last().unwrap().size,
+            image.levels.last().unwrap().source.image_size(),
             Some(Vec2d { x: 2422, y: 3000 })
         );
-        let LevelPlan::Known(plan) = &image.levels.last().unwrap().plan else {
+        let TileSource::Grid(plan) = &image.levels.last().unwrap().source else {
             unreachable!()
         };
         assert_eq!(
-            plan.cursor().take_ready(1).unwrap().unwrap()[0].request.uri,
+            plan.tiles_row_major().next().unwrap().unwrap().request.uri,
             "https://access.nypl.org/image.php/a/tiles/0/12/0_0.png"
         );
         assert_eq!(image_id("https://digitalcollections.nypl.org/items/a14f3200-fac1-012f-f7a4-58d385a7bbd0#item-data").as_deref(), Some("a14f3200-fac1-012f-f7a4-58d385a7bbd0"));

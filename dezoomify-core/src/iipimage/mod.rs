@@ -6,11 +6,10 @@ use std::sync::Arc;
 
 use crate::Vec2d;
 use crate::core::discovery::DiscoveryEvent;
-use crate::core::tile_plan::RectangularSource;
 use crate::core::{
     CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
-    DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor, LevelPlan,
-    ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
+    DiscoveryStep, Grid, GridRequests, GridTile, ImageCatalog, ImageDescriptor, LevelDescriptor,
+    Request, ResourceOutcome, ResourceRequest, StableId,
 };
 
 /// `IIPImage` dezoomer.
@@ -84,22 +83,24 @@ fn catalog(uri: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
             let size = metadata.size / 2_u32.pow(reverse);
             let id = StableId::new(format!("iip:{index}"));
             let source = IipLevel {
-                metadata: Arc::clone(&metadata),
                 base: Arc::clone(&base),
                 index,
-                id: id.clone(),
             };
-            LevelDescriptor {
-                id,
-                title: Some(format!("IIP level {index} ({}×{} pixels)", size.x, size.y)),
-                size: Some(size),
-                tile_size: Some(metadata.tile_size),
-                plan: LevelPlan::Known(KnownTilePlan::rectangular(source)),
-                ..Default::default()
-            }
+            let source = Grid::new(
+                id.clone(),
+                size,
+                metadata.tile_size,
+                Vec2d::default(),
+                source,
+            )
+            .map_err(|error| DiscoveryError::Session(format!("invalid IIP grid: {error}")))?;
+            Ok(LevelDescriptor::new(source).with_title(Some(format!(
+                "IIP level {index} ({}×{} pixels)",
+                size.x, size.y
+            ))))
         })
-        .collect();
-    levels.sort_by_key(|level| level.size.map_or(0, Vec2d::area));
+        .collect::<Result<Vec<_>, DiscoveryError>>()?;
+    levels.sort_by_key(|level| level.source.image_size().map_or(0, Vec2d::area));
     Ok(ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
         id: StableId::new("iip:image"),
         format: StableId::new("iipimage"),
@@ -110,32 +111,15 @@ fn catalog(uri: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
 
 #[derive(Clone, Debug)]
 struct IipLevel {
-    metadata: Arc<Metadata>,
     base: Arc<str>,
     index: u32,
-    id: StableId,
 }
-impl RectangularSource for IipLevel {
-    fn level_id(&self) -> StableId {
-        self.id.clone()
-    }
-    fn image_size(&self) -> Vec2d {
-        self.metadata.size / 2_u32.pow(self.metadata.levels - self.index - 1)
-    }
-    fn tile_size(&self) -> Vec2d {
-        self.metadata.tile_size
-    }
-    fn request(&self, cell: Vec2d) -> Request {
-        let width = self.image_size().ceil_div(self.tile_size()).x;
+impl GridRequests for IipLevel {
+    fn request(&self, tile: GridTile) -> Request {
         Request::new(format!(
             "{}&JTL={},{}",
-            self.base,
-            self.index,
-            cell.y * width + cell.x
+            self.base, self.index, tile.row_major_ordinal
         ))
-    }
-    fn processing(&self) -> ProcessingRecipe {
-        ProcessingRecipe::None
     }
 }
 
@@ -194,6 +178,7 @@ impl TryFrom<&[u8]> for Metadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::TileSource;
 
     #[test]
     fn lowercase_fif_urls_request_canonical_metadata() {
@@ -221,28 +206,35 @@ mod tests {
             panic!("IIP metadata did not produce an image")
         };
         assert_eq!(image.levels.len(), 2);
-        assert_eq!(image.levels[0].size, Some(Vec2d { x: 256, y: 256 }));
-        assert_eq!(image.levels[1].size, Some(Vec2d { x: 512, y: 512 }));
-        let LevelPlan::Known(low_plan) = &image.levels[0].plan else {
-            panic!("IIP levels must have known plans")
-        };
-        assert_eq!(low_plan.len(), 1);
         assert_eq!(
-            low_plan.tile(0).unwrap().unwrap().request.uri,
+            image.levels[0].source.image_size(),
+            Some(Vec2d { x: 256, y: 256 })
+        );
+        assert_eq!(
+            image.levels[1].source.image_size(),
+            Some(Vec2d { x: 512, y: 512 })
+        );
+        let TileSource::Grid(low_plan) = &image.levels[0].source else {
+            panic!("IIP levels must be grids")
+        };
+        assert_eq!(low_plan.count(), 1);
+        assert_eq!(
+            low_plan
+                .tiles_row_major()
+                .next()
+                .unwrap()
+                .unwrap()
+                .request
+                .uri,
             "http://test.com/&JTL=0,0"
         );
-        let LevelPlan::Known(plan) = &image.levels[1].plan else {
-            panic!("IIP levels must have known plans")
+        let TileSource::Grid(plan) = &image.levels[1].source else {
+            panic!("IIP levels must be grids")
         };
-        assert_eq!(plan.len(), 4);
-        assert_eq!(
-            plan.tile(0).unwrap().unwrap().request.uri,
-            "http://test.com/&JTL=1,0"
-        );
-        assert_eq!(
-            plan.tile(2).unwrap().unwrap().request.uri,
-            "http://test.com/&JTL=1,2"
-        );
+        assert_eq!(plan.count(), 4);
+        let tiles: Vec<_> = plan.tiles_row_major().map(Result::unwrap).collect();
+        assert_eq!(tiles[0].request.uri, "http://test.com/&JTL=1,0");
+        assert_eq!(tiles[2].request.uri, "http://test.com/&JTL=1,2");
     }
 
     #[test]

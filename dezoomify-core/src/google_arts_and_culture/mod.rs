@@ -2,10 +2,9 @@
 
 use crate::Vec2d;
 use crate::core::discovery::DiscoveryEvent;
-use crate::core::tile_plan::RectangularSource;
 use crate::core::{
     CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
-    DiscoveryStep, ImageCatalog, ImageDescriptor, KnownTilePlan, LevelDescriptor, LevelPlan,
+    DiscoveryStep, Grid, GridRequests, GridTile, ImageCatalog, ImageDescriptor, LevelDescriptor,
     ProcessingRecipe, Request, ResourceOutcome, ResourceRequest, StableId,
 };
 use std::sync::Arc;
@@ -90,27 +89,21 @@ fn catalog(page: &Arc<PageInfo>, bytes: &[u8]) -> Result<ImageCatalog, Discovery
                 y: tile_height * level.num_tiles_y - level.empty_pels_y,
             };
             let id = StableId::new(format!("gap:{z}"));
+            let tile_size = Vec2d {
+                x: tile_width,
+                y: tile_height,
+            };
             let source = GapLevel {
-                size,
-                tile_size: Vec2d {
-                    x: tile_width,
-                    y: tile_height,
-                },
                 z,
                 page: Arc::clone(page),
-                id: id.clone(),
             };
-            LevelDescriptor {
-                id,
-                title: Some(page.name.clone()),
-                size: Some(size),
-                tile_size: Some(source.tile_size),
-                plan: LevelPlan::Known(KnownTilePlan::rectangular(source)),
-                ..Default::default()
-            }
+            let source = Grid::new(id.clone(), size, tile_size, Vec2d::default(), source).map_err(
+                |error| DiscoveryError::Session(format!("invalid Google Arts grid: {error}")),
+            )?;
+            Ok(LevelDescriptor::new(source).with_title(Some(page.name.clone())))
         })
-        .collect();
-    levels.sort_by_key(|level| level.size.map_or(0, Vec2d::area));
+        .collect::<Result<Vec<_>, DiscoveryError>>()?;
+    levels.sort_by_key(|level| level.source.image_size().map_or(0, Vec2d::area));
     Ok(ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
         id: StableId::new("gap:image"),
         title: Some(page.name.clone()),
@@ -121,23 +114,12 @@ fn catalog(page: &Arc<PageInfo>, bytes: &[u8]) -> Result<ImageCatalog, Discovery
 }
 #[derive(Debug)]
 struct GapLevel {
-    size: Vec2d,
-    tile_size: Vec2d,
     z: usize,
     page: Arc<PageInfo>,
-    id: StableId,
 }
-impl RectangularSource for GapLevel {
-    fn level_id(&self) -> StableId {
-        self.id.clone()
-    }
-    fn image_size(&self) -> Vec2d {
-        self.size
-    }
-    fn tile_size(&self) -> Vec2d {
-        self.tile_size
-    }
-    fn request(&self, cell: Vec2d) -> Request {
+impl GridRequests for GapLevel {
+    fn request(&self, tile: GridTile) -> Request {
+        let cell: Vec2d = tile.coord.into();
         Request::new(url::compute_url(&self.page, cell.x, cell.y, self.z))
     }
     fn processing(&self) -> ProcessingRecipe {
@@ -148,8 +130,7 @@ impl RectangularSource for GapLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::TileProgram;
-    use crate::core::{RequestId, ResourceResponse};
+    use crate::core::{RequestId, ResourceResponse, TileSource};
 
     fn response(bytes: &[u8]) -> ResourceOutcome {
         ResourceOutcome::Response(ResourceResponse {
@@ -227,12 +208,13 @@ mod tests {
             image
                 .levels
                 .windows(2)
-                .all(|levels| { levels[0].size.unwrap().area() <= levels[1].size.unwrap().area() })
+                .all(|levels| levels[0].source.image_size().unwrap().area()
+                    <= levels[1].source.image_size().unwrap().area())
         );
-        let LevelPlan::Known(plan) = &image.levels[0].plan else {
-            panic!("Google Arts geometry is known");
+        let TileSource::Grid(plan) = &image.levels[0].source else {
+            panic!("Google Arts geometry is a grid");
         };
-        let tile = plan.cursor().take_ready(1).unwrap().unwrap().pop().unwrap();
+        let tile = plan.tiles_row_major().next().unwrap().unwrap();
         assert_eq!(tile.processing, ProcessingRecipe::GoogleArtsDecrypt);
     }
 
@@ -257,18 +239,19 @@ mod tests {
         assert_eq!(image.title.as_deref(), Some("©Designers Anonymes"));
 
         let level = image.levels.last().expect("largest level");
-        assert_eq!(level.size, Some(Vec2d { x: 5436, y: 4080 }));
-        assert_eq!(level.tile_size, Some(Vec2d { x: 512, y: 512 }));
-        let LevelPlan::Known(plan) = &level.plan else {
-            panic!("Google Arts geometry is known");
+        assert_eq!(level.source.image_size(), Some(Vec2d { x: 5436, y: 4080 }));
+        assert_eq!(level.source.tile_size(), Some(Vec2d { x: 512, y: 512 }));
+        let TileSource::Grid(plan) = &level.source else {
+            panic!("Google Arts geometry is a grid");
         };
-        assert_eq!(plan.len(), 88);
-        let first = plan.tile(0).unwrap().unwrap();
+        assert_eq!(plan.count(), 88);
+        let tiles: Vec<_> = plan.tiles_row_major().map(Result::unwrap).collect();
+        let first = &tiles[0];
         assert_eq!(first.destination, Vec2d::default());
         assert_eq!(first.expected_size, Some(Vec2d { x: 512, y: 512 }));
         assert!(first.request.uri.contains("=x0-y0-z4-t"));
         assert_eq!(first.processing, ProcessingRecipe::GoogleArtsDecrypt);
-        let last = plan.tile(87).unwrap().unwrap();
+        let last = &tiles[87];
         assert_eq!(last.destination, Vec2d { x: 5120, y: 3584 });
         assert_eq!(last.expected_size, Some(Vec2d { x: 316, y: 496 }));
         assert!(last.request.uri.contains("=x10-y7-z4-t"));
