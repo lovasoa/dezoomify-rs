@@ -711,7 +711,7 @@ mod tests {
             .map(LevelDescriptor::display_label)
             .collect();
         assert!(labels[0].contains("Cube forward"));
-        assert!(labels.iter().all(|l| l.contains("1000 x 100 pixels")));
+        assert!(labels.iter().all(|l| l.contains(" 1000 x   100 pixels")));
         let unique: std::collections::HashSet<&String> = labels.iter().collect();
         assert_eq!(unique.len(), labels.len(), "labels: {labels:?}");
         assert_eq!(

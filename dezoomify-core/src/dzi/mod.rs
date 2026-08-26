@@ -108,8 +108,8 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
             let source = Grid::new(id, size, tile_size, Vec2d::square(image.overlap), level)
                 .map_err(|error| DiscoveryError::Session(format!("invalid DZI grid: {error}")))?;
             Ok(LevelDescriptor::new(source).with_title(Some(format!(
-                "DZI level {ordinal} ({}×{} pixels)",
-                size.x, size.y
+                "DZI level {ordinal} ({: >5}×{: >5} pixels)",
+                size.x, size.y,
             ))))
         })
         .collect::<Result<Vec<_>, DiscoveryError>>()?;

@@ -288,8 +288,8 @@ fn levels_from_info(
                         let level_size = source.image_size();
                         Ok(LevelDescriptor::new(source)
                             .with_title(Some(format!(
-                                "IIIF level {} (scale 1:{} {}×{} pixels)",
-                                tile_ordinal, scale_factor, level_size.x, level_size.y
+                                "IIIF level {} (scale 1:{} {: >5}×{: >5} pixels)",
+                                tile_ordinal, scale_factor, level_size.x, level_size.y,
                             )))
                             .with_scale_factor(Some(scale_factor))
                             .with_warnings(warnings.clone()))

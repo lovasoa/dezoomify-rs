@@ -127,8 +127,8 @@ fn catalog(uri: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
             )
             .map_err(|error| DiscoveryError::Session(format!("invalid NYPL grid: {error}")))?;
             Ok(LevelDescriptor::new(source).with_title(Some(format!(
-                "NYPL level {index} ({}×{} pixels)",
-                size.x, size.y
+                "NYPL level {index} ({: >5}×{: >5} pixels)",
+                size.x, size.y,
             ))))
         })
         .collect::<Result<Vec<_>, DiscoveryError>>()?;

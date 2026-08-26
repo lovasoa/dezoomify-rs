@@ -89,8 +89,8 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
                 |error| DiscoveryError::Session(format!("invalid Zoomify grid: {error}")),
             )?;
             Ok(LevelDescriptor::new(source).with_title(Some(format!(
-                "{base_name} Zoomify level {index} ({}×{} pixels)",
-                size.x, size.y
+                "{base_name} Zoomify level {index} ({: >5}×{: >5} pixels)",
+                size.x, size.y,
             ))))
         })
         .collect::<Result<Vec<_>, DiscoveryError>>()?;

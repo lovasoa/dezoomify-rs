@@ -167,7 +167,7 @@ impl LevelDescriptor {
         let _ = write!(out, "{label} (");
         let mut sep = "";
         if let Some(Vec2d { x, y }) = size {
-            let _ = write!(out, "{x: >5} x {y} pixels");
+            let _ = write!(out, "{x: >5} x {y: >5} pixels");
             sep = ",";
         }
         if let Some(count) = count {
@@ -340,8 +340,7 @@ mod tests {
         .unwrap()
         .into();
         let label = level.display_label();
-        assert!(label.contains("100 x 100 pixels"));
-        assert!(label.contains("1 tiles"));
+        assert_eq!(label, "level (  100 x   100 pixels,   1 tiles)");
         level.title = Some("Krpano Cube forward".into());
         assert!(level.display_label().starts_with("Krpano Cube forward ("));
     }
