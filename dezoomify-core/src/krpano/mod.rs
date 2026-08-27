@@ -1,27 +1,31 @@
 //! Pure, resumable discovery for krpano panoramas.
 
 use std::collections::HashSet;
-use std::fmt::{self, Write as _};
+use std::fmt;
 use std::sync::{Arc, LazyLock};
 
 use itertools::Itertools;
 use regex::Regex;
 
 use krpano_decrypt::{decrypt_xml, is_encrypted_xml};
-use krpano_metadata::{KrpanoMetadata, TemplateString, TemplateStringPart, XY};
+use krpano_metadata::{KrpanoMetadata, XY, all_sides};
 use log::{debug, info, warn};
 
 use crate::Vec2d;
 use crate::core::discovery::DiscoveryEvent;
 use crate::core::resolve_relative;
 use crate::core::{
-    CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
+    CatalogEntry, Dezoomer, DezoomerSpec, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
     DiscoveryStep, Grid, GridRequests, GridTile, ImageCatalog, ImageDescriptor, LevelDescriptor,
     Request, ResourceOutcome, ResourceRequest, StableId,
 };
 use crate::krpano::krpano_metadata::{ImageInfo, LevelDesc};
+use crate::template::Template;
 
 mod krpano_metadata;
+
+pub const SPEC: DezoomerSpec =
+    DezoomerSpec::stateful("krpano", start).preferring(|uri| uri.contains("tiles.xml"));
 
 /// The krpano metadata dezoomer.
 ///
@@ -68,16 +72,11 @@ impl Dezoomer for Krpano {
     }
 }
 
-impl DezoomerMeta for Krpano {
-    const NAME: &'static str = "krpano";
-    const URL_HINTS: &'static [&'static str] = &["tiles.xml"];
-
-    fn start(input: &DiscoveryInput) -> Self {
-        Self {
-            input_uri: input.uri.clone(),
-            state: SessionState::Initial,
-        }
-    }
+fn start(input: &DiscoveryInput) -> Box<dyn Dezoomer> {
+    Box::new(Krpano {
+        input_uri: input.uri.clone(),
+        state: SessionState::Initial,
+    })
 }
 
 impl Krpano {
@@ -532,7 +531,7 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
                     continue;
                 };
                 let level_number = level_index + base_index as usize;
-                for (side_name, template) in template.all_sides(level_number) {
+                for (side_name, template) in all_sides(template, level_number) {
                     let ordinal = levels.len();
                     let id = StableId::new(format!(
                         "krpano:{image_index}:{source_index}:{ordinal}:{side_name}"
@@ -602,7 +601,7 @@ fn format_level_label(shape: &str, side: &str, scene: &str) -> String {
 struct KrpanoLevel {
     base_url: Arc<str>,
     base_index: u32,
-    template: TemplateString<XY>,
+    template: Template<XY>,
     label: String,
 }
 
@@ -615,25 +614,13 @@ impl fmt::Debug for KrpanoLevel {
 impl GridRequests for KrpanoLevel {
     fn request(&self, tile: GridTile) -> Request {
         let cell: Vec2d = tile.coord.into();
-        let mut relative = String::new();
-        for part in &self.template.0 {
-            match part {
-                TemplateStringPart::Literal(value) => relative += value,
-                TemplateStringPart::Variable { padding, variable } => {
-                    write!(
-                        relative,
-                        "{value:0padding$}",
-                        value = self.base_index
-                            + match variable {
-                                XY::X => cell.x,
-                                XY::Y => cell.y,
-                            },
-                        padding = *padding,
-                    )
-                    .expect("writing to String cannot fail");
+        let relative = self.template.render(|variable| {
+            self.base_index
+                + match variable {
+                    XY::X => cell.x,
+                    XY::Y => cell.y,
                 }
-            }
-        }
+        });
         Request::new(resolve_relative(&self.base_url, &relative))
     }
 }
@@ -667,7 +654,7 @@ mod tests {
 
     fn discover_single_resource(uri: &str, bytes: Vec<u8>) -> ImageCatalog {
         let input = DiscoveryInput::from(uri);
-        let mut session = Krpano::start(&input);
+        let mut session = start(&input);
         assert!(matches!(
             session.advance(DiscoveryEvent::Start).unwrap(),
             DiscoveryStep::Need(ResourceRequest { request })
@@ -980,7 +967,7 @@ mod tests {
 
     #[test]
     fn viewer_js_is_detected_before_html_embed_markers() {
-        let mut session = Krpano::start(&DiscoveryInput::from("https://example.com/krpano.js"));
+        let mut session = start(&DiscoveryInput::from("https://example.com/krpano.js"));
         let _ = session.advance(DiscoveryEvent::Start).unwrap();
         let step = session
             .advance(DiscoveryEvent::Resource(&ResourceOutcome::Response(
@@ -997,7 +984,7 @@ mod tests {
 
     #[test]
     fn old_create_pano_viewer_js_is_detected_as_viewer_js() {
-        let mut session = Krpano::start(&DiscoveryInput::from("https://example.com/viewer.js"));
+        let mut session = start(&DiscoveryInput::from("https://example.com/viewer.js"));
         let _ = session.advance(DiscoveryEvent::Start).unwrap();
         let step = session
             .advance(DiscoveryEvent::Resource(&ResourceOutcome::Response(

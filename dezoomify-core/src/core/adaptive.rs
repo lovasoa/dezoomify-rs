@@ -3,9 +3,10 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use regex::{Captures, Regex};
+use regex::Regex;
 
 use crate::Vec2d;
+use crate::template::{Part, Template};
 
 use super::model::{Request, StableId, TileId, TileRole, TileSpec};
 use super::tile_plan::{Grid, GridRequests, GridTile, TileSourceError};
@@ -26,33 +27,55 @@ pub fn is_generic_template(template: &str) -> bool {
     TEMPLATE_RE.is_match(template)
 }
 
-fn render_template(template: &str, x: u32, y: u32) -> String {
-    TEMPLATE_RE
-        .replace_all(template, |caps: &Captures| {
-            let num = if caps["dimension"].eq_ignore_ascii_case("x") {
-                x
-            } else {
-                y
-            };
-            let padding = caps
-                .name("zeroes")
-                .and_then(|value| value.as_str().parse().ok())
-                .unwrap_or(0);
-            format!("{num:0padding$}")
-        })
-        .into_owned()
+#[derive(Clone, Copy, Debug)]
+enum Dimension {
+    X,
+    Y,
+}
+
+fn parse_template(input: String) -> Template<Dimension> {
+    let input = input.into_boxed_str();
+    let mut cursor = 0;
+    let mut parts = Vec::new();
+    for captures in TEMPLATE_RE.captures_iter(&input) {
+        let matched = captures.get(0).expect("a capture has a full match");
+        parts.push(Part::literal(&input[cursor..matched.start()]));
+        let dimension = if captures["dimension"].eq_ignore_ascii_case("x") {
+            Dimension::X
+        } else {
+            Dimension::Y
+        };
+        let padding = captures
+            .name("zeroes")
+            .and_then(|value| value.as_str().parse().ok())
+            .unwrap_or(0);
+        parts.push(Part::Hole(dimension, padding));
+        cursor = matched.end();
+    }
+    parts.push(Part::literal(&input[cursor..]));
+    Template(parts)
+}
+
+fn render_template(template: &Template<Dimension>, x: u32, y: u32) -> String {
+    template.render(|dimension| match dimension {
+        Dimension::X => x,
+        Dimension::Y => y,
+    })
 }
 
 #[derive(Clone, Debug)]
 pub struct DiscoverableGrid {
     level: StableId,
-    template: String,
+    template: Template<Dimension>,
 }
 
 impl DiscoverableGrid {
     #[must_use]
     pub fn new(level: StableId, template: String) -> Self {
-        Self { level, template }
+        Self {
+            level,
+            template: parse_template(template),
+        }
     }
 
     #[must_use]
@@ -122,7 +145,7 @@ impl ProbeContinuation {
 
 #[derive(Debug)]
 struct GenericRequests {
-    template: String,
+    template: Template<Dimension>,
 }
 
 impl GridRequests for GenericRequests {
@@ -363,6 +386,15 @@ impl Dichotomy2d {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generic_template_preserves_syntax_and_padding() {
+        let template = parse_template("a/{{ X:03 }}/{{y}}/{{z}}/{{x:bad}}".into());
+        assert_eq!(
+            render_template(&template, 4, 12),
+            "a/004/12/{{z}}/{{x:bad}}"
+        );
+    }
 
     #[test]
     fn generic_resolves_to_exact_grid() {

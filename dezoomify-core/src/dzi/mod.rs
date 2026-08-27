@@ -6,63 +6,26 @@ use dzi_file::DziFile;
 use regex::Regex;
 
 use crate::Vec2d;
-use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
-    CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryError, DiscoveryInput, DiscoveryStep, Grid,
-    GridRequests, GridTile, ImageCatalog, ImageDescriptor, LevelDescriptor, Request,
-    ResourceOutcome, ResourceRequest, StableId,
+    CatalogEntry, DezoomerSpec, DiscoveryError, Grid, ImageCatalog, ImageDescriptor,
+    LevelDescriptor, Request, ResourceRequest, StableId,
 };
 use crate::json_utils::all_json;
 
 mod dzi_file;
 
-/// Deep Zoom Image dezoomer.
-pub struct Dzi {
-    input: String,
-    requested: bool,
-    metadata_uri: Option<String>,
-}
+pub const SPEC: DezoomerSpec =
+    DezoomerSpec::routed("deepzoom", |uri| Ok(metadata_request(uri)), load_catalog)
+        .preferring(|uri| uri.contains(".dzi") || uri.contains("_files/"));
 
-impl Dezoomer for Dzi {
-    fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
-        match event {
-            DiscoveryEvent::Start if !self.requested => {
-                self.requested = true;
-                let tile = Regex::new("_files/\\d+/\\d+_\\d+\\.(jpe?g|png)$")
-                    .expect("constant DZI tile pattern");
-                let uri = tile.find(&self.input).map_or_else(
-                    || self.input.clone(),
-                    |matched| format!("{}.dzi", &self.input[..matched.start()]),
-                );
-                self.metadata_uri = Some(uri.clone());
-                Ok(DiscoveryStep::Need(ResourceRequest::new(uri)))
-            }
-            DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => load_catalog(
-                self.metadata_uri.as_deref().unwrap_or(&self.input),
-                &response.bytes,
-            )
-            .map(DiscoveryStep::Complete),
-            DiscoveryEvent::Resource(ResourceOutcome::Failure(failure)) => {
-                Err(DiscoveryError::Session(failure.message.clone()))
-            }
-            DiscoveryEvent::Start => {
-                Err(DiscoveryError::Session("DZI session started twice".into()))
-            }
-        }
-    }
-}
-
-impl DezoomerMeta for Dzi {
-    const NAME: &'static str = "deepzoom";
-    const URL_HINTS: &'static [&'static str] = &[".dzi", "_files/"];
-
-    fn start(input: &DiscoveryInput) -> Self {
-        Self {
-            input: input.uri.clone(),
-            requested: false,
-            metadata_uri: None,
-        }
-    }
+fn metadata_request(input: &str) -> ResourceRequest {
+    let tile =
+        Regex::new("_files/\\d+/\\d+_\\d+\\.(jpe?g|png)$").expect("constant DZI tile pattern");
+    let uri = tile.find(input).map_or_else(
+        || input.to_owned(),
+        |matched| format!("{}.dzi", &input[..matched.start()]),
+    );
+    ResourceRequest::new(uri)
 }
 
 fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
@@ -99,14 +62,19 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
         .zip((0..=max_level).rev())
         .enumerate()
         .map(|(ordinal, (size, zoom))| {
-            let id = StableId::new(format!("dzi:{image_index}:{ordinal}"));
-            let level = DziLevel {
-                base_url: Arc::clone(&base_url),
-                format: image.format.clone(),
-                zoom,
-            };
-            let source = Grid::new(id, size, tile_size, Vec2d::square(image.overlap), level)
-                .map_err(|error| DiscoveryError::Session(format!("invalid DZI grid: {error}")))?;
+            let base_url = Arc::clone(&base_url);
+            let format = image.format.clone();
+            let source = Grid::with_requests(
+                format!("dzi:{image_index}:{ordinal}").into(),
+                size,
+                tile_size,
+                Vec2d::square(image.overlap),
+                move |tile| {
+                    let cell: Vec2d = tile.coord.into();
+                    Request::new(format!("{base_url}/{zoom}/{}_{}.{format}", cell.x, cell.y))
+                },
+            )
+            .map_err(|error| DiscoveryError::Session(format!("invalid DZI grid: {error}")))?;
             Ok(LevelDescriptor::new(source).with_title(Some(format!(
                 "DZI level {ordinal} ({: >5}×{: >5} pixels)",
                 size.x, size.y,
@@ -128,23 +96,6 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
         }));
     }
     Ok(ImageCatalog::new(entries))
-}
-
-#[derive(Debug)]
-struct DziLevel {
-    base_url: Arc<str>,
-    format: String,
-    zoom: u32,
-}
-
-impl GridRequests for DziLevel {
-    fn request(&self, tile: GridTile) -> Request {
-        let cell: Vec2d = tile.coord.into();
-        Request::new(format!(
-            "{}/{}/{}_{}.{}",
-            self.base_url, self.zoom, cell.x, cell.y, self.format
-        ))
-    }
 }
 
 #[cfg(test)]

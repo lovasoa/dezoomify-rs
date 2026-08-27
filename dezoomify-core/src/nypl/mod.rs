@@ -7,11 +7,9 @@ use regex::Regex;
 use serde::Deserialize;
 
 use crate::Vec2d;
-use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
-    CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
-    DiscoveryStep, Grid, GridRequests, GridTile, ImageCatalog, ImageDescriptor, LevelDescriptor,
-    Request, ResourceOutcome, ResourceRequest, StableId,
+    CatalogEntry, DezoomerSpec, DiscoveryError, Grid, ImageCatalog, ImageDescriptor,
+    LevelDescriptor, Request, ResourceRequest, StableId,
 };
 use crate::json_utils::number_or_string;
 
@@ -19,61 +17,23 @@ const VIEW: &str = "https://digitalcollections.nypl.org/items/";
 const META: &str = "https://access.nypl.org/image.php/";
 const POSTFIX: &str = "/tiles/config.js";
 
-pub struct Nypl {
-    input: String,
-    requested: bool,
-    metadata_uri: Option<String>,
-}
+pub const SPEC: DezoomerSpec = DezoomerSpec::routed("nypl", metadata_request, catalog)
+    .recognizing(
+        |uri| uri.starts_with(VIEW) || uri.starts_with(META),
+        "not an NYPL image URL",
+    )
+    .preferring(|uri| uri.contains("digitalcollections.nypl.org"));
 
-impl Dezoomer for Nypl {
-    fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
-        match event {
-            DiscoveryEvent::Start if !self.requested => {
-                self.requested = true;
-                let meta = if self.input.starts_with(VIEW) {
-                    let id = image_id(&self.input).ok_or_else(|| {
-                        DiscoveryError::Session(format!(
-                            "unable to extract NYPL image ID from {:?}",
-                            self.input
-                        ))
-                    })?;
-                    format!("{META}{id}{POSTFIX}")
-                } else if self.input.starts_with(META) {
-                    self.input.clone()
-                } else {
-                    return Ok(DiscoveryStep::Reject(DiscoveryDiagnostic::from(
-                        "not an NYPL image URL",
-                    )));
-                };
-                self.metadata_uri = Some(meta.clone());
-                Ok(DiscoveryStep::Need(ResourceRequest::new(meta)))
-            }
-            DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => catalog(
-                self.metadata_uri.as_deref().unwrap_or(&self.input),
-                &response.bytes,
-            )
-            .map(DiscoveryStep::Complete),
-            DiscoveryEvent::Resource(ResourceOutcome::Failure(failure)) => {
-                Err(DiscoveryError::Session(failure.message.clone()))
-            }
-            DiscoveryEvent::Start => {
-                Err(DiscoveryError::Session("NYPL session started twice".into()))
-            }
-        }
-    }
-}
-
-impl DezoomerMeta for Nypl {
-    const NAME: &'static str = "nypl";
-    const URL_HINTS: &'static [&'static str] = &["digitalcollections.nypl.org"];
-
-    fn start(input: &DiscoveryInput) -> Self {
-        Self {
-            input: input.uri.clone(),
-            requested: false,
-            metadata_uri: None,
-        }
-    }
+fn metadata_request(input: &str) -> Result<ResourceRequest, DiscoveryError> {
+    let uri = if input.starts_with(VIEW) {
+        let id = image_id(input).ok_or_else(|| {
+            DiscoveryError::Session(format!("unable to extract NYPL image ID from {input:?}"))
+        })?;
+        format!("{META}{id}{POSTFIX}")
+    } else {
+        input.to_owned()
+    };
+    Ok(ResourceRequest::new(uri))
 }
 
 fn image_id(uri: &str) -> Option<String> {
@@ -112,18 +72,20 @@ fn catalog(uri: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
             (size.x > 0 && size.y > 0).then_some((index, size))
         })
         .map(|(index, size)| {
-            let level_id = StableId::new(format!("nypl:{index}"));
-            let source = NyplLevel {
-                id: Arc::from(id.as_str()),
-                metadata: Arc::clone(&metadata),
-                index,
-            };
-            let source = Grid::new(
-                level_id.clone(),
+            let id: Arc<str> = Arc::from(id.as_str());
+            let format = metadata.format.clone();
+            let source = Grid::with_requests(
+                format!("nypl:{index}").into(),
                 size,
                 Vec2d::square(metadata.tile_size),
                 Vec2d::square(metadata.overlap),
-                source,
+                move |tile| {
+                    let cell: Vec2d = tile.coord.into();
+                    Request::new(format!(
+                        "{META}{id}/tiles/0/{index}/{}_{}.{format}",
+                        cell.x, cell.y
+                    ))
+                },
             )
             .map_err(|error| DiscoveryError::Session(format!("invalid NYPL grid: {error}")))?;
             Ok(LevelDescriptor::new(source).with_title(Some(format!(
@@ -139,22 +101,6 @@ fn catalog(uri: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
         levels,
         ..Default::default()
     })]))
-}
-
-#[derive(Clone, Debug)]
-struct NyplLevel {
-    id: Arc<str>,
-    metadata: Arc<Metadata>,
-    index: u32,
-}
-impl GridRequests for NyplLevel {
-    fn request(&self, tile: GridTile) -> Request {
-        let cell: Vec2d = tile.coord.into();
-        Request::new(format!(
-            "{META}{}/tiles/0/{}/{}_{}.{}",
-            self.id, self.index, cell.x, cell.y, self.metadata.format
-        ))
-    }
 }
 
 #[derive(Debug, Deserialize)]

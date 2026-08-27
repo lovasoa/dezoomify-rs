@@ -5,56 +5,19 @@ use std::collections::{BTreeMap, HashMap};
 use serde::Deserialize;
 
 use crate::Vec2d;
-use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
-    CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
-    DiscoveryStep, ImageCatalog, ImageDescriptor, LevelDescriptor, Positioned, ProcessingRecipe,
-    Request, ResourceOutcome, ResourceRequest, StableId, TileSourceError,
+    CatalogEntry, DezoomerSpec, DiscoveryError, ImageCatalog, ImageDescriptor, LevelDescriptor,
+    Positioned, ProcessingRecipe, Request, StableId, TileSourceError, input_resource,
 };
 use crate::default_headers;
 
 mod tile_set;
 mod variable;
 
-/// Explicit YAML layout dezoomer.
-pub struct Custom {
-    uri: String,
-    requested: bool,
-}
-
-impl Dezoomer for Custom {
-    fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
-        match event {
-            DiscoveryEvent::Start if !self.uri.ends_with("tiles.yaml") => Ok(
-                DiscoveryStep::Reject(DiscoveryDiagnostic::from("not a tiles.yaml file")),
-            ),
-            DiscoveryEvent::Start if !self.requested => {
-                self.requested = true;
-                Ok(DiscoveryStep::Need(ResourceRequest::new(self.uri.clone())))
-            }
-            DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
-                catalog_from_yaml(&response.bytes).map(DiscoveryStep::Complete)
-            }
-            DiscoveryEvent::Resource(ResourceOutcome::Failure(failure)) => {
-                Err(DiscoveryError::Session(failure.message.clone()))
-            }
-            DiscoveryEvent::Start => Err(DiscoveryError::Session(
-                "custom YAML session started twice".into(),
-            )),
-        }
-    }
-}
-
-impl DezoomerMeta for Custom {
-    const NAME: &'static str = "custom";
-
-    fn start(input: &DiscoveryInput) -> Self {
-        Self {
-            uri: input.uri.clone(),
-            requested: false,
-        }
-    }
-}
+pub const SPEC: DezoomerSpec = DezoomerSpec::routed("custom", input_resource, |_, bytes| {
+    catalog_from_yaml(bytes)
+})
+.recognizing(|uri| uri.ends_with("tiles.yaml"), "not a tiles.yaml file");
 
 #[derive(Deserialize)]
 struct CustomYamlTiles {

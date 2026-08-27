@@ -4,6 +4,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Deserializer, de};
 
 use crate::Vec2d;
+use crate::template::{Part, Template, push_padded};
 
 #[derive(Debug, Deserialize, Default)]
 pub struct KrpanoMetadata {
@@ -188,14 +189,14 @@ pub struct LevelDesc {
     pub name: &'static str,
     pub size: Vec2d,
     pub tilesize: Option<Vec2d>,
-    pub url: TemplateString<TemplateVariable>,
+    pub url: Template<TemplateVariable>,
     pub level_index: usize,
 }
 
 #[derive(Deserialize, PartialEq, Eq, Debug)]
 pub struct ShapeDesc {
     #[serde(rename = "@url")]
-    url: TemplateString<TemplateVariable>,
+    url: Template<TemplateVariable>,
     #[serde(rename = "@multires")]
     multires: Option<String>,
 }
@@ -323,10 +324,7 @@ fn parse_multires(s: &str) -> impl Iterator<Item = Result<(Vec2d, Vec2d), &'stat
     })
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct TemplateString<T>(pub Vec<TemplateStringPart<T>>);
-
-impl<'de> Deserialize<'de> for TemplateString<TemplateVariable> {
+impl<'de> Deserialize<'de> for Template<TemplateVariable> {
     fn deserialize<D>(deserializer: D) -> Result<Self, <D as Deserializer<'de>>::Error>
     where
         D: Deserializer<'de>,
@@ -338,11 +336,11 @@ impl<'de> Deserialize<'de> for TemplateString<TemplateVariable> {
     }
 }
 
-impl FromStr for TemplateString<TemplateVariable> {
+impl FromStr for Template<TemplateVariable> {
     type Err = String;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        use TemplateStringPart::{Literal, Variable};
+        use Part::{Hole, Literal};
         use TemplateVariable::{LevelIndex, Side, X, Y};
         use itertools::Itertools;
         let mut chars = input.chars();
@@ -357,85 +355,61 @@ impl FromStr for TemplateString<TemplateVariable> {
             }
             let padding = 1 + chars.take_while_ref(|&c| c == '0').count();
             parts.push(match chars.next() {
-                Some('h' | 'x' | 'u' | 'c') => Variable {
-                    padding,
-                    variable: X,
-                },
-                Some('v' | 'y' | 'r') => Variable {
-                    padding,
-                    variable: Y,
-                },
-                Some('s') => Variable {
-                    padding,
-                    variable: Side,
-                },
-                Some('l') => Variable {
-                    padding,
-                    variable: LevelIndex,
-                },
+                Some('h' | 'x' | 'u' | 'c') => Hole(X, padding),
+                Some('v' | 'y' | 'r') => Hole(Y, padding),
+                Some('s') => Hole(Side, padding),
+                Some('l') => Hole(LevelIndex, padding),
                 Some('%') => Literal(Arc::from("%")),
                 Some(x) => return Err(format!("Unknown template variable '{x}' in '{input}'")),
                 None => return Err(format!("Invalid templating syntax in '{input}'")),
             });
         }
-        Ok(TemplateString(parts))
+        Ok(Template(parts))
     }
 }
 
-impl TemplateString<TemplateVariable> {
-    pub fn all_sides(
-        self,
-        level: usize,
-    ) -> impl Iterator<Item = (&'static str, TemplateString<XY>)> + 'static {
-        let has_side = self.0.iter().any(|x| match x {
-            TemplateStringPart::Variable { variable, .. } => *variable == TemplateVariable::Side,
-            TemplateStringPart::Literal(_) => false,
-        });
-        let sides = if has_side {
-            &["forward", "back", "left", "right", "up", "down"][..]
-        } else {
-            &[""]
-        };
-        sides.iter().map(move |&side| {
-            (
-                side,
-                TemplateString(
-                    self.0
-                        .iter()
-                        .map(|part| part.with_side(side, level))
-                        .collect(),
-                ),
-            )
-        })
-    }
+pub fn all_sides(
+    template: Template<TemplateVariable>,
+    level: usize,
+) -> impl Iterator<Item = (&'static str, Template<XY>)> + 'static {
+    let has_side = template
+        .0
+        .iter()
+        .any(|part| matches!(part, Part::Hole(TemplateVariable::Side, _)));
+    let sides = if has_side {
+        &["forward", "back", "left", "right", "up", "down"][..]
+    } else {
+        &[""]
+    };
+    sides.iter().map(move |&side| {
+        (
+            side,
+            Template(
+                template
+                    .0
+                    .iter()
+                    .map(|part| part.with_side(side, level))
+                    .collect(),
+            ),
+        )
+    })
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum TemplateStringPart<T> {
-    Literal(Arc<str>),
-    Variable { padding: usize, variable: T },
-}
-
-impl TemplateStringPart<TemplateVariable> {
-    fn with_side(&self, side: &'static str, level: usize) -> TemplateStringPart<XY> {
-        use TemplateStringPart::{Literal, Variable};
+impl Part<TemplateVariable> {
+    fn with_side(&self, side: &'static str, level: usize) -> Part<XY> {
+        use Part::{Hole, Literal};
         use TemplateVariable::{LevelIndex, Side, X, Y};
         match self {
             Literal(s) => Literal(Arc::clone(s)),
-            Variable { padding, variable } => {
+            Hole(variable, padding) => {
                 let padding = *padding;
                 match variable {
-                    X => Variable {
-                        padding,
-                        variable: XY::X,
-                    },
-                    Y => Variable {
-                        padding,
-                        variable: XY::Y,
-                    },
+                    X => Hole(XY::X, padding),
+                    Y => Hole(XY::Y, padding),
                     Side => Literal(Arc::from(&side[..1])),
                     LevelIndex => {
-                        let idx_str = format!("{level:0padding$}");
+                        let mut idx_str = String::new();
+                        push_padded(&mut idx_str, level, padding);
                         Literal(Arc::from(idx_str))
                     }
                 }
@@ -461,33 +435,24 @@ pub enum XY {
 #[cfg(test)]
 mod test {
     use super::KrpanoLevel::{Cube, Cylinder, Left, Mobile};
-    use super::TemplateStringPart::{Literal, Variable};
     use super::TemplateVariable::{LevelIndex, X, Y};
     use super::*;
+    use crate::template::Part::{Hole, Literal};
 
-    fn str(s: &str) -> TemplateStringPart<TemplateVariable> {
+    fn str(s: &str) -> Part<TemplateVariable> {
         Literal(Arc::from(s))
     }
 
-    fn x(padding: usize) -> TemplateStringPart<TemplateVariable> {
-        Variable {
-            padding,
-            variable: X,
-        }
+    fn x(padding: usize) -> Part<TemplateVariable> {
+        Hole(X, padding)
     }
 
-    fn y(padding: usize) -> TemplateStringPart<TemplateVariable> {
-        Variable {
-            padding,
-            variable: Y,
-        }
+    fn y(padding: usize) -> Part<TemplateVariable> {
+        Hole(Y, padding)
     }
 
-    fn lvl(padding: usize) -> TemplateStringPart<TemplateVariable> {
-        Variable {
-            padding,
-            variable: LevelIndex,
-        }
+    fn lvl(padding: usize) -> Part<TemplateVariable> {
+        Hole(LevelIndex, padding)
     }
 
     #[test]
@@ -516,7 +481,7 @@ mod test {
                         tiledimagewidth: 31646,
                         tiledimageheight: 38234,
                         shape: vec![KrpanoLevel::Cylinder(ShapeDesc {
-                            url: TemplateString(vec![
+                            url: Template(vec![
                                 str("monomane.tiles/l7/"),
                                 y(1),
                                 str("/l7_"),
@@ -581,7 +546,7 @@ mod test {
                 tiledimagewidth: 3280,
                 tiledimageheight: 3280,
                 shape: vec![Left(ShapeDesc {
-                    url: TemplateString(vec![
+                    url: Template(vec![
                         str("https://example.com/"),
                         y(4),
                         str("/"),
@@ -610,7 +575,7 @@ mod test {
         assert_eq!(
             image.into_levels().collect::<Vec<_>>(),
             vec![KrpanoLevel::Flat(ShapeDesc {
-                url: TemplateString(vec![str("https://example.com/"),]),
+                url: Template(vec![str("https://example.com/"),]),
                 multires: Some("512,768x554,1664x1202,3200x2310,6400x4618,12800x9234".to_string()),
             })]
         );
@@ -637,7 +602,7 @@ mod test {
         assert_eq!(
             images[0].image.level,
             vec![Mobile(vec![Cube(ShapeDesc {
-                url: TemplateString(vec![str("test.jpg")]),
+                url: Template(vec![str("test.jpg")]),
                 multires: None,
             })])]
         );
@@ -666,7 +631,7 @@ mod test {
                 tiledimagewidth: 7424,
                 tiledimageheight: 9590,
                 shape: vec![Cylinder(ShapeDesc {
-                    url: TemplateString(vec![
+                    url: Template(vec![
                         str("xxx/"),
                         y(2),
                         str("/l5_"),
@@ -765,7 +730,7 @@ mod test {
     #[test]
     fn test_templatestring() {
         assert_eq!(
-            Ok(TemplateString(vec![x(3), str("%"), y(2), lvl(1)])),
+            Ok(Template(vec![x(3), str("%"), y(2), lvl(1)])),
             "%00x%%%0y%l".parse()
         );
     }

@@ -4,11 +4,9 @@ use custom_error::custom_error;
 use tile_info::ImageInfo;
 
 use crate::Vec2d;
-use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
-    CatalogEntry, DeferredImage, Dezoomer, DezoomerMeta, DiscoveryError, DiscoveryInput,
-    DiscoveryStep, Grid, GridRequests, GridTile, ImageCatalog, ImageDescriptor, LevelDescriptor,
-    Request, ResourceOutcome, ResourceRequest, StableId,
+    CatalogEntry, DeferredImage, DezoomerSpec, DiscoveryError, Grid, GridRequests, GridTile,
+    ImageCatalog, ImageDescriptor, LevelDescriptor, Request, StableId, input_resource,
 };
 use crate::iiif::tile_info::TileSizeFormat;
 use crate::json_utils::all_json;
@@ -19,12 +17,11 @@ pub mod tile_info;
 #[cfg(test)]
 mod title_tests;
 
-/// IIIF dezoomer.
-/// See <https://iiif.io/>
-pub struct Iiif {
-    uri: String,
-    requested: bool,
-}
+/// IIIF dezoomer. See <https://iiif.io/>.
+pub const SPEC: DezoomerSpec =
+    DezoomerSpec::routed("iiif", input_resource, catalog).preferring(|uri| {
+        uri.contains("info.json") || uri.contains("iiif") || uri.contains("manifest.json")
+    });
 
 /// Determines the best title for an image from IIIF manifest metadata
 #[must_use]
@@ -63,38 +60,6 @@ custom_error! {pub IIIFError
 impl From<IIIFError> for DiscoveryError {
     fn from(err: IIIFError) -> Self {
         Self::Session(err.to_string())
-    }
-}
-
-impl Dezoomer for Iiif {
-    fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
-        match event {
-            DiscoveryEvent::Start if !self.requested => {
-                self.requested = true;
-                Ok(DiscoveryStep::Need(ResourceRequest::new(self.uri.clone())))
-            }
-            DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
-                catalog(&self.uri, &response.bytes).map(DiscoveryStep::Complete)
-            }
-            DiscoveryEvent::Resource(ResourceOutcome::Failure(failure)) => {
-                Err(DiscoveryError::Session(failure.message.clone()))
-            }
-            DiscoveryEvent::Start => {
-                Err(DiscoveryError::Session("IIIF session started twice".into()))
-            }
-        }
-    }
-}
-
-impl DezoomerMeta for Iiif {
-    const NAME: &'static str = "iiif";
-    const URL_HINTS: &'static [&'static str] = &["info.json", "iiif", "manifest.json"];
-
-    fn start(input: &DiscoveryInput) -> Self {
-        Self {
-            uri: input.uri.clone(),
-            requested: false,
-        }
     }
 }
 
@@ -609,28 +574,23 @@ fn tile_urls(level: &LevelDescriptor) -> Vec<String> {
 
 #[test]
 fn discovery_requests_metadata_then_returns_normalized_replayable_levels() {
-    let input = DiscoveryInput::from("https://example.com/image/info.json");
-    let mut session = Iiif::start(&input);
-    let DiscoveryStep::Need(need) = session.advance(DiscoveryEvent::Start).unwrap() else {
-        panic!("IIIF must request its metadata");
-    };
-    assert_eq!(need.request.uri, input.uri);
-
-    let response = ResourceOutcome::Response(crate::core::ResourceResponse {
-        id: crate::core::RequestId(0),
-        bytes: br#"{
+    let mut registry = crate::core::Registry::new();
+    registry.register(SPEC);
+    let mut operation = registry.start("https://example.com/image/info.json");
+    let need = operation.missing_resources().unwrap().pop().unwrap();
+    assert_eq!(need.request.uri, "https://example.com/image/info.json");
+    operation
+        .provide(crate::core::ResourceResponse {
+            id: need.id,
+            bytes: br#"{
           "type":"ImageService3", "id":"https://images.example/item",
           "width":1000, "height":1500,
           "tiles":[{"width":512,"height":512,"scaleFactors":[1,2,4]}]
         }"#
-        .to_vec(),
-    });
-    let DiscoveryStep::Complete(catalog) = session
-        .advance(DiscoveryEvent::Resource(&response))
-        .unwrap()
-    else {
-        panic!("valid info.json must complete discovery");
-    };
+            .to_vec(),
+        })
+        .unwrap();
+    let catalog = operation.finish().unwrap();
     let [CatalogEntry::Ready(image)] = catalog.entries() else {
         panic!("info.json must be ready, not deferred");
     };
