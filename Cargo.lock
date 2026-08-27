@@ -680,7 +680,7 @@ dependencies = [
 
 [[package]]
 name = "dezoomify-core"
-version = "2.18.1"
+version = "2.19.0"
 dependencies = [
  "aes",
  "base64",
@@ -703,7 +703,7 @@ dependencies = [
 
 [[package]]
 name = "dezoomify-rs"
-version = "2.18.1"
+version = "2.19.0"
 dependencies = [
  "clap",
  "criterion",

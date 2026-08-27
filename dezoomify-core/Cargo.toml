@@ -1,6 +1,6 @@
 [package]
 name = "dezoomify-core"
-version = "2.18.1"
+version = "2.19.0"
 edition = "2024"
 license = "GPL-3.0-only"
 description = "Pure discovery core for dezoomify-rs: describes zoomable image resources from supplied bytes without performing any I/O."
