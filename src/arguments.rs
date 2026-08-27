@@ -1,12 +1,12 @@
+//! Command-line arguments and the CLI behaviors they drive.
+
 use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::Parser;
 use regex::Regex;
 
-use crate::dezoomer::Dezoomer;
-
-use super::{Vec2d, ZoomError, auto, stdin_line};
+use super::{Vec2d, ZoomError, stdin_line};
 
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, disable_help_flag = true)]
@@ -33,7 +33,7 @@ pub struct Arguments {
 
     /// Name of the dezoomer to use. "auto" will try to detect the format automatically
     #[arg(short, long, default_value = "auto")]
-    dezoomer: String,
+    pub(crate) dezoomer: String,
 
     /// If several zoom levels are available, select the largest one (highest resolution)
     #[arg(short, long)]
@@ -226,19 +226,6 @@ impl Arguments {
     #[must_use]
     pub fn has_level_specifying_args(&self) -> bool {
         self.max_width.is_some() || self.max_height.is_some() || self.zoom_level.is_some()
-    }
-    /// Finds the dezoomer selected by the command-line arguments.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ZoomError::NoSuchDezoomer`] if the configured name is unknown.
-    pub fn find_dezoomer(&self) -> Result<Box<dyn Dezoomer>, ZoomError> {
-        auto::all_dezoomers(true)
-            .into_iter()
-            .find(|d| d.name() == self.dezoomer)
-            .ok_or_else(|| ZoomError::NoSuchDezoomer {
-                name: self.dezoomer.clone(),
-            })
     }
     pub fn best_size<I: Iterator<Item = Vec2d>>(&self, sizes: I) -> Option<Vec2d> {
         if self.should_use_largest() {

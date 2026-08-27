@@ -1,3 +1,5 @@
+//! Decoded tiles and the image loading helpers that produce them.
+
 use image::{DynamicImage, GenericImageView, ImageDecoder, ImageFormat, ImageReader};
 use log::{trace, warn};
 use std::io::Cursor;

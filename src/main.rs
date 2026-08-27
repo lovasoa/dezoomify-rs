@@ -1,3 +1,5 @@
+//! Command-line entry point: argument parsing, logging setup and the run loop.
+
 use env_logger::TimestampPrecision;
 use human_panic::setup_panic;
 

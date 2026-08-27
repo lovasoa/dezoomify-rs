@@ -1,3 +1,5 @@
+//! Re-tiling of source pyramids for TIFF-like encoders.
+
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::io;

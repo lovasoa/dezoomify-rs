@@ -1,3 +1,5 @@
+//! IIIF output: writes tile images and an `info.json` pyramid description.
+
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io;
@@ -10,9 +12,9 @@ use log::debug;
 
 use crate::encoder::retiler::{Retiler, TileSaver};
 use crate::errors::image_error_to_io_error;
-use crate::iiif::tile_info;
 use crate::tile::Tile;
 use crate::{Vec2d, ZoomError};
+use dezoomify_core::iiif::tile_info;
 
 use super::{Encoder, SourceLevel};
 

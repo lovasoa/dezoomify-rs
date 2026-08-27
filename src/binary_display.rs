@@ -1,3 +1,5 @@
+//! Formatting of byte slices for logs (Python-like `b'...'` display).
+
 use std::fmt;
 
 /// A wrapper struct to display binary data in a Python-like format

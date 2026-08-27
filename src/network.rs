@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+//! HTTP client construction, resource fetching and the on-disk tile cache.
+
+use std::collections::HashSet;
+use std::fmt::Write;
 use std::future::Future;
 use std::iter::once;
 use std::path::PathBuf;
@@ -7,23 +10,38 @@ use std::sync::Arc;
 use log::{debug, trace, warn};
 use reqwest::{Client, header};
 use sanitize_filename_reader_friendly::sanitize;
+use sha1::{Digest, Sha1};
 use tokio::fs;
 use tokio::time::Duration;
-use url::Url;
 
 use crate::arguments::Arguments;
 use crate::binary_display::display_bytes;
-use crate::dezoomer::{PostProcessFn, TileReference};
-use crate::errors::BufferToImageError;
 use crate::errors::{TileDownloadError, ZoomError};
+use dezoomify_core::core::{ProcessingRecipe, Request, TileSpec};
 
-/// Fetch data, either from an URL or a path to a local file.
-/// If uri doesnt start with "http(s)://", it is considered to be a path
-/// to a local file
-// TODO: return Bytes
-pub async fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
+/// Bytes and portable response metadata acquired by the native application.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FetchedResource {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) content_type: Option<String>,
+}
+
+/// Fetch a described resource with request-specific headers.
+///
+/// Header strings remain neutral in the core and are converted to reqwest
+/// values only at this native boundary.  Local files intentionally ignore HTTP
+/// requirements while preserving the same URI behavior as [`fetch_uri`].
+pub(crate) async fn fetch_resource<'a>(
+    uri: &str,
+    http: &Client,
+    headers: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Result<FetchedResource, ZoomError> {
     if uri.starts_with("http://") || uri.starts_with("https://") {
-        let req = http.get(uri).build()?;
+        let mut request = http.get(uri);
+        for (name, value) in headers {
+            request = request.header(name, value);
+        }
+        let req = request.build()?;
         debug!(
             "Making http request to {uri} with headers '{:?}'",
             req.headers()
@@ -35,6 +53,11 @@ pub async fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
             response.headers()
         );
         let response = response.error_for_status()?;
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
         let mut contents = Vec::new();
         let bytes = response.bytes().await?;
         contents.extend(bytes);
@@ -44,7 +67,10 @@ pub async fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
             contents.len(),
             display_bytes(&contents[..contents.len().min(256)])
         );
-        Ok(contents)
+        Ok(FetchedResource {
+            bytes: contents,
+            content_type,
+        })
     } else {
         debug!("Loading file: '{uri}'");
         let result = fs::read(uri).await?;
@@ -54,42 +80,73 @@ pub async fn fetch_uri(uri: &str, http: &Client) -> Result<Vec<u8>, ZoomError> {
             result.len(),
             display_bytes(&result[..result.len().min(256)])
         );
-        Ok(result)
+        Ok(FetchedResource {
+            bytes: result,
+            content_type: None,
+        })
     }
+}
+
+/// Returns the per-request headers for `request`, skipping any header whose
+/// name (case-insensitive) already appears in `user_header_names`. Client
+/// default headers (from `-H`) take precedence over format-generated
+/// per-request headers, restoring the master behaviour where the user's
+/// `Referer` (or any other header) wins.
+pub(crate) fn effective_request_headers(
+    request: &Request,
+    user_header_names: &HashSet<String>,
+) -> Vec<(String, String)> {
+    request
+        .headers
+        .clone()
+        .into_iter()
+        .filter(|(name, _)| !user_header_names.contains(&name.to_ascii_lowercase()))
+        .collect()
+}
+
+/// Helper to build a case-insensitive set of user-supplied header names
+/// from an iterator of `(name, value)` pairs (e.g. `args.headers()`).
+pub(crate) fn user_header_names<'a, I>(headers: I) -> HashSet<String>
+where
+    I: IntoIterator<Item = (&'a String, &'a String)>,
+{
+    headers
+        .into_iter()
+        .map(|(name, _)| name.to_ascii_lowercase())
+        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DownloadedTile {
-    pub position: crate::Vec2d,
+    pub spec: TileSpec,
     pub bytes: Arc<Vec<u8>>,
 }
 
 pub struct TileDownloader {
     pub http_client: reqwest::Client,
-    pub post_process_fn: PostProcessFn,
     pub retries: usize,
     pub retry_delay: Duration,
     pub tile_storage_folder: Option<PathBuf>,
+    pub(crate) user_header_names: HashSet<String>,
 }
 
 impl TileDownloader {
     pub async fn download_tile_and_then<T, F, Fut>(
         &self,
-        tile_reference: TileReference,
+        tile_spec: TileSpec,
         mut process: F,
-    ) -> Result<T, TileDownloadError>
+    ) -> Result<T, Box<TileDownloadError>>
     where
         F: FnMut(DownloadedTile) -> Fut,
         Fut: Future<Output = Result<T, ZoomError>>,
     {
         let n = 100;
-        let idx: f64 = ((tile_reference.position.x + tile_reference.position.y) % n).into();
-        let tile_reference = Arc::new(tile_reference);
+        let idx: f64 = ((tile_spec.destination.x + tile_spec.destination.y) % n).into();
         let mut wait_time = self.retry_delay
             + Duration::from_secs_f64(idx * self.retry_delay.as_secs_f64() / f64::from(n));
         let mut failures: usize = 0;
         loop {
-            let result = match self.load_tile_bytes(Arc::clone(&tile_reference)).await {
+            let result = match self.load_tile_bytes(&tile_spec).await {
                 Ok(tile) => process(tile).await,
                 Err(cause) => Err(cause),
             };
@@ -97,11 +154,7 @@ impl TileDownloader {
                 Ok(processed) => return Ok(processed),
                 Err(cause) => {
                     if failures >= self.retries {
-                        return Err(TileDownloadError {
-                            tile_reference: Arc::try_unwrap(tile_reference)
-                                .expect("tile reference shouldn't leak"),
-                            cause,
-                        });
+                        return Err(Box::new(TileDownloadError { tile_spec, cause }));
                     }
                     failures += 1;
                     warn!("{cause}. Retrying tile download in {wait_time:?}.");
@@ -112,68 +165,113 @@ impl TileDownloader {
         }
     }
 
-    async fn load_tile_bytes(
-        &self,
-        tile_reference: Arc<TileReference>,
-    ) -> Result<DownloadedTile, ZoomError> {
-        let bytes = if let Some(bytes) = self.read_from_tile_cache(&tile_reference.url).await {
+    async fn load_tile_bytes(&self, tile_spec: &TileSpec) -> Result<DownloadedTile, ZoomError> {
+        let bytes = if let Some(bytes) = self.read_from_tile_cache(&tile_spec.request).await {
             bytes
         } else {
-            let bytes = self
-                .download_image_bytes(Arc::clone(&tile_reference))
-                .await?;
-            self.write_to_tile_cache(&tile_reference.url, &bytes).await;
+            let bytes = self.download_image_bytes(tile_spec).await?;
+            self.write_to_tile_cache(&tile_spec.request, &bytes).await;
             bytes
         };
 
         Ok(DownloadedTile {
-            position: tile_reference.position,
+            spec: tile_spec.clone(),
             bytes: Arc::new(bytes),
         })
     }
 
-    async fn download_image_bytes(
-        &self,
-        tile_reference: Arc<TileReference>,
-    ) -> Result<Vec<u8>, ZoomError> {
-        let mut bytes = fetch_uri(&tile_reference.url, &self.http_client).await?;
-        if let PostProcessFn::Fn(post_process) = self.post_process_fn {
-            bytes = tokio::task::spawn_blocking(move || -> Result<_, BufferToImageError> {
-                post_process(&tile_reference, bytes)
-                    .map_err(|e| BufferToImageError::PostProcessing { e })
-            })
-            .await??;
+    async fn download_image_bytes(&self, tile_spec: &TileSpec) -> Result<Vec<u8>, ZoomError> {
+        let headers = effective_request_headers(&tile_spec.request, &self.user_header_names);
+        let mut bytes = fetch_resource(
+            &tile_spec.request.uri,
+            &self.http_client,
+            headers
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str())),
+        )
+        .await?
+        .bytes;
+        match tile_spec.processing.clone() {
+            ProcessingRecipe::None => {}
+            recipe @ ProcessingRecipe::GoogleArtsDecrypt => {
+                bytes = tokio::task::spawn_blocking(move || recipe.apply(bytes))
+                    .await
+                    .map_err(ZoomError::from)??;
+            }
         }
         Ok(bytes)
     }
 
-    async fn write_to_tile_cache(&self, uri: &str, contents: &[u8]) {
+    async fn write_to_tile_cache(&self, request: &Request, contents: &[u8]) {
         if let Some(root) = &self.tile_storage_folder {
-            match tokio::fs::write(root.join(sanitize(uri)), contents).await {
-                Ok(()) => debug!("Wrote {} to tile cache ({} bytes)", uri, contents.len()),
+            match tokio::fs::write(tile_cache_path(root, request), contents).await {
+                Ok(()) => debug!(
+                    "Wrote {} to tile cache ({} bytes)",
+                    request.uri,
+                    contents.len()
+                ),
                 Err(e) => warn!(
-                    "Unable to write {uri} to the tile cache {}: {e}",
+                    "Unable to write {} to the tile cache {}: {e}",
+                    request.uri,
                     root.display()
                 ),
             }
         }
     }
 
-    async fn read_from_tile_cache(&self, uri: &str) -> Option<Vec<u8>> {
+    async fn read_from_tile_cache(&self, request: &Request) -> Option<Vec<u8>> {
         if let Some(root) = &self.tile_storage_folder {
-            match tokio::fs::read(root.join(sanitize(uri))).await {
-                Ok(d) => {
-                    debug!("{uri} read from tile cache");
-                    return Some(d);
+            let paths = tile_cache_paths(root, request);
+            for (index, path) in paths.iter().enumerate() {
+                match tokio::fs::read(path).await {
+                    Ok(d) => {
+                        if index == 0 {
+                            debug!("{} read from tile cache", request.uri);
+                        } else {
+                            debug!("{} read from legacy tile cache", request.uri);
+                        }
+                        return Some(d);
+                    }
+                    Err(e) => debug!(
+                        "Unable to open {} from tile cache {}: {e}",
+                        request.uri,
+                        root.display()
+                    ),
                 }
-                Err(e) => debug!(
-                    "Unable to open {uri} from tile cache {}: {e}",
-                    root.display()
-                ),
             }
         }
         None
     }
+}
+
+fn tile_cache_path(root: &std::path::Path, request: &Request) -> PathBuf {
+    let mut digest = Sha1::new();
+    digest.update(request.uri.as_bytes());
+    for (name, value) in &request.headers {
+        digest.update(name.as_bytes());
+        digest.update([0]);
+        digest.update(value.as_bytes());
+        digest.update([0]);
+    }
+    let digest = digest
+        .finalize()
+        .iter()
+        .fold(String::with_capacity(40), |mut output, byte| {
+            write!(output, "{byte:02x}").expect("writing to a string cannot fail");
+            output
+        });
+    root.join(format!("{}-{digest}", sanitize(&request.uri)))
+}
+
+fn legacy_tile_cache_path(root: &std::path::Path, request: &Request) -> PathBuf {
+    root.join(sanitize(&request.uri))
+}
+
+fn tile_cache_paths(root: &std::path::Path, request: &Request) -> [PathBuf; 2] {
+    [
+        tile_cache_path(root, request),
+        legacy_tile_cache_path(root, request),
+    ]
 }
 
 pub fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
@@ -182,7 +280,7 @@ pub fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
     uri: Option<&str>,
 ) -> Result<reqwest::Client, ZoomError> {
     let referer = uri.or(args.request_referer()).unwrap_or("");
-    let header_map = default_headers()
+    let header_map = dezoomify_core::default_headers()
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .chain(once(("Referer", referer)))
@@ -203,70 +301,143 @@ pub fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
     Ok(client)
 }
 
-pub fn default_headers() -> HashMap<String, String> {
-    serde_yaml::from_str(include_str!("default_headers.yaml")).unwrap()
-}
+#[cfg(test)]
+mod tests {
+    use super::{
+        Request, TileDownloader, effective_request_headers, tile_cache_path, tile_cache_paths,
+        user_header_names,
+    };
+    use std::collections::HashSet;
+    use std::path::Path;
+    use tokio::time::Duration;
 
-pub fn resolve_relative(base: &str, path: &str) -> String {
-    if Url::parse(path).is_ok() {
-        return path.to_string();
-    } else if let Ok(url) = Url::parse(base)
-        && let Ok(r) = url.join(path)
-    {
-        return r.to_string();
+    #[test]
+    fn tile_cache_identity_includes_all_request_requirements() {
+        let first = Request::new("https://example.test/tile").with_header("X-Key", "one");
+        let second = Request::new("https://example.test/tile").with_header("X-Key", "two");
+        assert_ne!(
+            tile_cache_path(Path::new("/tmp/cache"), &first),
+            tile_cache_path(Path::new("/tmp/cache"), &second)
+        );
     }
-    // Local-path fallback: drop the last component of `base` and append `path`.
-    // Recognize both `/` and `\` so that Windows local paths resolve correctly
-    // (a bare `C:\foo\bar\tour.js` has no `/`, so the old `/`-only split treated
-    // the entire string as the directory and appended instead of replacing).
-    //
-    // Absolute paths (starting with `/` or a Windows drive prefix) replace the
-    // base entirely, matching `PathBuf::push` semantics.
-    if path.starts_with('/')
-        || path.starts_with('\\')
-        || (path.len() >= 2
-            && path.as_bytes()[1] == b':'
-            && path.as_bytes()[0].is_ascii_alphabetic())
-    {
-        return path.to_string();
-    }
-    let dir = base.rfind(['/', '\\']).map_or("", |idx| &base[..idx]);
-    let dir = dir.trim_end_matches(['/', '\\']);
-    if dir.is_empty() {
-        path.to_string()
-    } else {
-        format!("{dir}/{path}")
-    }
-}
 
-#[test]
-fn test_resolve_relative() {
-    assert_eq!(resolve_relative("/a/b", "c/d"), "/a/c/d");
-    // Windows local path: the last component must be replaced, not appended.
-    assert_eq!(resolve_relative("C:\\\\foo\\\\bar", "c/d"), "C:\\\\foo/c/d");
-    assert_eq!(
-        resolve_relative("C:\\\\foo\\\\bar\\\\tour.js", "tour.xml"),
-        "C:\\\\foo\\\\bar/tour.xml"
-    );
-    assert_eq!(
-        resolve_relative("/a/b", "http://example.com/x"),
-        "http://example.com/x"
-    );
-    assert_eq!(
-        resolve_relative("http://a.b", "http://example.com/x"),
-        "http://example.com/x"
-    );
-    assert_eq!(resolve_relative("http://a.b", "c/d"), "http://a.b/c/d");
-    assert_eq!(resolve_relative("http://a.b/x", "c/d"), "http://a.b/c/d");
-    assert_eq!(resolve_relative("http://a.b/x/", "c/d"), "http://a.b/x/c/d");
-    // Absolute local paths replace the base entirely.
-    assert_eq!(
-        resolve_relative("/metadata/tour.xml", "/tiles/0_0.jpg"),
-        "/tiles/0_0.jpg"
-    );
-    // Absolute Windows paths replace the base entirely.
-    assert_eq!(
-        resolve_relative("C:\\metadata\\tour.xml", "C:\\tiles\\0_0.jpg"),
-        "C:\\tiles\\0_0.jpg"
-    );
+    #[test]
+    fn tile_cache_paths_try_hashed_path_before_legacy_path() {
+        let request = Request::new("https://example.test/tile");
+        let paths = tile_cache_paths(Path::new("/tmp/cache"), &request);
+        assert_eq!(paths[0], tile_cache_path(Path::new("/tmp/cache"), &request));
+        assert_eq!(
+            paths[1],
+            Path::new("/tmp/cache").join("https_example.test_tile")
+        );
+        assert_ne!(paths[0], paths[1]);
+    }
+
+    #[tokio::test]
+    async fn tile_cache_reads_legacy_entries_and_prefers_hashed_entries() {
+        let directory = tempfile::tempdir().unwrap();
+        let request = Request::new("https://example.test/tile");
+        let paths = tile_cache_paths(directory.path(), &request);
+        tokio::fs::write(&paths[1], b"legacy").await.unwrap();
+
+        let downloader = TileDownloader {
+            http_client: reqwest::Client::new(),
+            retries: 0,
+            retry_delay: Duration::ZERO,
+            tile_storage_folder: Some(directory.path().to_path_buf()),
+            user_header_names: HashSet::new(),
+        };
+        assert_eq!(
+            downloader.read_from_tile_cache(&request).await,
+            Some(b"legacy".to_vec())
+        );
+
+        tokio::fs::write(&paths[0], b"hashed").await.unwrap();
+        assert_eq!(
+            downloader.read_from_tile_cache(&request).await,
+            Some(b"hashed".to_vec())
+        );
+    }
+
+    #[test]
+    fn user_referer_overrides_automatic_referer_on_tile_requests() {
+        // Rectangular formats inject Referer = tile (0,0) URL. A CLI `-H "Referer: …"`
+        // must win over that per-request header (reqwest per-request headers
+        // override client defaults, so we filter the format header instead).
+        let mut request = Request::new("https://example.test/tile/1/1");
+        request.headers.insert(
+            "Referer".to_owned(),
+            "https://example.test/tile/0/0".to_owned(),
+        );
+        // No user header -> auto Referer survives
+        assert_eq!(
+            effective_request_headers(&request, &HashSet::new()),
+            vec![(
+                "Referer".to_owned(),
+                "https://example.test/tile/0/0".to_owned()
+            )]
+        );
+        // User supplied Referer -> auto one is filtered out (client default wins)
+        let user = HashSet::from(["referer".to_owned()]);
+        assert_eq!(
+            effective_request_headers(&request, &user),
+            Vec::<(String, String)>::new()
+        );
+        // Case-insensitive: user `REFERER` also wins
+        let user_upper = HashSet::from(["REFERER".to_ascii_lowercase()]);
+        assert_eq!(
+            effective_request_headers(&request, &user_upper),
+            Vec::<(String, String)>::new()
+        );
+    }
+
+    #[test]
+    fn user_headers_override_yaml_headers_and_other_format_headers() {
+        // custom_yaml puts its YAML `headers` map on each tile request.
+        // CLI headers must win for any colliding name.
+        let mut request = Request::new("https://example.test/tile");
+        request
+            .headers
+            .insert("Referer".to_owned(), "https://auto.test".to_owned());
+        request
+            .headers
+            .insert("X-Custom".to_owned(), "from-yaml".to_owned());
+        request
+            .headers
+            .insert("User-Agent".to_owned(), "from-yaml".to_owned());
+        let user = HashSet::from(["referer".to_owned(), "x-custom".to_owned()]);
+        let filtered = effective_request_headers(&request, &user);
+        // Referer and X-Custom are filtered, User-Agent survives (not in user set)
+        assert!(
+            !filtered
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("Referer"))
+        );
+        assert!(
+            !filtered
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("X-Custom"))
+        );
+        assert!(
+            filtered
+                .iter()
+                .any(|(k, v)| k == "User-Agent" && v == "from-yaml")
+        );
+    }
+
+    #[test]
+    fn user_header_names_helper_is_case_insensitive() {
+        let a = "Referer".to_owned();
+        let b = "X-Custom".to_owned();
+        let c = "User-Agent".to_owned();
+        let set = user_header_names([(&a, &"v".to_owned()), (&b, &"v".to_owned())]);
+        assert!(set.contains("referer"));
+        assert!(set.contains("x-custom"));
+        assert!(!set.contains("user-agent"));
+        // Mixing cases still normalises
+        let d = "REFERER".to_owned();
+        let set2 = user_header_names([(&d, &"v".to_owned()), (&c, &"v".to_owned())]);
+        assert!(set2.contains("referer"));
+        assert!(set2.contains("user-agent"));
+    }
 }
