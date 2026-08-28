@@ -30,6 +30,27 @@ pub async fn custom_size_local_zoomify_tiles() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+pub async fn zoomify_tile_url_input() {
+    let workspace_root = get_workspace_root();
+    let input_path = workspace_root.join("testdata/zoomify/test_custom_size/TileGroup0/3-0-0.jpg");
+    let expected_source =
+        workspace_root.join("testdata/zoomify/test_custom_size/expected_result.jpg");
+    let expected_dir = TempDirBuilder::new()
+        .prefix("dezoomify-rs-zoomify-tile-test")
+        .tempdir()
+        .unwrap();
+    let expected_path = expected_dir.path().join("expected.jpg");
+    std::fs::copy(expected_source, &expected_path).unwrap();
+
+    test_image(
+        input_path.to_str().unwrap(),
+        expected_path.to_str().unwrap(),
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
 pub async fn local_generic_tiles() {
     // Get absolute path to avoid working directory issues
     let workspace_root = get_workspace_root();
