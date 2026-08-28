@@ -30,6 +30,7 @@ pub mod vec2d;
 pub mod zoomify;
 
 mod json_utils;
+mod template;
 
 pub use vec2d::Vec2d;
 

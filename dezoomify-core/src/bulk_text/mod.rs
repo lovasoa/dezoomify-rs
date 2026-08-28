@@ -1,67 +1,33 @@
 //! Pure discovery for text files containing deferred image URLs.
 
-use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
-    CatalogEntry, DeferredImage, Dezoomer, DezoomerMeta, DiscoveryDiagnostic, DiscoveryError,
-    DiscoveryInput, DiscoveryStep, ImageCatalog, ResourceOutcome, ResourceRequest, StableId,
+    CatalogEntry, DeferredImage, DezoomerSpec, DiscoveryError, ImageCatalog, StableId,
+    input_resource,
 };
 
-/// Text-list dezoomer.
-pub struct BulkText {
-    uri: String,
-    requested: bool,
-}
+pub const SPEC: DezoomerSpec = DezoomerSpec::routed("bulk_text", input_resource, catalog)
+    .recognizing(is_bulk_file, "not a bulk URL-list file");
 
-impl Dezoomer for BulkText {
-    fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
-        match event {
-            DiscoveryEvent::Start if !is_bulk_file(&self.uri) => Ok(DiscoveryStep::Reject(
-                DiscoveryDiagnostic::from("not a bulk URL-list file"),
-            )),
-            DiscoveryEvent::Start if !self.requested => {
-                self.requested = true;
-                Ok(DiscoveryStep::Need(ResourceRequest::new(self.uri.clone())))
-            }
-            DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
-                let text = std::str::from_utf8(&response.bytes).map_err(|error| {
-                    DiscoveryError::Session(format!("failed to parse bulk list as UTF-8: {error}"))
-                })?;
-                let images = parse_text_urls_with_base(text, &self.uri)?;
-                if images.is_empty() {
-                    return Err(DiscoveryError::Session(
-                        "no valid URLs found in text file".into(),
-                    ));
-                }
-                Ok(DiscoveryStep::Complete(ImageCatalog::new(
-                    images.into_iter().enumerate().map(|(index, image)| {
-                        CatalogEntry::Deferred(DeferredImage {
-                            id: StableId::new(format!("bulk:{index}")),
-                            uri: image.uri,
-                            title: Some(image.title),
-                            warnings: Vec::new(),
-                        })
-                    }),
-                )))
-            }
-            DiscoveryEvent::Resource(ResourceOutcome::Failure(failure)) => {
-                Err(DiscoveryError::Session(failure.message.clone()))
-            }
-            DiscoveryEvent::Start => {
-                Err(DiscoveryError::Session("bulk session started twice".into()))
-            }
-        }
+fn catalog(uri: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
+    let text = std::str::from_utf8(bytes).map_err(|error| {
+        DiscoveryError::Session(format!("failed to parse bulk list as UTF-8: {error}"))
+    })?;
+    let images = parse_text_urls_with_base(text, uri)?;
+    if images.is_empty() {
+        return Err(DiscoveryError::Session(
+            "no valid URLs found in text file".into(),
+        ));
     }
-}
-
-impl DezoomerMeta for BulkText {
-    const NAME: &'static str = "bulk_text";
-
-    fn start(input: &DiscoveryInput) -> Self {
-        Self {
-            uri: input.uri.clone(),
-            requested: false,
-        }
-    }
+    Ok(ImageCatalog::new(images.into_iter().enumerate().map(
+        |(index, image)| {
+            CatalogEntry::Deferred(DeferredImage {
+                id: StableId::new(format!("bulk:{index}")),
+                uri: image.uri,
+                title: Some(image.title),
+                warnings: Vec::new(),
+            })
+        },
+    )))
 }
 
 fn is_bulk_file(uri: &str) -> bool {
@@ -177,25 +143,9 @@ fn title_from_uri(uri: &str, line: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::discovery::{RequestId, ResourceOutcome, ResourceResponse};
-
-    fn response(content: &str) -> ResourceOutcome {
-        ResourceOutcome::Response(ResourceResponse {
-            id: RequestId(0),
-            bytes: content.as_bytes().to_vec(),
-        })
-    }
 
     fn complete(uri: &str, content: &str) -> Result<ImageCatalog, DiscoveryError> {
-        let mut session = BulkText::start(&DiscoveryInput::from(uri));
-        assert!(matches!(
-            session.advance(DiscoveryEvent::Start)?,
-            DiscoveryStep::Need(_)
-        ));
-        match session.advance(DiscoveryEvent::Resource(&response(content)))? {
-            DiscoveryStep::Complete(catalog) => Ok(catalog),
-            _ => panic!("bulk discovery did not complete"),
-        }
+        catalog(uri, content.as_bytes())
     }
 
     #[test]

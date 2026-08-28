@@ -73,6 +73,27 @@ pub trait GridRequests: fmt::Debug + Send + Sync {
     }
 }
 
+struct ClosureRequests<F> {
+    request: F,
+    processing: ProcessingRecipe,
+}
+
+impl<F> fmt::Debug for ClosureRequests<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("request closure")
+    }
+}
+
+impl<F: Fn(GridTile) -> Request + Send + Sync> GridRequests for ClosureRequests<F> {
+    fn request(&self, tile: GridTile) -> Request {
+        (self.request)(tile)
+    }
+
+    fn processing(&self) -> ProcessingRecipe {
+        self.processing.clone()
+    }
+}
+
 #[derive(Clone)]
 pub struct Grid {
     level: StableId,
@@ -136,6 +157,43 @@ impl Grid {
             count,
             requests: Arc::new(requests),
         })
+    }
+
+    pub fn with_requests(
+        level: StableId,
+        image_size: Vec2d,
+        tile_size: Vec2d,
+        overlap: Vec2d,
+        requests: impl Fn(GridTile) -> Request + Send + Sync + 'static,
+    ) -> Result<Self, TileSourceError> {
+        Self::with_processed_requests(
+            level,
+            image_size,
+            tile_size,
+            overlap,
+            ProcessingRecipe::None,
+            requests,
+        )
+    }
+
+    pub(crate) fn with_processed_requests(
+        level: StableId,
+        image_size: Vec2d,
+        tile_size: Vec2d,
+        overlap: Vec2d,
+        processing: ProcessingRecipe,
+        requests: impl Fn(GridTile) -> Request + Send + Sync + 'static,
+    ) -> Result<Self, TileSourceError> {
+        Self::new(
+            level,
+            image_size,
+            tile_size,
+            overlap,
+            ClosureRequests {
+                request: requests,
+                processing,
+            },
+        )
     }
 
     #[must_use]

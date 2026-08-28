@@ -9,6 +9,7 @@ use custom_error::custom_error;
 use evalexpr::DefaultNumericTypes;
 
 use crate::Vec2d;
+use crate::template::{Part, Template};
 
 use super::variable::{BadVariableError, Variables};
 
@@ -139,16 +140,14 @@ impl<'de> Deserialize<'de> for IntTemplate {
 }
 
 #[derive(Clone, Debug)]
-struct UrlTemplate {
-    parts: Vec<UrlPart>,
-}
+struct UrlTemplate(Template<StrTemplate>);
 
 impl UrlTemplate {
     fn eval<C: evalexpr::Context<NumericTypes = DefaultNumericTypes>>(
         &self,
         context: &C,
     ) -> Result<String, UrlTemplateError> {
-        self.parts.iter().map(|p| p.eval(context)).collect()
+        self.0.try_render(|expression| expression.eval(context))
     }
 }
 
@@ -162,18 +161,18 @@ impl FromStr for UrlTemplate {
         let mut cursor = 0usize;
         for m in EXPR_RE.find_iter(s) {
             let prev = &s[cursor..m.start()];
-            parts.push(UrlPart::Constant(String::from(prev)));
+            parts.push(Part::literal(prev));
             let mut expression = &s[m.start() + 2..m.end() - 2];
             let mut min_width: usize = 0;
             if let Some(c) = ZERO_RE.captures(expression) {
                 expression = &expression[..expression.len() - c[0].len()];
                 min_width = c[1].parse().expect("regex matches only numbers");
             }
-            parts.push(UrlPart::expression(expression, min_width)?);
+            parts.push(Part::Hole(expression.parse()?, min_width));
             cursor = m.end();
         }
-        parts.push(UrlPart::constant(&s[cursor..]));
-        Ok(UrlTemplate { parts })
+        parts.push(Part::literal(&s[cursor..]));
+        Ok(UrlTemplate(Template(parts)))
     }
 }
 
@@ -184,43 +183,6 @@ impl<'de> Deserialize<'de> for UrlTemplate {
     {
         let s = String::deserialize(deserializer)?;
         FromStr::from_str(&s).map_err(de::Error::custom)
-    }
-}
-
-#[derive(Clone, Debug)]
-enum UrlPart {
-    Constant(String),
-    Expression {
-        expression: StrTemplate,
-        min_width: usize,
-    },
-}
-
-impl UrlPart {
-    fn constant<T: Into<String>>(s: T) -> UrlPart {
-        UrlPart::Constant(s.into())
-    }
-    fn expression(s: &str, min_width: usize) -> Result<UrlPart, UrlTemplateError> {
-        Ok(UrlPart::Expression {
-            expression: s.parse()?,
-            min_width,
-        })
-    }
-    fn eval<C: evalexpr::Context<NumericTypes = DefaultNumericTypes>>(
-        &self,
-        context: &C,
-    ) -> Result<String, UrlTemplateError> {
-        match self {
-            UrlPart::Constant(s) => Ok(s.clone()),
-            UrlPart::Expression {
-                expression,
-                min_width,
-            } => Ok(format!(
-                "{:0>width$}",
-                expression.eval(context)?,
-                width = min_width
-            )),
-        }
     }
 }
 

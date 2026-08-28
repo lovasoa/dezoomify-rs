@@ -5,57 +5,19 @@ use std::sync::Arc;
 use image_properties::ImageProperties;
 
 use crate::Vec2d;
-use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
-    CatalogEntry, Dezoomer, DezoomerMeta, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
-    DiscoveryStep, Grid, GridRequests, GridTile, ImageCatalog, ImageDescriptor, LevelDescriptor,
-    Request, ResourceOutcome, ResourceRequest, StableId,
+    CatalogEntry, DezoomerSpec, DiscoveryError, Grid, ImageCatalog, ImageDescriptor,
+    LevelDescriptor, Request, StableId, input_resource,
 };
 
 mod image_properties;
 
-/// Zoomify metadata dezoomer.
-pub struct Zoomify {
-    uri: String,
-    requested: bool,
-}
-
-impl Dezoomer for Zoomify {
-    fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
-        match event {
-            DiscoveryEvent::Start if !self.uri.contains("/ImageProperties.xml") => {
-                Ok(DiscoveryStep::Reject(DiscoveryDiagnostic::from(
-                    "not a Zoomify ImageProperties.xml URL",
-                )))
-            }
-            DiscoveryEvent::Start if !self.requested => {
-                self.requested = true;
-                Ok(DiscoveryStep::Need(ResourceRequest::new(self.uri.clone())))
-            }
-            DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
-                load_catalog(&self.uri, &response.bytes).map(DiscoveryStep::Complete)
-            }
-            DiscoveryEvent::Resource(ResourceOutcome::Failure(failure)) => {
-                Err(DiscoveryError::Session(failure.message.clone()))
-            }
-            DiscoveryEvent::Start => Err(DiscoveryError::Session(
-                "Zoomify session started twice".into(),
-            )),
-        }
-    }
-}
-
-impl DezoomerMeta for Zoomify {
-    const NAME: &'static str = "zoomify";
-    const URL_HINTS: &'static [&'static str] = &["ImageProperties.xml", "TileGroup"];
-
-    fn start(input: &DiscoveryInput) -> Self {
-        Self {
-            uri: input.uri.clone(),
-            requested: false,
-        }
-    }
-}
+pub const SPEC: DezoomerSpec = DezoomerSpec::routed("zoomify", input_resource, load_catalog)
+    .recognizing(
+        |uri| uri.contains("/ImageProperties.xml"),
+        "not a Zoomify ImageProperties.xml URL",
+    )
+    .preferring(|uri| uri.contains("ImageProperties.xml"));
 
 fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
     let properties: ImageProperties = serde_xml_rs::from_reader(contents).map_err(|error| {
@@ -79,15 +41,22 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
         .map(|(index, info)| {
             let size = info.size;
             let tile_size = info.tile_size;
-            let id = StableId::new(format!("zoomify:{index}"));
-            let level = ZoomifyLevel {
-                base_url: Arc::clone(&base_url),
-                tiles_before: info.tiles_before,
-                index,
-            };
-            let source = Grid::new(id.clone(), size, tile_size, Vec2d::default(), level).map_err(
-                |error| DiscoveryError::Session(format!("invalid Zoomify grid: {error}")),
-            )?;
+            let base_url = Arc::clone(&base_url);
+            let source = Grid::with_requests(
+                format!("zoomify:{index}").into(),
+                size,
+                tile_size,
+                Vec2d::default(),
+                move |tile| {
+                    let cell: Vec2d = tile.coord.into();
+                    let tile_group = (u64::from(info.tiles_before) + tile.row_major_ordinal) / 256;
+                    Request::new(format!(
+                        "{base_url}/TileGroup{tile_group}/{index}-{}-{}.jpg",
+                        cell.x, cell.y
+                    ))
+                },
+            )
+            .map_err(|error| DiscoveryError::Session(format!("invalid Zoomify grid: {error}")))?;
             Ok(LevelDescriptor::new(source).with_title(Some(format!(
                 "{base_name} Zoomify level {index} ({: >5}×{: >5} pixels)",
                 size.x, size.y,
@@ -107,24 +76,6 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
         levels,
         warnings,
     })]))
-}
-
-#[derive(Debug)]
-struct ZoomifyLevel {
-    base_url: Arc<str>,
-    tiles_before: u32,
-    index: usize,
-}
-
-impl GridRequests for ZoomifyLevel {
-    fn request(&self, tile: GridTile) -> Request {
-        let cell: Vec2d = tile.coord.into();
-        let tile_group = (u64::from(self.tiles_before) + tile.row_major_ordinal) / 256;
-        Request::new(format!(
-            "{}/TileGroup{}/{}-{}-{}.jpg",
-            self.base_url, tile_group, self.index, cell.x, cell.y
-        ))
-    }
 }
 
 #[cfg(test)]
