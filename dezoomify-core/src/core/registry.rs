@@ -113,7 +113,10 @@ mod tests {
             preferred_name("server?fif=image.tif").map(DezoomerSpec::name),
             Some("iipimage")
         );
-        assert_eq!(preferred_name("x/TileGroup0/0-0-0.jpg"), None);
+        assert_eq!(
+            preferred_name("x/TileGroup0/0-0-0.jpg").map(DezoomerSpec::name),
+            Some("zoomify")
+        );
     }
 
     #[test]

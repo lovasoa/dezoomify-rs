@@ -1,23 +1,60 @@
 //! Pure discovery for Zoomify `ImageProperties.xml` pyramids.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use image_properties::ImageProperties;
+use regex::Regex;
 
 use crate::Vec2d;
 use crate::core::{
     CatalogEntry, DezoomerSpec, DiscoveryError, Grid, ImageCatalog, ImageDescriptor,
-    LevelDescriptor, Request, StableId, input_resource,
+    LevelDescriptor, Request, ResourceRequest, StableId,
 };
 
 mod image_properties;
 
-pub const SPEC: DezoomerSpec = DezoomerSpec::routed("zoomify", input_resource, load_catalog)
-    .recognizing(
-        |uri| uri.contains("/ImageProperties.xml"),
-        "not a Zoomify ImageProperties.xml URL",
-    )
-    .preferring(|uri| uri.contains("ImageProperties.xml"));
+pub const SPEC: DezoomerSpec = DezoomerSpec::routed("zoomify", metadata_request, load_catalog)
+    .recognizing(is_zoomify_url, "not a Zoomify metadata or tile URL")
+    .preferring(is_zoomify_url);
+
+static TILE_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:^|/)TileGroup\d+/\d+-\d+-\d+\.jpe?g(?:[?#].*)?$")
+        .expect("constant Zoomify tile URL pattern")
+});
+
+fn is_tile_url(uri: &str) -> bool {
+    TILE_URL_RE.is_match(uri)
+}
+
+fn is_zoomify_url(uri: &str) -> bool {
+    uri.contains("/ImageProperties.xml") || is_tile_url(uri)
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn metadata_request(input: &str) -> Result<ResourceRequest, DiscoveryError> {
+    let uri = TILE_URL_RE.find(input).map_or_else(
+        || input.to_owned(),
+        |tile| {
+            let prefix_end = if input.as_bytes()[tile.start()] == b'/' {
+                tile.start() + 1
+            } else {
+                tile.start()
+            };
+            let prefix = &input[..prefix_end];
+            let metadata = if prefix.is_empty() || prefix.ends_with('/') {
+                format!("{prefix}ImageProperties.xml")
+            } else {
+                format!("{prefix}/ImageProperties.xml")
+            };
+            let suffix = tile
+                .as_str()
+                .find(['?', '#'])
+                .map_or("", |index| &tile.as_str()[index..]);
+            format!("{metadata}{suffix}")
+        },
+    );
+    Ok(ResourceRequest::new(uri))
+}
 
 fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
     let properties: ImageProperties = serde_xml_rs::from_reader(contents).map_err(|error| {
@@ -82,6 +119,36 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
 mod tests {
     use super::*;
     use crate::core::TileSource;
+
+    #[test]
+    fn tile_urls_request_sibling_metadata() {
+        let mut registry = crate::core::Registry::new();
+        registry.register(SPEC);
+        let mut operation =
+            registry.start("https://example.com/images/book/TileGroup0/3-0-0.jpg?token=secret");
+        let need = operation.missing_resources().unwrap().pop().unwrap();
+        assert_eq!(
+            need.request.uri,
+            "https://example.com/images/book/ImageProperties.xml?token=secret"
+        );
+        operation
+            .provide(crate::core::ResourceResponse {
+                id: need.id,
+                bytes: br#"<IMAGE_PROPERTIES WIDTH="512" HEIGHT="256" NUMTILES="2" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>"#.to_vec(),
+            })
+            .unwrap();
+        let catalog = operation.finish().unwrap();
+        let CatalogEntry::Ready(image) = &catalog.entries()[0] else {
+            panic!("Zoomify metadata must produce a ready image")
+        };
+        let TileSource::Grid(plan) = &image.levels[0].source else {
+            panic!("Zoomify levels must be grids")
+        };
+        assert_eq!(
+            plan.tiles_row_major().next().unwrap().unwrap().request.uri,
+            "https://example.com/images/book/TileGroup0/0-0-0.jpg"
+        );
+    }
 
     fn ready_image(url: &str, contents: &[u8]) -> ImageDescriptor {
         match load_catalog(url, contents)

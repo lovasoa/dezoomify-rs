@@ -102,15 +102,16 @@ https://artsandculture.google.com/asset/light-in-the-dark/ZQFouDGMVmsI2w
 
 ### Zoomify
 
-You have to give dezoomify-rs an url to the `ImageProperties.xml` file.
+You can give dezoomify-rs a URL to the `ImageProperties.xml` file or to one
+of the image tiles.
 You can use [dezoomify-extension](https://lovasoa.github.io/dezoomify-extension/) to
 find the URL of this file.
 
 Alternatively, you can find it out manually by opening your network inspector.
 If the image tile URLs have the form
 `http://example.com/path/to/TileGroup1/1-2-3.jpg`,
-then the URL to enter is
-`http://example.com/path/to/ImageProperties.xml`.
+dezoomify-rs will derive and request
+`http://example.com/path/to/ImageProperties.xml` automatically.
 
 ### IIIF
 
