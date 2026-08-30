@@ -13,8 +13,8 @@ pub mod uri;
 
 pub use adaptive::{DiscoverableGrid, DiscoverableStep, ObservationResult, ProbeContinuation};
 pub use discovery::{
-    Dezoomer, DezoomerSpec, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput, DiscoveryStep,
-    ResourceOutcome, ResourceRequest, input_resource,
+    DezoomerSpec, DiscoveryContext, DiscoveryError, DiscoveryFailure, DiscoveryInput,
+    DiscoveryMatch, DiscoveryResource, DiscoveryRoute, DiscoveryStep,
 };
 #[cfg(test)]
 pub use discovery::{RequestId, ResourceResponse};

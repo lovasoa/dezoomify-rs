@@ -1,7 +1,8 @@
 //! Pure, resumable discovery orchestration.
 //!
-//! A discovery program only describes resource work.  The application owns
-//! fetching and repeatedly feeds outcomes back to [`DiscoveryOperation`].
+//! A discovery program declares how acquired resources are matched and what
+//! resource to follow next. The application owns acquisition and feeds each
+//! outcome to [`DiscoveryOperation`].
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -38,26 +39,30 @@ pub struct ResourceNeed {
     pub request: Request,
 }
 
-/// A resource request before the operation assigns its stable ID.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ResourceRequest {
-    pub request: Request,
-}
-
-impl ResourceRequest {
-    #[must_use]
-    pub fn new(uri: impl Into<String>) -> Self {
-        Self {
-            request: Request::new(uri),
-        }
-    }
-}
-
 /// Bytes supplied by the application for a request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceResponse {
     pub id: RequestId,
     pub bytes: Vec<u8>,
+    /// HTTP media type, when the resource provider supplied one.
+    pub content_type: Option<String>,
+}
+
+impl ResourceResponse {
+    #[must_use]
+    pub fn new(id: RequestId, bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            id,
+            bytes: bytes.into(),
+            content_type: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_content_type(mut self, content_type: impl Into<String>) -> Self {
+        self.content_type = Some(content_type.into());
+        self
+    }
 }
 
 /// An application-reported failure to satisfy a request.
@@ -69,7 +74,7 @@ pub struct ResourceFailure {
 
 /// The resource result visible to a waiting program.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ResourceOutcome {
+enum ResourceOutcome {
     Response(ResourceResponse),
     Failure(ResourceFailure),
 }
@@ -92,62 +97,270 @@ impl Default for DiscoveryLimits {
     }
 }
 
-/// A deterministic reason a program did not recognize its input.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DiscoveryDiagnostic {
-    pub message: String,
+/// One declarative result yielded by a discovery rule.
+pub enum DiscoveryStep {
+    /// Continue discovery with another resource described by this request.
+    Follow(Request),
+    Complete(ImageCatalog),
 }
 
-impl From<&str> for DiscoveryDiagnostic {
-    fn from(message: &str) -> Self {
-        Self {
-            message: message.into(),
+impl DiscoveryStep {
+    #[must_use]
+    pub fn follow(uri: impl Into<String>) -> Self {
+        Self::Follow(Request::new(uri))
+    }
+}
+
+/// One successfully acquired resource.
+#[derive(Clone, Copy, Debug)]
+pub struct DiscoveryResource<'a> {
+    request: &'a Request,
+    response: &'a ResourceResponse,
+}
+
+impl<'a> DiscoveryResource<'a> {
+    #[must_use]
+    pub const fn uri(self) -> &'a str {
+        self.request.uri.as_str()
+    }
+
+    #[must_use]
+    pub fn bytes(self) -> &'a [u8] {
+        self.response.bytes.as_slice()
+    }
+
+    #[must_use]
+    pub fn content_type(self) -> Option<&'a str> {
+        self.response.content_type.as_deref()
+    }
+}
+
+/// One resource acquisition failure delivered to a failure rule.
+#[derive(Clone, Copy, Debug)]
+pub struct DiscoveryFailure<'a> {
+    request: &'a Request,
+    failure: &'a ResourceFailure,
+}
+
+impl<'a> DiscoveryFailure<'a> {
+    #[must_use]
+    pub const fn uri(self) -> &'a str {
+        self.request.uri.as_str()
+    }
+
+    #[must_use]
+    pub const fn failure(self) -> &'a ResourceFailure {
+        self.failure
+    }
+}
+
+/// Read-only state supplied to a declarative route handler.
+///
+/// History is local to this candidate even when requests are deduplicated
+/// across candidates.
+pub struct DiscoveryContext<'a> {
+    history_ids: &'a [RequestId],
+    requests: &'a BTreeMap<RequestId, ResourceNeed>,
+    outcomes: &'a BTreeMap<RequestId, ResourceOutcome>,
+}
+
+impl<'a> DiscoveryContext<'a> {
+    /// Earlier successful resources for this candidate, in discovery order.
+    #[must_use]
+    pub fn resources(&self) -> impl DoubleEndedIterator<Item = DiscoveryResource<'a>> + '_ {
+        self.history_ids.iter().filter_map(|id| {
+            let request = &self.requests.get(id)?.request;
+            let ResourceOutcome::Response(response) = self.outcomes.get(id)? else {
+                return None;
+            };
+            Some(DiscoveryResource { request, response })
+        })
+    }
+
+    /// Whether this candidate already followed a resource with this URI,
+    /// regardless of whether acquisition succeeded.
+    #[must_use]
+    pub fn has_visited(&self, uri: &str) -> bool {
+        self.history_ids.iter().any(|id| {
+            self.requests
+                .get(id)
+                .is_some_and(|resource| resource.request.uri == uri)
+        })
+    }
+}
+
+type RouteHandler = for<'a> fn(
+    &DiscoveryContext<'a>,
+    DiscoveryResource<'a>,
+) -> Result<DiscoveryStep, DiscoveryError>;
+type CatalogExtractor = fn(&str, &[u8]) -> Result<ImageCatalog, DiscoveryError>;
+type FailureHandler = for<'a> fn(
+    &DiscoveryContext<'a>,
+    DiscoveryFailure<'a>,
+) -> Result<DiscoveryStep, DiscoveryError>;
+type UrlMapper = fn(&str) -> Result<Request, DiscoveryError>;
+type UrlPredicate = fn(&str) -> bool;
+type ContentPredicate = fn(&[u8]) -> bool;
+
+/// A predicate for one declarative discovery route.
+#[derive(Clone, Copy, Debug)]
+pub enum DiscoveryMatch {
+    Any,
+    UrlSuffix(&'static str),
+    UrlPredicate(UrlPredicate),
+    MediaTypes(&'static [&'static str]),
+    ContentPredicate(ContentPredicate),
+}
+
+impl DiscoveryMatch {
+    #[must_use]
+    pub const fn any() -> Self {
+        Self::Any
+    }
+
+    #[must_use]
+    pub const fn url_suffix(suffix: &'static str) -> Self {
+        Self::UrlSuffix(suffix)
+    }
+
+    #[must_use]
+    pub const fn url_matching(predicate: UrlPredicate) -> Self {
+        Self::UrlPredicate(predicate)
+    }
+
+    #[must_use]
+    pub const fn media_type(media_types: &'static [&'static str]) -> Self {
+        Self::MediaTypes(media_types)
+    }
+
+    #[must_use]
+    pub const fn content_matching(predicate: ContentPredicate) -> Self {
+        Self::ContentPredicate(predicate)
+    }
+
+    /// Run a multi-resource handler for a matching acquired resource.
+    #[must_use]
+    pub const fn then(self, handler: RouteHandler) -> DiscoveryRoute {
+        DiscoveryRoute {
+            matcher: self,
+            handler: RouteAction::Then(handler),
+        }
+    }
+
+    /// Parse a matching resource directly into a catalog.
+    #[must_use]
+    pub const fn extract(self, extractor: CatalogExtractor) -> DiscoveryRoute {
+        DiscoveryRoute {
+            matcher: self,
+            handler: RouteAction::Extract(extractor),
+        }
+    }
+
+    /// Rewrite a matching input URI before the core acquires it.
+    #[must_use]
+    pub const fn map_url(self, mapper: UrlMapper) -> DiscoveryRoute {
+        DiscoveryRoute {
+            matcher: self,
+            handler: RouteAction::MapUrl(mapper),
+        }
+    }
+
+    fn matches_uri(self, uri: &str) -> bool {
+        let path = uri.split(['?', '#']).next().unwrap_or(uri);
+        match self {
+            Self::Any => true,
+            Self::UrlSuffix(suffix) => path.ends_with(suffix),
+            Self::UrlPredicate(predicate) => predicate(uri),
+            Self::MediaTypes(_) | Self::ContentPredicate(_) => false,
+        }
+    }
+
+    fn matches_resource(self, resource: DiscoveryResource<'_>) -> bool {
+        match self {
+            Self::Any => true,
+            Self::UrlSuffix(_) | Self::UrlPredicate(_) => self.matches_uri(resource.uri()),
+            Self::MediaTypes(types) => resource.content_type().is_some_and(|value| {
+                let media_type = value.split(';').next().unwrap_or(value).trim();
+                types
+                    .iter()
+                    .any(|expected| media_type.eq_ignore_ascii_case(expected))
+            }),
+            Self::ContentPredicate(predicate) => predicate(resource.bytes()),
         }
     }
 }
 
-impl From<String> for DiscoveryDiagnostic {
-    fn from(message: String) -> Self {
-        Self { message }
-    }
-}
-
-/// Input delivered to a program session.
-pub enum DiscoveryEvent<'a> {
-    /// The session's first transition.
-    Start,
-    /// A result for its preceding [`DiscoveryStep::Need`].
-    Resource(&'a ResourceOutcome),
-}
-
-/// One pure transition yielded by a discovery session.
-pub enum DiscoveryStep {
-    Need(ResourceRequest),
-    Complete(ImageCatalog),
-    Reject(DiscoveryDiagnostic),
-}
-
-/// One dezoomer: a pure parser state machine driven by [`DiscoveryOperation`].
-///
-/// Complex formats remain free to implement an object-safe, multi-resource
-/// state machine. Most formats use a routed [`DezoomerSpec`] instead.
-pub trait Dezoomer: Send {
-    /// Advance the parser from an input or one requested resource result.
-    ///
-    /// # Errors
-    ///
-    /// Returns a pure diagnostic when bytes or state cannot be interpreted.
-    fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError>;
+/// An ordered declarative resource matcher and transition handler.
+#[derive(Clone, Copy, Debug)]
+pub struct DiscoveryRoute {
+    matcher: DiscoveryMatch,
+    handler: RouteAction,
 }
 
 #[derive(Clone, Copy, Debug)]
-enum SpecAdapter {
+enum RouteAction {
+    Then(RouteHandler),
+    Extract(CatalogExtractor),
+    MapUrl(UrlMapper),
+}
+
+impl DiscoveryRoute {
+    fn handle(
+        self,
+        context: &DiscoveryContext<'_>,
+        resource: DiscoveryResource<'_>,
+    ) -> Option<Result<DiscoveryStep, DiscoveryError>> {
+        if !self.matcher.matches_resource(resource) {
+            return None;
+        }
+        Some(match self.handler {
+            RouteAction::Then(handler) => handler(context, resource),
+            RouteAction::Extract(extractor) => {
+                extractor(resource.uri(), resource.bytes()).map(DiscoveryStep::Complete)
+            }
+            RouteAction::MapUrl(_) => return None,
+        })
+    }
+
+    fn map_url(self, uri: &str) -> Option<Result<Request, DiscoveryError>> {
+        let RouteAction::MapUrl(mapper) = self.handler else {
+            return None;
+        };
+        self.matcher.matches_uri(uri).then(|| mapper(uri))
+    }
+}
+
+fn dispatch_resource(
+    routes: &[DiscoveryRoute],
+    context: &DiscoveryContext<'_>,
+    resource: DiscoveryResource<'_>,
+    unmatched: &str,
+) -> Result<DiscoveryStep, DiscoveryError> {
+    for route in routes {
+        let Some(step) = route.handle(context, resource) else {
+            continue;
+        };
+        return step;
+    }
+    Err(DiscoveryError::Session(unmatched.into()))
+}
+
+fn map_url(routes: &[DiscoveryRoute], uri: &str) -> Result<Request, DiscoveryError> {
+    for route in routes {
+        if let Some(mapped) = route.map_url(uri) {
+            return mapped;
+        }
+    }
+    Ok(Request::new(uri))
+}
+
+#[derive(Clone, Copy, Debug)]
+enum DiscoveryProgram {
     Immediate(fn(&str) -> Result<ImageCatalog, DiscoveryError>),
-    Resource {
-        request: fn(&str) -> Result<ResourceRequest, DiscoveryError>,
-        parse: fn(&str, &[u8]) -> Result<ImageCatalog, DiscoveryError>,
+    Rules {
+        routes: &'static [DiscoveryRoute],
+        on_failure: Option<FailureHandler>,
     },
-    Stateful(fn(&DiscoveryInput) -> Box<dyn Dezoomer>),
 }
 
 /// One co-located format declaration.
@@ -157,45 +370,54 @@ pub struct DezoomerSpec {
     recognize: fn(&str) -> bool,
     rejection: &'static str,
     prefer: fn(&str) -> bool,
-    adapter: SpecAdapter,
+    program: DiscoveryProgram,
 }
 
 impl DezoomerSpec {
+    /// Declare ordered rules for resources acquired by the core.
+    ///
+    /// The core acquires the input URI automatically and dispatches every
+    /// successful resource through the same ordered rule list.
+    #[must_use]
+    pub const fn new(name: &'static str, routes: &'static [DiscoveryRoute]) -> Self {
+        Self::from_program(
+            name,
+            DiscoveryProgram::Rules {
+                routes,
+                on_failure: None,
+            },
+        )
+    }
+
     /// Declare a format which completes from its input without a resource.
     #[must_use]
     pub const fn immediate(
         name: &'static str,
         complete: fn(&str) -> Result<ImageCatalog, DiscoveryError>,
     ) -> Self {
-        Self::new(name, SpecAdapter::Immediate(complete))
+        Self::from_program(name, DiscoveryProgram::Immediate(complete))
     }
 
-    /// Declare a format which parses one derived resource.
+    /// Handle acquisition failures for formats with alternate resources.
     #[must_use]
-    pub const fn routed(
-        name: &'static str,
-        request: fn(&str) -> Result<ResourceRequest, DiscoveryError>,
-        parse: fn(&str, &[u8]) -> Result<ImageCatalog, DiscoveryError>,
-    ) -> Self {
-        Self::new(name, SpecAdapter::Resource { request, parse })
+    pub const fn on_failure(mut self, handler: FailureHandler) -> Self {
+        let DiscoveryProgram::Rules { routes, .. } = self.program else {
+            panic!("an immediate dezoomer cannot handle resource failures");
+        };
+        self.program = DiscoveryProgram::Rules {
+            routes,
+            on_failure: Some(handler),
+        };
+        self
     }
 
-    /// Declare a format backed by an object-safe, multi-resource state machine.
-    #[must_use]
-    pub const fn stateful(
-        name: &'static str,
-        start: fn(&DiscoveryInput) -> Box<dyn Dezoomer>,
-    ) -> Self {
-        Self::new(name, SpecAdapter::Stateful(start))
-    }
-
-    const fn new(name: &'static str, adapter: SpecAdapter) -> Self {
+    const fn from_program(name: &'static str, program: DiscoveryProgram) -> Self {
         Self {
             name,
             recognize: |_| true,
             rejection: "input not recognized",
             prefer: |_| false,
-            adapter,
+            program,
         }
     }
 
@@ -233,11 +455,6 @@ impl DezoomerSpec {
     }
 }
 
-/// Request the input URI unchanged.
-pub fn input_resource(uri: &str) -> Result<ResourceRequest, DiscoveryError> {
-    Ok(ResourceRequest::new(uri))
-}
-
 impl PartialEq for DezoomerSpec {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
@@ -249,9 +466,7 @@ impl PartialEq for DezoomerSpec {
 pub enum DiscoveryError {
     UnknownRequest(RequestId),
     RequestAlreadyProvided(RequestId),
-    NoCandidateAccepted {
-        diagnostics: Vec<(String, DiscoveryDiagnostic)>,
-    },
+    NoCandidateAccepted { diagnostics: Vec<(String, String)> },
     NotComplete,
     Session(String),
     TransitionLimitExceeded,
@@ -267,7 +482,7 @@ impl fmt::Display for DiscoveryError {
             Self::NoCandidateAccepted { diagnostics } => {
                 f.write_str("no discovery candidate accepted the input")?;
                 for (id, diagnostic) in diagnostics {
-                    write!(f, "\n - {id}: {}", diagnostic.message)?;
+                    write!(f, "\n - {id}: {diagnostic}")?;
                 }
                 Ok(())
             }
@@ -293,8 +508,8 @@ enum CandidateState {
 
 struct Candidate {
     spec: DezoomerSpec,
-    session: Option<Box<dyn Dezoomer>>,
     state: CandidateState,
+    history: Vec<RequestId>,
 }
 
 /// A pull-driven operation with no I/O or shared mutable parser state.
@@ -304,7 +519,7 @@ pub struct DiscoveryOperation {
     requests: BTreeMap<RequestId, ResourceNeed>,
     request_ids: BTreeMap<Request, RequestId>,
     outcomes: BTreeMap<RequestId, ResourceOutcome>,
-    diagnostics: Vec<(String, DiscoveryDiagnostic)>,
+    diagnostics: Vec<(String, String)>,
     catalog: Option<ImageCatalog>,
     next_request_id: u64,
     transitions: usize,
@@ -322,11 +537,8 @@ impl DiscoveryOperation {
         for spec in specs {
             candidates.push(Candidate {
                 spec: *spec,
-                session: match spec.adapter {
-                    SpecAdapter::Stateful(start) => Some(start(input)),
-                    SpecAdapter::Immediate(_) | SpecAdapter::Resource { .. } => None,
-                },
                 state: CandidateState::New,
+                history: Vec::new(),
             });
         }
         // Registry validation and URL ranking supply the canonical candidate
@@ -463,7 +675,7 @@ impl DiscoveryOperation {
             match result {
                 Ok(()) => {}
                 Err(DiscoveryError::Session(message)) => {
-                    self.reject_candidate(index, DiscoveryDiagnostic::from(message));
+                    self.reject_candidate(index, message);
                 }
                 Err(error) => return Err(error),
             }
@@ -480,44 +692,45 @@ impl DiscoveryOperation {
         };
 
         if state.is_none() && !(candidate.spec.recognize)(&self.input.uri) {
-            return Ok(DiscoveryStep::Reject(candidate.spec.rejection.into()));
+            return Err(DiscoveryError::Session(candidate.spec.rejection.into()));
         }
 
-        match candidate.spec.adapter {
-            SpecAdapter::Immediate(complete) => {
-                debug_assert!(state.is_none());
+        match (candidate.spec.program, state) {
+            (DiscoveryProgram::Immediate(complete), None) => {
                 complete(&self.input.uri).map(DiscoveryStep::Complete)
             }
-            SpecAdapter::Resource { request, parse } => match state {
-                None => request(&self.input.uri).map(DiscoveryStep::Need),
-                Some(id) => match self
+            (DiscoveryProgram::Immediate(_), Some(_)) => {
+                unreachable!("immediate dezoomers never follow resources")
+            }
+            (DiscoveryProgram::Rules { .. }, None) => {
+                Ok(DiscoveryStep::Follow(Request::new(self.input.uri.clone())))
+            }
+            (DiscoveryProgram::Rules { routes, on_failure }, Some(id)) => {
+                let request = &self.requests[&id].request;
+                let previous_history = candidate
+                    .history
+                    .strip_suffix(&[id])
+                    .expect("the current resource is last in candidate history");
+                let context = DiscoveryContext {
+                    history_ids: previous_history,
+                    requests: &self.requests,
+                    outcomes: &self.outcomes,
+                };
+                match self
                     .outcomes
                     .get(&id)
                     .expect("ready candidate has an outcome")
                 {
-                    ResourceOutcome::Response(response) => {
-                        let uri = &self.requests[&id].request.uri;
-                        parse(uri, &response.bytes).map(DiscoveryStep::Complete)
-                    }
-                    ResourceOutcome::Failure(failure) => {
-                        Err(DiscoveryError::Session(failure.message.clone()))
-                    }
-                },
-            },
-            SpecAdapter::Stateful(_) => {
-                let outcome = state.map(|id| {
-                    self.outcomes
-                        .get(&id)
-                        .expect("ready candidate has an outcome")
-                        .clone()
-                });
-                let session = self.candidates[index]
-                    .session
-                    .as_mut()
-                    .expect("stateful adapter has a session");
-                match outcome.as_ref() {
-                    None => session.advance(DiscoveryEvent::Start),
-                    Some(outcome) => session.advance(DiscoveryEvent::Resource(outcome)),
+                    ResourceOutcome::Response(response) => dispatch_resource(
+                        routes,
+                        &context,
+                        DiscoveryResource { request, response },
+                        "resource did not match any discovery route",
+                    ),
+                    ResourceOutcome::Failure(failure) => on_failure.map_or_else(
+                        || Err(DiscoveryError::Session(failure.message.clone())),
+                        |handler| handler(&context, DiscoveryFailure { request, failure }),
+                    ),
                 }
             }
         }
@@ -525,37 +738,47 @@ impl DiscoveryOperation {
 
     fn apply_step(&mut self, index: usize, step: DiscoveryStep) -> Result<(), DiscoveryError> {
         match step {
-            DiscoveryStep::Need(request) => match self.register_request(request) {
-                Ok(id) => self.candidates[index].state = CandidateState::Waiting(id),
-                Err(DiscoveryError::ResourceLimitExceeded) => {
-                    self.reject_candidate(
-                        index,
-                        DiscoveryDiagnostic::from("discovery resource limit exceeded"),
-                    );
+            DiscoveryStep::Follow(request) => {
+                let request = match self.candidates[index].spec.program {
+                    DiscoveryProgram::Rules { routes, .. } => map_url(routes, &request.uri)?,
+                    DiscoveryProgram::Immediate(_) => request,
+                };
+                match self.register_request(request) {
+                    Ok(id) => {
+                        if self.candidates[index].history.contains(&id) {
+                            self.reject_candidate(
+                                index,
+                                "discovery followed the same resource twice".into(),
+                            );
+                        } else {
+                            self.candidates[index].history.push(id);
+                            self.candidates[index].state = CandidateState::Waiting(id);
+                        }
+                    }
+                    Err(DiscoveryError::ResourceLimitExceeded) => {
+                        self.reject_candidate(index, "discovery resource limit exceeded".into());
+                    }
+                    Err(error) => return Err(error),
                 }
-                Err(error) => return Err(error),
-            },
+            }
             DiscoveryStep::Complete(catalog) => {
                 let catalog = catalog
                     .normalize()
                     .map_err(|error| DiscoveryError::Session(error.to_string()))?;
                 self.catalog = Some(catalog);
             }
-            DiscoveryStep::Reject(diagnostic) => {
-                self.reject_candidate(index, diagnostic);
-            }
         }
         Ok(())
     }
 
-    fn reject_candidate(&mut self, index: usize, diagnostic: DiscoveryDiagnostic) {
+    fn reject_candidate(&mut self, index: usize, diagnostic: String) {
         let id = self.candidates[index].spec.name.to_owned();
         self.diagnostics.push((id, diagnostic));
         self.candidates[index].state = CandidateState::Rejected;
     }
 
-    fn register_request(&mut self, request: ResourceRequest) -> Result<RequestId, DiscoveryError> {
-        if let Some(id) = self.request_ids.get(&request.request).copied() {
+    fn register_request(&mut self, request: Request) -> Result<RequestId, DiscoveryError> {
+        if let Some(id) = self.request_ids.get(&request).copied() {
             return Ok(id);
         }
         if self.requests.len() >= self.limits.resources {
@@ -563,14 +786,8 @@ impl DiscoveryOperation {
         }
         let id = RequestId(self.next_request_id);
         self.next_request_id += 1;
-        self.request_ids.insert(request.request.clone(), id);
-        self.requests.insert(
-            id,
-            ResourceNeed {
-                id,
-                request: request.request,
-            },
-        );
+        self.request_ids.insert(request.clone(), id);
+        self.requests.insert(id, ResourceNeed { id, request });
         Ok(id)
     }
 }
@@ -579,359 +796,328 @@ impl DiscoveryOperation {
 mod tests {
     use super::*;
     use crate::core::registry::Registry;
-    use crate::core::{CatalogEntry, DeferredImage, StableId};
 
-    const REJECTING_SHARED: DezoomerSpec = DezoomerSpec::routed(
-        "rejecting",
-        |_| Ok(ResourceRequest::new("memory://shared")),
-        |_, _| Err(DiscoveryError::Session("wrong metadata".into())),
-    );
-    const ACCEPTING_SHARED: DezoomerSpec = DezoomerSpec::routed(
-        "accepting",
-        |_| Ok(ResourceRequest::new("memory://shared")),
-        |_, _| Ok(ImageCatalog::default()),
-    );
-    const BROKEN: DezoomerSpec = DezoomerSpec::immediate("broken", |_| {
-        Err(DiscoveryError::Session("not my format".into()))
-    });
-    const WORKING: DezoomerSpec = DezoomerSpec::routed(
-        "working",
-        |_| Ok(ResourceRequest::new("memory://working")),
-        |_, _| Ok(ImageCatalog::default()),
-    );
-    const ONE_META: DezoomerSpec = DezoomerSpec::routed(
-        "one",
-        |_| Ok(ResourceRequest::new("memory://meta")),
-        |_, _| Ok(ImageCatalog::default()),
-    );
-    const LOW: DezoomerSpec = DezoomerSpec::routed(
-        "low",
-        |_| Ok(ResourceRequest::new("memory://low1")),
-        |_, _| Ok(ImageCatalog::default()),
-    );
-    const A: DezoomerSpec = DezoomerSpec::routed(
-        "a",
-        |_| Ok(ResourceRequest::new("memory://a")),
-        |_, _| Ok(ImageCatalog::default()),
-    );
-    const B: DezoomerSpec = DezoomerSpec::routed(
-        "b",
-        |_| Ok(ResourceRequest::new("memory://b")),
-        |_, _| Ok(ImageCatalog::default()),
-    );
-    const C: DezoomerSpec = DezoomerSpec::routed(
-        "c",
-        |_| Ok(ResourceRequest::new("memory://c")),
-        |_, _| Ok(ImageCatalog::default()),
-    );
-
-    struct Chain {
-        state: u8,
-        first: &'static str,
-        second: &'static str,
+    fn catalog(_: &str, _: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
+        Ok(ImageCatalog::default())
     }
 
-    impl Dezoomer for Chain {
-        fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
-            match (self.state, event) {
-                (0, DiscoveryEvent::Start) => {
-                    self.state = 1;
-                    Ok(DiscoveryStep::Need(ResourceRequest::new(self.first)))
-                }
-                (1, DiscoveryEvent::Resource(ResourceOutcome::Response(_))) => {
-                    self.state = 2;
-                    Ok(DiscoveryStep::Need(ResourceRequest::new(self.second)))
-                }
-                (2, DiscoveryEvent::Resource(ResourceOutcome::Response(_))) => {
-                    Ok(DiscoveryStep::Complete(ImageCatalog::default()))
-                }
-                _ => Ok(DiscoveryStep::Reject("unexpected".into())),
-            }
-        }
+    fn reject(
+        _: &DiscoveryContext<'_>,
+        _: DiscoveryResource<'_>,
+    ) -> Result<DiscoveryStep, DiscoveryError> {
+        Err(DiscoveryError::Session("wrong format".into()))
     }
 
-    fn chain(first: &'static str, second: &'static str) -> Box<dyn Dezoomer> {
-        Box::new(Chain {
-            state: 0,
-            first,
-            second,
-        })
-    }
+    const COMPLETE: &[DiscoveryRoute] = &[DiscoveryMatch::any().extract(catalog)];
+    const REJECT: &[DiscoveryRoute] = &[DiscoveryMatch::any().then(reject)];
 
-    const STATEFUL_CHAIN: DezoomerSpec =
-        DezoomerSpec::stateful("chain", |_| chain("memory://metadata", "memory://tiles"));
-    const HIGH_CHAIN: DezoomerSpec =
-        DezoomerSpec::stateful("high", |_| chain("memory://high1", "memory://high2"));
-
-    struct Loop(usize);
-    impl Dezoomer for Loop {
-        fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
-            match event {
-                DiscoveryEvent::Start => Ok(DiscoveryStep::Need(ResourceRequest::new(format!(
-                    "memory://loop{}",
-                    self.0
-                )))),
-                DiscoveryEvent::Resource(ResourceOutcome::Response(_)) => {
-                    self.0 += 1;
-                    Ok(DiscoveryStep::Need(ResourceRequest::new(format!(
-                        "memory://loop{}",
-                        self.0
-                    ))))
-                }
-                DiscoveryEvent::Resource(ResourceOutcome::Failure(_)) => {
-                    Ok(DiscoveryStep::Reject("done".into()))
-                }
-            }
-        }
-    }
-
-    impl Loop {
-        const SPEC: DezoomerSpec = DezoomerSpec::stateful("loop", Self::start);
-
-        fn start(_: &DiscoveryInput) -> Box<dyn Dezoomer> {
-            Box::new(Self(0))
-        }
-    }
-
-    fn need_response(operation: &mut DiscoveryOperation, bytes: &[u8]) {
-        let need = operation.missing_resources().unwrap();
-        assert_eq!(need.len(), 1);
-        provide_response(operation, need[0].id, bytes);
-    }
-
-    fn provide_response(operation: &mut DiscoveryOperation, id: RequestId, bytes: &[u8]) {
+    fn provide(operation: &mut DiscoveryOperation, bytes: &[u8]) {
+        let need = operation.missing_resources().unwrap().pop().unwrap();
         operation
-            .provide(ResourceResponse {
-                id,
-                bytes: bytes.to_vec(),
-            })
+            .provide(ResourceResponse::new(need.id, bytes))
             .unwrap();
     }
 
-    fn derived_request(input: &str) -> ResourceRequest {
-        ResourceRequest::new(format!("{input}/metadata"))
-    }
-
-    fn catalog_with_context(uri: &str) -> ImageCatalog {
-        ImageCatalog::new([CatalogEntry::Deferred(DeferredImage {
-            id: StableId::new("routed:0"),
-            uri: uri.to_owned(),
-            title: None,
-            warnings: Vec::new(),
-        })])
-    }
-
-    const ROUTED: DezoomerSpec = DezoomerSpec::routed(
-        "routed",
-        |uri| Ok(derived_request(uri)),
-        |uri, _| Ok(catalog_with_context(uri)),
-    )
-    .recognizing(|uri| uri.starts_with("route:"), "not a routed input")
-    .preferring(|uri| uri.ends_with("preferred"));
-
     #[test]
-    fn route_adapter_recognizes_derives_and_parses_with_resource_context() {
-        assert!(ROUTED.prefers("route:preferred"));
+    fn input_acquisition_is_implicit_and_extractors_receive_it() {
         let mut registry = Registry::new();
-        registry.register(ROUTED);
-        let mut operation = registry.start("route:input");
+        registry.register(DezoomerSpec::new("test", COMPLETE));
+        let mut operation = registry.start("memory://metadata");
         let need = operation.missing_resources().unwrap().pop().unwrap();
-        assert_eq!(need.request.uri, "route:input/metadata");
-        provide_response(&mut operation, need.id, b"metadata");
-        let catalog = operation.finish().unwrap();
-        let [CatalogEntry::Deferred(image)] = catalog.entries() else {
-            panic!("route parser should return its deferred image")
-        };
-        assert_eq!(image.uri, need.request.uri);
-
-        let mut rejected = registry.start("other:input");
-        assert!(matches!(
-            rejected.missing_resources(),
-            Err(DiscoveryError::NoCandidateAccepted { .. })
-        ));
+        assert_eq!(need.request.uri, "memory://metadata");
+        operation
+            .provide(ResourceResponse::new(need.id, b"metadata"))
+            .unwrap();
+        assert!(operation.finish().unwrap().is_empty());
     }
 
-    #[test]
-    fn candidate_diagnostics_are_displayed_one_per_line() {
-        let error = DiscoveryError::NoCandidateAccepted {
-            diagnostics: vec![
-                (
-                    "first".into(),
-                    DiscoveryDiagnostic::from("not a first input"),
-                ),
-                (
-                    "second".into(),
-                    DiscoveryDiagnostic::from("not a second input"),
-                ),
-            ],
-        };
+    fn is_tile(uri: &str) -> bool {
+        uri.ends_with("/tile.jpg")
+    }
 
+    fn tile_metadata(uri: &str) -> Result<Request, DiscoveryError> {
+        Ok(Request::new(uri.replace("/tile.jpg", "/metadata")))
+    }
+
+    const MAPPED: &[DiscoveryRoute] = &[
+        DiscoveryMatch::url_matching(is_tile).map_url(tile_metadata),
+        DiscoveryMatch::url_suffix("/metadata").extract(catalog),
+    ];
+
+    #[test]
+    fn url_mapping_happens_before_acquisition() {
+        let mut registry = Registry::new();
+        registry.register(DezoomerSpec::new("mapped", MAPPED));
+        let mut operation = registry.start("memory://image/tile.jpg");
         assert_eq!(
-            error.to_string(),
-            "no discovery candidate accepted the input\n - first: not a first input\n - second: not a second input"
+            operation.next_priority_need().unwrap().unwrap().request.uri,
+            "memory://image/metadata"
         );
     }
 
-    #[test]
-    fn identical_requests_are_fanned_out_to_candidates_once() {
-        let mut registry = Registry::new();
-        registry.register(REJECTING_SHARED);
-        registry.register(ACCEPTING_SHARED);
-
-        let mut operation = registry.start("memory://root");
-        assert_eq!(operation.missing_resources().unwrap().len(), 1);
-        need_response(&mut operation, b"metadata");
-        assert!(operation.is_complete());
+    fn follow_tiles(
+        context: &DiscoveryContext<'_>,
+        resource: DiscoveryResource<'_>,
+    ) -> Result<DiscoveryStep, DiscoveryError> {
+        assert!(context.resources().next().is_none());
+        Ok(DiscoveryStep::follow(format!("{}/tiles", resource.uri())))
     }
 
-    #[test]
-    fn session_errors_reject_one_candidate_and_continue() {
-        let mut registry = Registry::new();
-        registry.register(BROKEN);
-        registry.register(WORKING);
+    fn finish_chain(
+        context: &DiscoveryContext<'_>,
+        resource: DiscoveryResource<'_>,
+    ) -> Result<DiscoveryStep, DiscoveryError> {
+        assert!(resource.uri().ends_with("/tiles"));
+        assert_eq!(context.resources().count(), 1);
+        Ok(DiscoveryStep::Complete(ImageCatalog::default()))
+    }
 
-        let mut operation = registry.start("memory://root");
-        let needs = operation.missing_resources().unwrap();
-        assert_eq!(needs[0].request.uri, "memory://working");
-        provide_response(&mut operation, needs[0].id, b"");
+    const CHAIN: &[DiscoveryRoute] = &[
+        DiscoveryMatch::url_suffix("/metadata").then(follow_tiles),
+        DiscoveryMatch::url_suffix("/tiles").then(finish_chain),
+    ];
+
+    #[test]
+    fn followed_resources_are_redispatched_with_history() {
+        let mut registry = Registry::new();
+        registry.register(DezoomerSpec::new("chain", CHAIN));
+        let mut operation = registry.start("memory://image/metadata");
+        provide(&mut operation, b"metadata");
+        assert_eq!(
+            operation.next_priority_need().unwrap().unwrap().request.uri,
+            "memory://image/metadata/tiles"
+        );
+        provide(&mut operation, b"tiles");
         assert!(operation.finish().unwrap().is_empty());
     }
 
     #[test]
-    fn parser_state_is_local_to_each_operation() {
+    fn identical_requests_are_fanned_out_and_parser_errors_try_the_next_candidate() {
         let mut registry = Registry::new();
-        registry.register(STATEFUL_CHAIN);
-        let mut first = registry.start("memory://first");
-        let mut second = registry.start("memory://second");
-        let first_id = first.missing_resources().unwrap()[0].id;
-        let second_id = second.missing_resources().unwrap()[0].id;
-        assert_eq!(first_id, second_id);
-        provide_response(&mut first, first_id, b"");
-        assert_eq!(
-            first.next_priority_need().unwrap().unwrap().request.uri,
-            "memory://tiles"
-        );
-        assert!(!second.is_complete());
-        assert_eq!(
-            second.next_priority_need().unwrap().unwrap().request.uri,
-            "memory://metadata"
-        );
-    }
-
-    #[test]
-    fn priority_scheduling_fetches_higher_priority_chain_first() {
-        let mut registry = Registry::new();
-        registry.register(HIGH_CHAIN);
-        registry.register(LOW);
-
-        let mut operation = registry.start("memory://root");
-        let needs = operation.missing_resources().unwrap();
-        assert_eq!(needs.len(), 2);
-        assert!(needs.iter().any(|n| n.request.uri == "memory://high1"));
-        assert!(needs.iter().any(|n| n.request.uri == "memory://low1"));
-        let next = operation.next_priority_need().unwrap().unwrap();
-        assert_eq!(next.request.uri, "memory://high1");
-        provide_response(&mut operation, next.id, b"");
-        let needs = operation.missing_resources().unwrap();
-        assert_eq!(needs.len(), 2);
-        let prio = operation.next_priority_need().unwrap().unwrap();
-        assert_eq!(
-            prio.request.uri, "memory://high2",
-            "higher-priority second request must be fetched before lower-priority first"
-        );
-        provide_response(&mut operation, prio.id, b"");
+        registry.register(DezoomerSpec::new("reject", REJECT));
+        registry.register(DezoomerSpec::new("accept", COMPLETE));
+        let mut operation = registry.start("memory://shared");
+        assert_eq!(operation.missing_resources().unwrap().len(), 1);
+        provide(&mut operation, b"metadata");
         assert!(operation.is_complete());
     }
 
+    fn follow_a(
+        context: &DiscoveryContext<'_>,
+        _: DiscoveryResource<'_>,
+    ) -> Result<DiscoveryStep, DiscoveryError> {
+        assert!(context.resources().next().is_none());
+        Ok(DiscoveryStep::follow("memory://a"))
+    }
+
+    fn follow_b(
+        context: &DiscoveryContext<'_>,
+        _: DiscoveryResource<'_>,
+    ) -> Result<DiscoveryStep, DiscoveryError> {
+        assert!(context.resources().next().is_none());
+        Ok(DiscoveryStep::follow("memory://b"))
+    }
+
+    const HISTORY_A: &[DiscoveryRoute] = &[DiscoveryMatch::any().then(follow_a)];
+    const HISTORY_B: &[DiscoveryRoute] = &[DiscoveryMatch::any().then(follow_b)];
+
     #[test]
-    fn completed_operations_have_no_outstanding_resources() {
+    fn history_is_candidate_local_when_requests_are_shared() {
         let mut registry = Registry::new();
-        registry.register(WORKING);
-        let mut operation = registry.start("memory://root");
+        registry.register(DezoomerSpec::new("a", HISTORY_A));
+        registry.register(DezoomerSpec::new("b", HISTORY_B));
+        let mut operation = registry.start("memory://shared");
+        let shared = operation.missing_resources().unwrap().pop().unwrap();
+        operation
+            .provide(ResourceResponse::new(shared.id, b"shared"))
+            .unwrap();
+        assert_eq!(operation.candidates[0].history[0], shared.id);
+        assert_eq!(operation.candidates[1].history[0], shared.id);
+        assert_ne!(
+            operation.candidates[0].history[1],
+            operation.candidates[1].history[1]
+        );
+    }
+
+    fn recover(
+        _: &DiscoveryContext<'_>,
+        failure: DiscoveryFailure<'_>,
+    ) -> Result<DiscoveryStep, DiscoveryError> {
+        assert_eq!(failure.uri(), "memory://failure");
+        assert_eq!(failure.failure().message, "expected");
+        Ok(DiscoveryStep::Complete(ImageCatalog::default()))
+    }
+
+    #[test]
+    fn failure_handlers_choose_the_next_action() {
+        let mut registry = Registry::new();
+        registry.register(DezoomerSpec::new("failure", COMPLETE).on_failure(recover));
+        let mut operation = registry.start("memory://failure");
         let need = operation.missing_resources().unwrap().pop().unwrap();
-        provide_response(&mut operation, need.id, b"");
-        assert!(operation.is_complete());
-        assert!(operation.missing_resources().unwrap().is_empty());
-        assert!(operation.next_priority_need().unwrap().is_none());
-    }
-
-    #[test]
-    fn transition_limit_is_enforced() {
-        let mut registry = Registry::new();
-        registry.register(Loop::SPEC);
-        let limits = DiscoveryLimits {
-            transitions: 3,
-            ..Default::default()
-        };
-        let mut operation = registry.start_with_limits("memory://root", limits);
-        let mut result = Ok(());
-        for _ in 0..5 {
-            let needs = operation.missing_resources().unwrap();
-            if needs.is_empty() {
-                break;
-            }
-            result = operation.provide(ResourceResponse {
-                id: needs[0].id,
-                bytes: vec![],
-            });
-            if result.is_err() {
-                break;
-            }
-        }
-        assert!(matches!(
-            result,
-            Err(DiscoveryError::TransitionLimitExceeded)
-        ));
-    }
-
-    #[test]
-    fn resource_limit_rejects_offending_candidate_instead_of_aborting() {
-        let mut registry = Registry::new();
-        registry.register(A);
-        registry.register(B);
-        registry.register(C);
-        let limits = DiscoveryLimits {
-            resources: 2,
-            ..Default::default()
-        };
-        let mut operation = registry.start_with_limits("memory://root", limits);
-        let needs = operation.missing_resources().unwrap();
-        assert_eq!(needs.len(), 2);
-        assert!(
-            operation
-                .diagnostics
-                .iter()
-                .any(|(id, msg)| id == "c" && msg.message.contains("resource limit"))
-        );
-        for need in needs {
-            operation
-                .provide(ResourceResponse {
-                    id: need.id,
-                    bytes: vec![],
-                })
-                .unwrap();
-        }
-        assert!(operation.is_complete());
-    }
-
-    #[test]
-    fn retained_bytes_limit_is_enforced() {
-        let mut registry = Registry::new();
-        registry.register(ONE_META);
-        let limits = DiscoveryLimits {
-            retained_bytes: 10,
-            ..Default::default()
-        };
-        let mut operation = registry.start_with_limits("memory://root", limits);
-        let needs = operation.missing_resources().unwrap();
-        assert_eq!(needs.len(), 1);
-        let large = vec![0u8; 20];
-        let err = operation
-            .provide(ResourceResponse {
-                id: needs[0].id,
-                bytes: large,
+        operation
+            .provide_failure(ResourceFailure {
+                id: need.id,
+                message: "expected".into(),
             })
+            .unwrap();
+        assert!(operation.finish().unwrap().is_empty());
+    }
+
+    fn repeat(
+        _: &DiscoveryContext<'_>,
+        resource: DiscoveryResource<'_>,
+    ) -> Result<DiscoveryStep, DiscoveryError> {
+        Ok(DiscoveryStep::follow(resource.uri()))
+    }
+
+    const REPEAT: &[DiscoveryRoute] = &[DiscoveryMatch::any().then(repeat)];
+
+    #[test]
+    fn following_the_same_uri_is_rejected() {
+        let mut registry = Registry::new();
+        registry.register(DezoomerSpec::new("repeat", REPEAT));
+        let mut operation = registry.start("memory://repeat");
+        let need = operation.missing_resources().unwrap().pop().unwrap();
+        let error = operation
+            .provide(ResourceResponse::new(need.id, b"again"))
             .unwrap_err();
-        assert_eq!(err, DiscoveryError::MetadataSizeLimitExceeded);
+        assert!(error.to_string().contains("same resource twice"));
+    }
+
+    fn follow_again(
+        context: &DiscoveryContext<'_>,
+        _: DiscoveryResource<'_>,
+    ) -> Result<DiscoveryStep, DiscoveryError> {
+        Ok(DiscoveryStep::follow(format!(
+            "memory://{}",
+            context.resources().count()
+        )))
+    }
+
+    const LOOP: &[DiscoveryRoute] = &[DiscoveryMatch::any().then(follow_again)];
+
+    #[test]
+    fn operation_limits_are_enforced() {
+        let mut registry = Registry::new();
+        registry.register(DezoomerSpec::new("loop", LOOP));
+        let mut transitions = registry.start_with_limits(
+            "memory://start",
+            DiscoveryLimits {
+                transitions: 2,
+                ..Default::default()
+            },
+        );
+        let need = transitions.missing_resources().unwrap().pop().unwrap();
+        transitions
+            .provide(ResourceResponse::new(need.id, []))
+            .unwrap();
+        let need = transitions.missing_resources().unwrap().pop().unwrap();
+        let error = transitions
+            .provide(ResourceResponse::new(need.id, []))
+            .unwrap_err();
+        assert_eq!(error, DiscoveryError::TransitionLimitExceeded);
+
+        let mut resources = registry.start_with_limits(
+            "memory://start",
+            DiscoveryLimits {
+                resources: 1,
+                ..Default::default()
+            },
+        );
+        let need = resources.missing_resources().unwrap().pop().unwrap();
+        assert!(
+            resources
+                .provide(ResourceResponse::new(need.id, []))
+                .is_err()
+        );
+
+        let mut bytes = Registry::new();
+        bytes.register(DezoomerSpec::new("bytes", COMPLETE));
+        let mut bytes = bytes.start_with_limits(
+            "memory://metadata",
+            DiscoveryLimits {
+                retained_bytes: 1,
+                ..Default::default()
+            },
+        );
+        let need = bytes.missing_resources().unwrap().pop().unwrap();
+        assert_eq!(
+            bytes.provide(ResourceResponse::new(need.id, [0, 1])),
+            Err(DiscoveryError::MetadataSizeLimitExceeded)
+        );
+    }
+
+    fn high_start(_: &str) -> Result<Request, DiscoveryError> {
+        Ok(Request::new("memory://high-1"))
+    }
+
+    fn low_start(_: &str) -> Result<Request, DiscoveryError> {
+        Ok(Request::new("memory://low"))
+    }
+
+    fn is_root(uri: &str) -> bool {
+        uri == "memory://root"
+    }
+
+    fn high_next(
+        _: &DiscoveryContext<'_>,
+        _: DiscoveryResource<'_>,
+    ) -> Result<DiscoveryStep, DiscoveryError> {
+        Ok(DiscoveryStep::follow("memory://high-2"))
+    }
+
+    const HIGH: &[DiscoveryRoute] = &[
+        DiscoveryMatch::url_matching(is_root).map_url(high_start),
+        DiscoveryMatch::url_suffix("high-1").then(high_next),
+        DiscoveryMatch::url_suffix("high-2").extract(catalog),
+    ];
+    const LOW: &[DiscoveryRoute] = &[
+        DiscoveryMatch::url_matching(is_root).map_url(low_start),
+        DiscoveryMatch::any().extract(catalog),
+    ];
+
+    #[test]
+    fn priority_stays_depth_first_across_followed_resources() {
+        let mut registry = Registry::new();
+        registry.register(DezoomerSpec::new("high", HIGH));
+        registry.register(DezoomerSpec::new("low", LOW));
+        let mut operation = registry.start("memory://root");
+        assert_eq!(operation.missing_resources().unwrap().len(), 2);
+        let high = operation.next_priority_need().unwrap().unwrap();
+        assert_eq!(high.request.uri, "memory://high-1");
+        operation
+            .provide(ResourceResponse::new(high.id, []))
+            .unwrap();
+        assert_eq!(
+            operation.next_priority_need().unwrap().unwrap().request.uri,
+            "memory://high-2"
+        );
+    }
+
+    #[test]
+    fn media_type_matching_ignores_case_and_parameters() {
+        let request = Request::new("memory://page");
+        let response = ResourceResponse::new(RequestId(0), b"page")
+            .with_content_type("Text/HTML; charset=utf-8");
+        let resource = DiscoveryResource {
+            request: &request,
+            response: &response,
+        };
+        assert!(DiscoveryMatch::media_type(&["text/html"]).matches_resource(resource));
+        assert!(!DiscoveryMatch::media_type(&["text/xml"]).matches_resource(resource));
+    }
+
+    #[test]
+    fn diagnostics_are_displayed_one_per_line() {
+        let error = DiscoveryError::NoCandidateAccepted {
+            diagnostics: vec![
+                ("first".into(), "not first".into()),
+                ("second".into(), "not second".into()),
+            ],
+        };
+        assert_eq!(
+            error.to_string(),
+            "no discovery candidate accepted the input\n - first: not first\n - second: not second"
+        );
     }
 }

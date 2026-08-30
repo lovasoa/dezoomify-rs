@@ -1,31 +1,41 @@
 //! Pure discovery for Deep Zoom Image descriptors.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use dzi_file::DziFile;
 use regex::Regex;
 
 use crate::Vec2d;
 use crate::core::{
-    CatalogEntry, DezoomerSpec, DiscoveryError, Grid, ImageCatalog, ImageDescriptor,
-    LevelDescriptor, Request, ResourceRequest, StableId,
+    CatalogEntry, DezoomerSpec, DiscoveryError, DiscoveryMatch, Grid, ImageCatalog,
+    ImageDescriptor, LevelDescriptor, Request, StableId,
 };
 use crate::json_utils::all_json;
 
 mod dzi_file;
 
-pub const SPEC: DezoomerSpec =
-    DezoomerSpec::routed("deepzoom", |uri| Ok(metadata_request(uri)), load_catalog)
-        .preferring(|uri| uri.contains(".dzi") || uri.contains("_files/"));
+static TILE_URL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new("_files/\\d+/\\d+_\\d+\\.(jpe?g|png)$").expect("constant DZI tile pattern")
+});
 
-fn metadata_request(input: &str) -> ResourceRequest {
-    let tile =
-        Regex::new("_files/\\d+/\\d+_\\d+\\.(jpe?g|png)$").expect("constant DZI tile pattern");
-    let uri = tile.find(input).map_or_else(
-        || input.to_owned(),
-        |matched| format!("{}.dzi", &input[..matched.start()]),
-    );
-    ResourceRequest::new(uri)
+pub const SPEC: DezoomerSpec = DezoomerSpec::new(
+    "deepzoom",
+    &[
+        DiscoveryMatch::url_matching(is_tile_url).map_url(tile_metadata),
+        DiscoveryMatch::any().extract(load_catalog),
+    ],
+)
+.preferring(|uri| uri.contains(".dzi") || uri.contains("_files/"));
+
+fn is_tile_url(input: &str) -> bool {
+    TILE_URL.is_match(input)
+}
+
+fn tile_metadata(input: &str) -> Result<Request, DiscoveryError> {
+    let matched = TILE_URL
+        .find(input)
+        .ok_or_else(|| DiscoveryError::Session("not a DZI tile URL".into()))?;
+    Ok(Request::new(format!("{}.dzi", &input[..matched.start()])))
 }
 
 fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryError> {

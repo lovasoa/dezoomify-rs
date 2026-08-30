@@ -5,8 +5,8 @@ use tile_info::ImageInfo;
 
 use crate::Vec2d;
 use crate::core::{
-    CatalogEntry, DeferredImage, DezoomerSpec, DiscoveryError, Grid, GridRequests, GridTile,
-    ImageCatalog, ImageDescriptor, LevelDescriptor, Request, StableId, input_resource,
+    CatalogEntry, DeferredImage, DezoomerSpec, DiscoveryError, DiscoveryMatch, Grid, GridRequests,
+    GridTile, ImageCatalog, ImageDescriptor, LevelDescriptor, Request, StableId,
 };
 use crate::iiif::tile_info::TileSizeFormat;
 use crate::json_utils::all_json;
@@ -18,8 +18,8 @@ pub mod tile_info;
 mod title_tests;
 
 /// IIIF dezoomer. See <https://iiif.io/>.
-pub const SPEC: DezoomerSpec =
-    DezoomerSpec::routed("iiif", input_resource, catalog).preferring(|uri| {
+pub const SPEC: DezoomerSpec = DezoomerSpec::new("iiif", &[DiscoveryMatch::any().extract(catalog)])
+    .preferring(|uri| {
         uri.contains("info.json") || uri.contains("iiif") || uri.contains("manifest.json")
     });
 
@@ -588,6 +588,7 @@ fn discovery_requests_metadata_then_returns_normalized_replayable_levels() {
           "tiles":[{"width":512,"height":512,"scaleFactors":[1,2,4]}]
         }"#
             .to_vec(),
+            content_type: None,
         })
         .unwrap();
     let catalog = operation.finish().unwrap();

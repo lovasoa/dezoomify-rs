@@ -1,12 +1,13 @@
 //! Pure discovery for text files containing deferred image URLs.
 
 use crate::core::{
-    CatalogEntry, DeferredImage, DezoomerSpec, DiscoveryError, ImageCatalog, StableId,
-    input_resource,
+    CatalogEntry, DeferredImage, DezoomerSpec, DiscoveryError, DiscoveryMatch, ImageCatalog,
+    StableId,
 };
 
-pub const SPEC: DezoomerSpec = DezoomerSpec::routed("bulk_text", input_resource, catalog)
-    .recognizing(is_bulk_file, "not a bulk URL-list file");
+pub const SPEC: DezoomerSpec =
+    DezoomerSpec::new("bulk_text", &[DiscoveryMatch::any().extract(catalog)])
+        .recognizing(is_bulk_file, "not a bulk URL-list file");
 
 fn catalog(uri: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
     let text = std::str::from_utf8(bytes).map_err(|error| {

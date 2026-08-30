@@ -8,8 +8,8 @@ use serde::Deserialize;
 
 use crate::Vec2d;
 use crate::core::{
-    CatalogEntry, DezoomerSpec, DiscoveryError, Grid, ImageCatalog, ImageDescriptor,
-    LevelDescriptor, Request, ResourceRequest, StableId,
+    CatalogEntry, DezoomerSpec, DiscoveryError, DiscoveryMatch, Grid, ImageCatalog,
+    ImageDescriptor, LevelDescriptor, Request, StableId,
 };
 use crate::json_utils::number_or_string;
 
@@ -17,23 +17,28 @@ const VIEW: &str = "https://digitalcollections.nypl.org/items/";
 const META: &str = "https://access.nypl.org/image.php/";
 const POSTFIX: &str = "/tiles/config.js";
 
-pub const SPEC: DezoomerSpec = DezoomerSpec::routed("nypl", metadata_request, catalog)
-    .recognizing(
-        |uri| uri.starts_with(VIEW) || uri.starts_with(META),
-        "not an NYPL image URL",
-    )
-    .preferring(|uri| uri.contains("digitalcollections.nypl.org"));
+pub const SPEC: DezoomerSpec = DezoomerSpec::new(
+    "nypl",
+    &[
+        DiscoveryMatch::url_matching(is_view_url).map_url(metadata_url),
+        DiscoveryMatch::any().extract(catalog),
+    ],
+)
+.recognizing(
+    |uri| uri.starts_with(VIEW) || uri.starts_with(META),
+    "not an NYPL image URL",
+)
+.preferring(|uri| uri.contains("digitalcollections.nypl.org"));
 
-fn metadata_request(input: &str) -> Result<ResourceRequest, DiscoveryError> {
-    let uri = if input.starts_with(VIEW) {
-        let id = image_id(input).ok_or_else(|| {
-            DiscoveryError::Session(format!("unable to extract NYPL image ID from {input:?}"))
-        })?;
-        format!("{META}{id}{POSTFIX}")
-    } else {
-        input.to_owned()
-    };
-    Ok(ResourceRequest::new(uri))
+fn is_view_url(uri: &str) -> bool {
+    uri.starts_with(VIEW)
+}
+
+fn metadata_url(input: &str) -> Result<Request, DiscoveryError> {
+    let id = image_id(input).ok_or_else(|| {
+        DiscoveryError::Session(format!("unable to extract NYPL image ID from {input:?}"))
+    })?;
+    Ok(Request::new(format!("{META}{id}{POSTFIX}")))
 }
 
 fn image_id(uri: &str) -> Option<String> {

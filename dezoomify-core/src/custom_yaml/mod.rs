@@ -6,18 +6,21 @@ use serde::Deserialize;
 
 use crate::Vec2d;
 use crate::core::{
-    CatalogEntry, DezoomerSpec, DiscoveryError, ImageCatalog, ImageDescriptor, LevelDescriptor,
-    Positioned, ProcessingRecipe, Request, StableId, TileSourceError, input_resource,
+    CatalogEntry, DezoomerSpec, DiscoveryError, DiscoveryMatch, ImageCatalog, ImageDescriptor,
+    LevelDescriptor, Positioned, ProcessingRecipe, Request, StableId, TileSourceError,
 };
 use crate::default_headers;
 
 mod tile_set;
 mod variable;
 
-pub const SPEC: DezoomerSpec = DezoomerSpec::routed("custom", input_resource, |_, bytes| {
+pub const SPEC: DezoomerSpec =
+    DezoomerSpec::new("custom", &[DiscoveryMatch::any().extract(catalog)])
+        .recognizing(|uri| uri.ends_with("tiles.yaml"), "not a tiles.yaml file");
+
+fn catalog(_: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
     catalog_from_yaml(bytes)
-})
-.recognizing(|uri| uri.ends_with("tiles.yaml"), "not a tiles.yaml file");
+}
 
 #[derive(Deserialize)]
 struct CustomYamlTiles {

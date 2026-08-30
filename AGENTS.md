@@ -23,7 +23,7 @@ One workspace, two crates. Dependencies from app to core only.
 | Orchestration, image/level pickers, bulk mode | [`src/lib.rs`](src/lib.rs) |
 | Output encoders (PNG/JPEG/ZIF-TIFF/IIIF) | [`src/encoder/`](src/encoder/) |
 | Built-in format registry (names, URL hints, precedence) | [`dezoomify-core/src/core/registry.rs`](dezoomify-core/src/core/registry.rs) |
-| Discovery engine (sessions, limits, request dedup) | [`dezoomify-core/src/core/discovery.rs`](dezoomify-core/src/core/discovery.rs) |
+| Discovery engine (routes, history, limits, request dedup) | [`dezoomify-core/src/core/discovery.rs`](dezoomify-core/src/core/discovery.rs) |
 | Catalog, level and tile model | [`dezoomify-core/src/core/model.rs`](dezoomify-core/src/core/model.rs) |
 | Known-grid tile plans | [`dezoomify-core/src/core/tile_plan.rs`](dezoomify-core/src/core/tile_plan.rs) |
 | Adaptive (probe-driven) tile programs | [`dezoomify-core/src/core/adaptive.rs`](dezoomify-core/src/core/adaptive.rs) |
@@ -31,14 +31,19 @@ One workspace, two crates. Dependencies from app to core only.
 
 ## Adding a format
 
-1. Implement the [`Dezoomer`](dezoomify-core/src/core/discovery.rs) trait in
-   `dezoomify-core/src/<format>/mod.rs` (smallest example:
-   [`generic`](dezoomify-core/src/generic/mod.rs)): a `start` constructor from
-   `DiscoveryInput` plus an `advance` state machine.
+1. Declare a co-located [`DezoomerSpec`](dezoomify-core/src/core/discovery.rs).
+   Resource-based formats declare one ordered `DiscoveryRoute` table. The core
+   acquires the initial URI automatically, dispatches every acquired resource
+   through that table, and follows any `DiscoveryStep::Follow` result. Use
+   `map_url` for metadata locations derived from an input URL and `extract` for
+   ordinary `(uri, bytes) -> ImageCatalog` parsers. Multi-resource handlers
+   receive typed resources and return the next declarative action; they never
+   implement acquisition states. `immediate` is reserved for URI-only formats
+   such as generic URL templates.
 2. Fixed grids: implement `RectangularSource` and wrap it in
    `KnownTilePlan::rectangular` ([`tile_plan.rs`](dezoomify-core/src/core/tile_plan.rs)).
-3. Declare the dezoomer's name and URL hints once in a co-located
-   `DezoomerSpec` const in the same module, then list that const in `BUILTINS`
+3. Keep the dezoomer's name and URL hints in that co-located `DezoomerSpec`,
+   then list the const in `BUILTINS`
    ([`dezoomify-core/src/core/registry.rs`](dezoomify-core/src/core/registry.rs)).
 
 ## Commands
