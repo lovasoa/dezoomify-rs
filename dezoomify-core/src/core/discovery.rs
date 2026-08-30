@@ -353,6 +353,9 @@ impl DiscoveryOperation {
     /// Returns an error if a candidate cannot transition.
     pub fn missing_resources(&mut self) -> Result<Vec<ResourceNeed>, DiscoveryError> {
         self.drive()?;
+        if self.catalog.is_some() {
+            return Ok(Vec::new());
+        }
         Ok(self.outstanding_needs().collect())
     }
 
@@ -364,6 +367,9 @@ impl DiscoveryOperation {
     /// outstanding request.
     pub fn next_priority_need(&mut self) -> Result<Option<ResourceNeed>, DiscoveryError> {
         self.drive()?;
+        if self.catalog.is_some() {
+            return Ok(None);
+        }
         for candidate in &self.candidates {
             if let CandidateState::Waiting(id) = candidate.state
                 && !self.outcomes.contains_key(&id)
@@ -814,6 +820,18 @@ mod tests {
         );
         provide_response(&mut operation, prio.id, b"");
         assert!(operation.is_complete());
+    }
+
+    #[test]
+    fn completed_operations_have_no_outstanding_resources() {
+        let mut registry = Registry::new();
+        registry.register(WORKING);
+        let mut operation = registry.start("memory://root");
+        let need = operation.missing_resources().unwrap().pop().unwrap();
+        provide_response(&mut operation, need.id, b"");
+        assert!(operation.is_complete());
+        assert!(operation.missing_resources().unwrap().is_empty());
+        assert!(operation.next_priority_need().unwrap().is_none());
     }
 
     #[test]

@@ -71,6 +71,7 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
         .next()
         .filter(|name| !name.is_empty())
         .unwrap_or("Zoomify");
+    let full_resolution_only = properties.is_full_resolution_only();
     let (level_info, warnings) = properties.levels_with_warnings();
     let levels = level_info
         .into_iter()
@@ -86,7 +87,11 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
                 Vec2d::default(),
                 move |tile| {
                     let cell: Vec2d = tile.coord.into();
-                    let tile_group = (u64::from(info.tiles_before) + tile.row_major_ordinal) / 256;
+                    let tile_group = if full_resolution_only {
+                        0
+                    } else {
+                        (u64::from(info.tiles_before) + tile.row_major_ordinal) / 256
+                    };
                     Request::new(format!(
                         "{base_url}/TileGroup{tile_group}/{index}-{}-{}.jpg",
                         cell.x, cell.y
@@ -233,5 +238,29 @@ mod tests {
             image.warnings,
             ["Zoomify tile count mismatch: computed 5, metadata declares 9"]
         );
+    }
+
+    #[test]
+    fn full_resolution_only_numtiles_uses_the_full_level() {
+        let image = ready_image(
+            "https://fixtures.test/zoomify-full-numtiles/ImageProperties.xml",
+            br#"<IMAGE_PROPERTIES WIDTH="10240" HEIGHT="1792" NUMTILES="280" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>"#,
+        );
+        let TileSource::Grid(plan) = &image.levels.last().unwrap().source else {
+            unreachable!()
+        };
+        assert_eq!(plan.count(), 280);
+        let first = plan.tiles_row_major().next().unwrap().unwrap();
+        assert_eq!(
+            first.request.uri,
+            "https://fixtures.test/zoomify-full-numtiles/TileGroup0/6-0-0.jpg"
+        );
+        let urls: Vec<_> = plan
+            .tiles_row_major()
+            .map(Result::unwrap)
+            .map(|tile| tile.request.uri)
+            .collect();
+        assert!(urls.iter().all(|url| url.contains("/TileGroup0/")));
+        assert!(urls.iter().any(|url| url.ends_with("/6-16-6.jpg")));
     }
 }

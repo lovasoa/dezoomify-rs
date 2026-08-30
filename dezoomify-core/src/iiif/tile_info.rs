@@ -50,8 +50,14 @@ static QUALITY_ORDER: [&str; 5] = ["bitonal", "gray", "color", "native", "defaul
 // webp is the least favorite because of this bug: https://github.com/image-rs/image/issues/939
 static FORMAT_ORDER: [&str; 7] = ["webp", "gif", "bmp", "tif", "jpg", "jpeg", "png"];
 
-static TEST_ID_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^https?://((www\.)?example\.|localhost)").unwrap());
+static TEST_ID_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^https?://(?:(www\.)?example\.|localhost(?::\d+)?(?:[/?#]|$)|10\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?(?:[/?#]|$)|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}(?::\d+)?(?:[/?#]|$)|192\.168\.\d{1,3}\.\d{1,3}(?::\d+)?(?:[/?#]|$))",
+    )
+    .unwrap()
+});
+static EXPLICIT_PORT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^https?://(?:\[[^\]]+\]|[^/?#:]+):(\d+)(?:[/?#]|$)").unwrap());
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TileSizeFormat {
@@ -183,7 +189,8 @@ impl ImageInfo {
 
     pub fn resolve_relative_urls(&mut self, base: &str) {
         if let Some(id) = &self.id {
-            self.id = Some(resolve_relative(base, id));
+            let resolved = resolve_relative(base, id);
+            self.id = Some(rewrite_default_port_origin(&resolved, base, id));
         }
     }
 
@@ -192,6 +199,34 @@ impl ImageInfo {
             .as_ref()
             .map_or_else(Vec::new, Profile::warnings)
     }
+}
+
+fn rewrite_default_port_origin(resolved: &str, info_uri: &str, raw_id: &str) -> String {
+    let Ok(mut service) = url::Url::parse(resolved) else {
+        return resolved.to_owned();
+    };
+    let Ok(info) = url::Url::parse(info_uri) else {
+        return resolved.to_owned();
+    };
+    if service.host_str() != info.host_str()
+        || (service.scheme() == info.scheme()
+            && service.port_or_known_default() == info.port_or_known_default())
+    {
+        return resolved.to_owned();
+    }
+    let explicit_port = EXPLICIT_PORT_RE
+        .captures(raw_id)
+        .and_then(|captures| captures.get(1))
+        .and_then(|port| port.as_str().parse::<u16>().ok());
+    let is_default_port = matches!(explicit_port, Some(80 | 443))
+        || (service.scheme() == "http" && info.scheme() == "https" && service.port().is_none());
+    if !is_default_port {
+        return resolved.to_owned();
+    }
+    let _ = service.set_scheme(info.scheme());
+    let _ = service.set_host(info.host_str());
+    let _ = service.set_port(info.port());
+    service.to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
@@ -433,4 +468,28 @@ fn test_best_quality() {
         };
         assert_eq!(info.best_quality(), expected_best_quality);
     }
+}
+
+#[test]
+fn private_ids_are_removed_before_resolution() {
+    let mut info: ImageInfo =
+        serde_json::from_str(r#"{"@id":"http://10.0.0.42/iiif/private","width":1,"height":1}"#)
+            .unwrap();
+    assert!(info.remove_test_id());
+    info.resolve_relative_urls("http://127.0.0.1:9877/fixtures/info.json");
+    assert_eq!(info.id, None);
+}
+
+#[test]
+fn explicit_default_ports_are_rewritten_to_the_info_origin() {
+    let mut info: ImageInfo = serde_json::from_str(
+        r#"{"@id":"http://127.0.0.1:80/iiif/default-port","width":1,"height":1}"#,
+    )
+    .unwrap();
+    assert!(!info.remove_test_id());
+    info.resolve_relative_urls("http://127.0.0.1:9877/fixtures/info.json");
+    assert_eq!(
+        info.id.as_deref(),
+        Some("http://127.0.0.1:9877/iiif/default-port")
+    );
 }

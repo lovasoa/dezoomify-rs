@@ -277,7 +277,7 @@ struct IIIFLevel {
 
 impl IIIFLevel {
     fn image_size(&self) -> Vec2d {
-        self.page_info.size() / self.scale_factor
+        self.page_info.size().ceil_div(self.scale_factor)
     }
 }
 
@@ -287,7 +287,7 @@ impl GridRequests for IIIFLevel {
         let scaled_tile_size = tile.cell_size * self.scale_factor;
         let xy_pos = col_and_row_pos * scaled_tile_size;
         let scaled_tile_size = (xy_pos + scaled_tile_size).min(self.page_info.size()) - xy_pos;
-        let tile_size = scaled_tile_size / self.scale_factor;
+        let tile_size = scaled_tile_size.ceil_div(self.scale_factor);
         Request::new(format!(
             "{base}/{x},{y},{img_w},{img_h}/{tile_size}/{rotation}/{quality}.{format}",
             base = self
@@ -464,8 +464,8 @@ fn test_tiles() {
     assert_eq!(
         tiles,
         vec![
-            "http://www.asmilano.it/fast/iipsrv.fcgi?IIIF=/opt/divenire/files/./tifs/05/36/536765.tif/0,0,15001,32768/234,512/0/default.jpg",
-            "http://www.asmilano.it/fast/iipsrv.fcgi?IIIF=/opt/divenire/files/./tifs/05/36/536765.tif/0,32768,15001,15234/234,238/0/default.jpg",
+            "http://www.asmilano.it/fast/iipsrv.fcgi?IIIF=/opt/divenire/files/./tifs/05/36/536765.tif/0,0,15001,32768/235,512/0/default.jpg",
+            "http://www.asmilano.it/fast/iipsrv.fcgi?IIIF=/opt/divenire/files/./tifs/05/36/536765.tif/0,32768,15001,15234/235,239/0/default.jpg",
         ]
     );
 }
@@ -543,12 +543,12 @@ fn test_qualities() {
     }"#;
     let levels = levels("test.com", data).unwrap();
     let level = level_with_scale(&levels, 10);
-    assert_eq!(level.source.image_size(), Some(Vec2d { x: 515, y: 381 })); // 5156/10, 3816/10
+    assert_eq!(level.source.image_size(), Some(Vec2d { x: 516, y: 382 })); // ceil(5156/10), ceil(3816/10)
     let tiles = tile_urls(level);
     assert_eq!(
         tiles,
         vec![
-            "https://images.britishart.yale.edu/iiif/fd470c3e-ead0-4878-ac97-d63295753f82/0,0,5156,3816/515,381/0/native.png", // tile_width and tile_height are not used from profile here but from image_info.tile_w/h
+            "https://images.britishart.yale.edu/iiif/fd470c3e-ead0-4878-ac97-d63295753f82/0,0,5156,3816/516,382/0/native.png", // tile_width and tile_height are not used from profile here but from image_info.tile_w/h
         ]
     );
 }
