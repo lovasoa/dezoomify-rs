@@ -214,8 +214,11 @@ impl<'a> TileDownloadCoordinator<'a> {
             progress.increment();
             let (spec, tile, success) = match tile_result {
                 Ok((spec, tile)) => {
-                    state.set_tile_size(tile.size());
-                    (spec, Some(tile), true)
+                    let success = probe_succeeded(spec.role, tile.size());
+                    if success {
+                        state.set_tile_size(tile.size());
+                    }
+                    (spec, success.then_some(tile), success)
                 }
                 Err(WorkError::Download(error)) => {
                     let spec = error.tile_spec;
@@ -289,8 +292,11 @@ impl<'a> TileDownloadCoordinator<'a> {
 
             let (spec, tile, success) = match tile_result {
                 Ok((spec, tile)) => {
-                    state.set_tile_size(tile.size);
-                    (spec, Some(tile), true)
+                    let success = probe_succeeded(spec.role, tile.size);
+                    if success {
+                        state.set_tile_size(tile.size);
+                    }
+                    (spec, success.then_some(tile), success)
                 }
                 Err(WorkError::Download(error)) => (error.tile_spec, None, false),
                 Err(WorkError::Source(error)) => {
@@ -322,6 +328,10 @@ impl<'a> TileDownloadCoordinator<'a> {
         }
         Ok(observations)
     }
+}
+
+fn probe_succeeded(role: TileRole, size: Vec2d) -> bool {
+    role != TileRole::ProbeAndOutput || size != Vec2d::square(1)
 }
 
 #[derive(Debug)]
@@ -371,9 +381,10 @@ fn empty_tile_for(
 
 #[cfg(test)]
 mod tests {
-    use super::{ProgressManager, empty_tile_for};
+    use super::{ProgressManager, empty_tile_for, probe_succeeded};
     use crate::max_size_in_rect;
     use dezoomify_core::Vec2d;
+    use dezoomify_core::core::TileRole;
 
     #[test]
     fn empty_tiles_are_clipped_to_canvas() {
@@ -398,6 +409,16 @@ mod tests {
         assert_eq!(state.total_tiles, 1);
         assert_eq!(state.successful_tiles, 1);
         assert!(!state.has_partial_failure());
+    }
+
+    #[test]
+    fn one_by_one_probe_tiles_are_missing_placeholders() {
+        assert!(!probe_succeeded(TileRole::ProbeAndOutput, Vec2d::square(1)));
+        assert!(probe_succeeded(TileRole::Output, Vec2d::square(1)));
+        assert!(probe_succeeded(
+            TileRole::ProbeAndOutput,
+            Vec2d::square(256)
+        ));
     }
 
     #[test]

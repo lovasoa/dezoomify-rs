@@ -18,8 +18,14 @@ pub enum ObservationResult {
 }
 
 static TEMPLATE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?xi)\{\{\s*(?P<dimension>x|y)(?::0(?P<zeroes>\d+))?\s*\}\}")
-        .expect("constant generic template pattern")
+    Regex::new(
+        r"(?xi)(?:
+            \{\{\s*(?P<dimension>x|y)(?::0(?P<zeroes>\d+))?\s*\}\}
+            |
+            %7b%7b\s*(?P<encoded_dimension>x|y)(?:(?:%3a|:)[^0-9]?(?P<encoded_zeroes>\d+))?\s*%7d%7d
+        )",
+    )
+    .expect("constant generic template pattern")
 });
 
 #[must_use]
@@ -40,13 +46,19 @@ fn parse_template(input: String) -> Template<Dimension> {
     for captures in TEMPLATE_RE.captures_iter(&input) {
         let matched = captures.get(0).expect("a capture has a full match");
         parts.push(Part::literal(&input[cursor..matched.start()]));
-        let dimension = if captures["dimension"].eq_ignore_ascii_case("x") {
+        let dimension_name = captures
+            .name("dimension")
+            .or_else(|| captures.name("encoded_dimension"))
+            .expect("a generic template has a dimension")
+            .as_str();
+        let dimension = if dimension_name.eq_ignore_ascii_case("x") {
             Dimension::X
         } else {
             Dimension::Y
         };
         let padding = captures
             .name("zeroes")
+            .or_else(|| captures.name("encoded_zeroes"))
             .and_then(|value| value.as_str().parse().ok())
             .unwrap_or(0);
         parts.push(Part::Hole(dimension, padding));
@@ -112,21 +124,20 @@ impl ProbeContinuation {
         result: ObservationResult,
     ) -> Result<DiscoverableStep, TileSourceError> {
         let success = match result {
-            ObservationResult::Available { size } if size.x > 0 && size.y > 0 => {
+            ObservationResult::Available { size }
+                if size.x > 0 && size.y > 0 && size != Vec2d::square(1) =>
+            {
                 self.search.tile_size.get_or_insert(size);
                 true
             }
+            ObservationResult::Available { size } if size == Vec2d::square(1) => false,
             ObservationResult::Available { .. } => return Err(TileSourceError::InvalidDimensions),
             ObservationResult::Missing => false,
         };
         let first = self.search.observed.is_empty();
         self.search.observed.insert(self.point, success);
         if first {
-            if success {
-                self.search.next_point = Dichotomy2d::first();
-            } else {
-                return Ok(DiscoverableStep::Empty);
-            }
+            self.search.next_point = Dichotomy2d::first();
         } else {
             let mut next = self.search.bounds.next(success);
             while let Some(point) = next {
@@ -205,7 +216,9 @@ impl GenericSearch {
     }
 
     fn resolve(self) -> Result<DiscoverableStep, TileSourceError> {
-        let tile_size = self.tile_size.expect("a resolved search found the origin");
+        let Some(tile_size) = self.tile_size else {
+            return Ok(DiscoverableStep::Empty);
+        };
         let last = self.bounds.boundary();
         let shape = Vec2d {
             x: last
@@ -421,5 +434,20 @@ mod tests {
             };
         }
         panic!("generic search did not resolve");
+    }
+
+    #[test]
+    fn generic_search_without_tiles_is_empty() {
+        let mut step = DiscoverableGrid::new("level".into(), "{{X}},{{Y}}".into()).start();
+        for _ in 0..64 {
+            step = match step {
+                DiscoverableStep::Probe { continuation, .. } => {
+                    continuation.submit(ObservationResult::Missing).unwrap()
+                }
+                DiscoverableStep::Empty => return,
+                DiscoverableStep::Resolved { .. } => panic!("missing tiles must not resolve"),
+            };
+        }
+        panic!("generic search did not become empty");
     }
 }

@@ -5,14 +5,14 @@ fn run_live_dezoomer(name: &str, url: &str) {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let output = temp_dir.path().join(format!("{name}.png"));
-    let result = std::process::Command::new(env!("CARGO_BIN_EXE_dezoomify-rs"))
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_dezoomify-rs"));
+    command.args([url, output.to_str().unwrap(), "--max-width", "1000"]);
+    let result = command
         .args([
-            url,
-            output.to_str().unwrap(),
-            "--max-width",
-            "1000",
             "--retries",
             "1",
+            "--image-index",
+            "0",
             "--retry-delay",
             "100ms",
             "--min-interval",
@@ -53,6 +53,22 @@ live_dezoomer!(
     "https://openseadragon.github.io/example-images/highsmith/highsmith.dzi"
 );
 live_dezoomer!(iiif, "https://i.micr.io/fhXoU/info.json");
+live_dezoomer!(
+    iiif_csntm,
+    "https://collections.csntm.org/image-service/iiif/MNTGRCGA01/default/M_NT_GRC_GA01_20250609_203r/M_NT_GRC_GA01_20250609_203r/info.json"
+);
+live_dezoomer!(
+    iiif_onb_manifest,
+    "https://api.onb.ac.at/iiif/presentation/v3/manifest/10048A37"
+);
+live_dezoomer!(
+    iiif_nls_auchinleck,
+    "https://auchinleck.nls.uk/imageserver/iipsrv.fcgi?iiif=/auchinleck/105v.jp2/info.json"
+);
+live_dezoomer!(
+    iiif_nls_map_view,
+    "https://map-view.nls.uk/iiif/19619%2F196194600/info.json"
+);
 live_dezoomer!(
     generic,
     "https://digital.blb-karlsruhe.de/image/tiler/square/2410801/0/{{X}}/{{Y}}"

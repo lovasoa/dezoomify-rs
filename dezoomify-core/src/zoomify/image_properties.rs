@@ -16,17 +16,36 @@ pub struct ImageProperties {
 }
 
 impl ImageProperties {
-    fn size(&self) -> Vec2d {
+    pub(crate) fn size(&self) -> Vec2d {
         Vec2d {
             x: self.width,
             y: self.height,
         }
     }
-    fn tile_size(&self) -> Vec2d {
+    pub(crate) fn tile_size(&self) -> Vec2d {
         Vec2d {
             x: self.tile_size,
             y: self.tile_size,
         }
+    }
+
+    pub(crate) fn is_full_resolution_only(&self) -> bool {
+        let tile_size = self.tile_size();
+        let full_resolution_tiles = self.size().ceil_div(tile_size).area();
+        if u64::from(self.num_tiles) != full_resolution_tiles {
+            return false;
+        }
+        let mut divisor = 1_u64;
+        let mut pyramid_tiles = 0_u64;
+        while u64::from(self.width) > u64::from(tile_size.x) * divisor
+            || u64::from(self.height) > u64::from(tile_size.y) * divisor
+        {
+            let tiles_x = u64::from(self.width).div_ceil(u64::from(tile_size.x) * divisor);
+            let tiles_y = u64::from(self.height).div_ceil(u64::from(tile_size.y) * divisor);
+            pyramid_tiles += tiles_x * tiles_y;
+            divisor *= 2;
+        }
+        pyramid_tiles != u64::from(self.num_tiles)
     }
 
     #[cfg(test)]

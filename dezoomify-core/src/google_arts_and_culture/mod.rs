@@ -14,10 +14,11 @@ mod tile_info;
 mod url;
 
 pub const SPEC: DezoomerSpec = DezoomerSpec::stateful("google_arts_and_culture", start)
-    .recognizing(
-        |uri| uri.contains("artsandculture.google.com") || uri.ends_with("=g"),
-        "not a Google Arts & Culture URL",
-    );
+    .recognizing(is_google_arts_url, "not a Google Arts & Culture URL");
+
+fn is_google_arts_url(uri: &str) -> bool {
+    uri.contains("artsandculture.google.com") || uri.contains("g.co/arts/") || uri.ends_with("=g")
+}
 
 pub struct Gap {
     uri: String,
@@ -215,6 +216,16 @@ mod tests {
             operation.missing_resources(),
             Err(DiscoveryError::NoCandidateAccepted { .. })
         ));
+    }
+
+    #[test]
+    fn recognizes_google_arts_short_urls() {
+        let mut registry = crate::core::Registry::new();
+        registry.register(SPEC);
+        let mut operation = registry.start("https://g.co/arts/fixture");
+        let need = operation.missing_resources().unwrap();
+        assert_eq!(need.len(), 1);
+        assert_eq!(need[0].request.uri, "https://g.co/arts/fixture");
     }
 
     #[test]
