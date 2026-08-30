@@ -65,6 +65,7 @@ impl ImageProperties {
         let mut level_tiles = Vec::new();
         let mut tiles_before = Vec::new();
         let mut warnings = Vec::new();
+        let full_resolution_only = self.is_full_resolution_only();
         while u64::from(self.width) > u64::from(tile_size.x) * level_divisor
             || u64::from(self.height) > u64::from(tile_size.y) * level_divisor
         {
@@ -112,7 +113,7 @@ impl ImageProperties {
             }
         }
         let computed_tile_count = tiles_before.iter().sum::<u32>();
-        if computed_tile_count != self.num_tiles {
+        if computed_tile_count != self.num_tiles && !full_resolution_only {
             warnings.push(format!(
                 "Zoomify tile count mismatch: computed {computed_tile_count}, metadata declares {}",
                 self.num_tiles
