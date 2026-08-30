@@ -267,7 +267,7 @@ impl fmt::Display for DiscoveryError {
             Self::NoCandidateAccepted { diagnostics } => {
                 f.write_str("no discovery candidate accepted the input")?;
                 for (id, diagnostic) in diagnostics {
-                    write!(f, "; {id}: {}", diagnostic.message)?;
+                    write!(f, "\n - {id}: {}", diagnostic.message)?;
                 }
                 Ok(())
             }
@@ -743,6 +743,27 @@ mod tests {
             rejected.missing_resources(),
             Err(DiscoveryError::NoCandidateAccepted { .. })
         ));
+    }
+
+    #[test]
+    fn candidate_diagnostics_are_displayed_one_per_line() {
+        let error = DiscoveryError::NoCandidateAccepted {
+            diagnostics: vec![
+                (
+                    "first".into(),
+                    DiscoveryDiagnostic::from("not a first input"),
+                ),
+                (
+                    "second".into(),
+                    DiscoveryDiagnostic::from("not a second input"),
+                ),
+            ],
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "no discovery candidate accepted the input\n - first: not a first input\n - second: not a second input"
+        );
     }
 
     #[test]
