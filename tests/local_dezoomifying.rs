@@ -398,7 +398,7 @@ async fn test_bulk_mode_cli_end_to_end() -> Result<(), ZoomError> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_bulk_mode_uses_image_titles_for_iiif_manifest() {
+async fn test_bulk_mode_uses_custom_titles_for_output_naming() {
     // Get workspace root to use absolute paths
     let workspace_root = get_workspace_root();
 
@@ -414,7 +414,12 @@ async fn test_bulk_mode_uses_image_titles_for_iiif_manifest() {
 
     // Use absolute path to testdata
     let zoomify_path = workspace_root.join("testdata/zoomify/test_custom_size/ImageProperties.xml");
-    writeln!(bulk_file, "{}", zoomify_path.to_string_lossy()).unwrap();
+    writeln!(
+        bulk_file,
+        "{} Archive page 001",
+        zoomify_path.to_string_lossy()
+    )
+    .unwrap();
     drop(bulk_file);
 
     // Setup arguments for bulk processing WITHOUT specifying outfile
@@ -458,11 +463,10 @@ async fn test_bulk_mode_uses_image_titles_for_iiif_manifest() {
     let file_name_os = output_file.file_name().unwrap();
     let filename = file_name_os.to_string_lossy();
 
-    // The filename should be based on the title (test_custom_size) from the Zoomify dezoomer
-    // NOT "dezoomified"
+    // The explicit title in the bulk list must win over metadata discovered from the URL.
     assert!(
-        filename.starts_with("test_custom_size"),
-        "Expected filename to start with 'test_custom_size', got: {}",
+        filename.starts_with("Archive page 001"),
+        "Expected filename to start with 'Archive page 001', got: {}",
         filename
     );
     assert!(

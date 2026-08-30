@@ -230,8 +230,8 @@ fn inherit_deferred_context(catalog: ImageCatalog, parent: &DeferredImage) -> Im
             CatalogEntry::Ready(ref mut image) => (&mut image.title, &mut image.warnings),
             CatalogEntry::Deferred(ref mut image) => (&mut image.title, &mut image.warnings),
         };
-        if title.as_deref().is_none_or(str::is_empty) {
-            *title = parent_title.map(str::to_owned);
+        if let Some(parent_title) = parent_title {
+            *title = Some(parent_title.to_owned());
         }
         warnings.splice(0..0, parent.warnings.clone());
         entry
@@ -660,14 +660,10 @@ async fn process_bulk_image(
         zoom_level.source.image_size().map_or(0, |s| s.y)
     );
 
-    let level_title = zoom_level
-        .title
-        .clone()
-        .unwrap_or_else(|| image_title.to_owned());
     let indexed_outfile = bulk_outfile.map(|path| generate_bulk_output_name(path, index));
     let save_as = get_outname(
         indexed_outfile.as_deref(),
-        Some(&level_title),
+        Some(image_title),
         base_dir,
         zoom_level.source.image_size(),
     );
