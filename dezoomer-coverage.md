@@ -63,15 +63,15 @@ depend on an unimplemented adapter.
 Command: `DEZOOMIFY_LIVE_TESTS=1 cargo test --test live_dezoomers --
 --nocapture --test-threads=1`
 
-- 11 of 13 targets passed. CSNTM now passes with the standard `--max-width`
+- 13 of 13 targets passed. CSNTM now passes with the standard `--max-width`
   invocation after correcting scaled IIIF dimensions to round up; the earlier
   `620x655` request returned 404 because the service advertises `620x656`.
-- NLS Map View returned HTTP 403 for its first tile because the service rejects
-  the advertised full-image tile as exceeding its configured pixel-area
-  threshold. This is an external service limitation, not a discovery failure.
-- The existing NYPL page target returned no metadata and remains unsuitable as
-  a current live smoke target; the NYPL protocol parser is still covered by
-  core tests.
+- NLS Map View now passes after ignoring its invalid full-image tile dimensions
+  and using the standard 512-pixel fallback. Before that fix, its first tile
+  returned HTTP 403 because the service rejected the full-image request as
+  exceeding its configured pixel-area threshold.
+- NYPL returned no metadata during an earlier run but passed on the final run;
+  no reproducible client defect was confirmed there.
 - Manual page inputs for NGV, National Gallery, London Museum, Philadelphia,
   NLA, ONB viewer, Paris DZI, and the OpenSeadragon Zoomify example were
   fetched but rejected because the corresponding page adapters are not yet
