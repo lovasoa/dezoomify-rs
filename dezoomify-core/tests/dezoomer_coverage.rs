@@ -251,6 +251,28 @@ fn dezoomer_iiif_image_service_cases() {
         ["https://fixtures.test/iiif-v3/non-divisible/0,0,4960,5241/620,656/0/default.jpg"]
     );
 
+    let input = "https://fixtures.test/iiif-map-view/info.json";
+    let invalid_tile_width = br#"{
+      "@context": "http://library.stanford.edu/iiif/image-api/1.1/context.json",
+      "@id": "https://fixtures.test/iiif-map-view",
+      "width": 9392, "height": 8770,
+      "tile_width": 9392, "tile_height": 8770,
+      "scale_factors": [1, 2, 4, 8, 16, 32, 64, 128],
+      "qualities": ["native"], "formats": ["jpg"],
+      "profile": "http://library.stanford.edu/iiif/image-api/1.1/compliance.html#level2"
+    }"#;
+    let image = ready_image(discover(input, &[(input, invalid_tile_width)]).unwrap());
+    let level = image
+        .levels
+        .iter()
+        .find(|level| level.scale_factor == Some(1))
+        .unwrap();
+    assert_eq!(grid(level).tile_size(), Vec2d::square(512));
+    assert_eq!(
+        tile_urls(level)[0],
+        "https://fixtures.test/iiif-map-view/0,0,512,512/512,512/0/native.png"
+    );
+
     let input = "http://127.0.0.1:9877/fixtures/iiif-private-id/info.json";
     let private_id = br#"{
       "@context": "http://iiif.io/api/image/2/context.json",

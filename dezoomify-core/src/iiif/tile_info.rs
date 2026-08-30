@@ -142,10 +142,17 @@ impl ImageInfo {
         // If no preset tile size covers the full-resolution image, add a new one
         if !tiles.iter().any(|t| t.scale_factors.contains(&1)) {
             let mut info = TileInfo::default();
-            if let Some(width) = self.tile_width {
+            // Some services report the full image dimensions as their tile size.
+            if let Some(width) = self
+                .tile_width
+                .filter(|&width| width > 0 && width < self.width)
+            {
                 info.width = width;
             }
-            if let Some(height) = self.tile_height {
+            if let Some(height) = self
+                .tile_height
+                .filter(|&height| height > 0 && height < self.height)
+            {
                 info.height = Some(height);
             }
             let cropped_size = profile_info.crop_tile_size(info.size());
