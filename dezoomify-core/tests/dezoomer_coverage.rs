@@ -35,6 +35,7 @@ fn discover(input: &str, resources: &[Resource<'_>]) -> Result<ImageCatalog, Dis
         operation.provide(ResourceResponse {
             id: need.id,
             bytes: bytes.to_vec(),
+            content_type: None,
         })?;
     }
 }

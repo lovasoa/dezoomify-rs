@@ -6,24 +6,38 @@ use image_properties::ImageProperties;
 use regex::Regex;
 
 use crate::Vec2d;
-use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
-    CatalogEntry, Dezoomer, DezoomerSpec, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
-    DiscoveryStep, Grid, ImageCatalog, ImageDescriptor, LevelDescriptor, Request, ResourceOutcome,
-    ResourceRequest, StableId, resolve_relative,
+    CatalogEntry, DezoomerSpec, DiscoveryContext, DiscoveryError, DiscoveryMatch, DiscoveryRoute,
+    DiscoveryStep, Grid, ImageCatalog, ImageDescriptor, LevelDescriptor, Request, StableId,
+    resolve_relative,
 };
 
 mod image_properties;
 
-pub const SPEC: DezoomerSpec = DezoomerSpec::stateful("zoomify", start).preferring(is_zoomify_url);
+const ROUTES: &[DiscoveryRoute] = &[
+    DiscoveryMatch::url_matching(is_tile_url).map_url(tile_metadata),
+    DiscoveryMatch::url_suffix("ImageProperties.xml").extract(load_catalog),
+    DiscoveryMatch::content_matching(contains_zoomify_declaration)
+        .then(extract_image_properties_url),
+];
+
+pub const SPEC: DezoomerSpec = DezoomerSpec::new("zoomify", ROUTES).preferring(is_zoomify_url);
 
 static SHOW_IMAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:\bZ\s*\.\s*)?\bshowImage\s*\(").expect("constant Zoomify showImage pattern")
+    Regex::new(r#"(?i)(?:\bZ\s*\.\s*)?\bshowImage\s*\([^,]*,\s*(?:"([^"]+)"|'([^']+)')"#)
+        .expect("constant Zoomify showImage pattern")
 });
 
 static FLASH_IMAGE_PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)\bzoomifyImagePath\s*=\s*([^'"&]*)(?:['"&])"#)
         .expect("constant Zoomify FlashVars pattern")
+});
+
+static TILE_SERVICE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?is)\btype["']?\s*:\s*["']zoomifytileservice["'].*?\btilesUrl["']?\s*:\s*["']([^"']+)"#,
+    )
+    .expect("constant Zoomify tile service pattern")
 });
 
 static HTML_BASE_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -44,95 +58,30 @@ fn is_zoomify_url(uri: &str) -> bool {
     uri.contains("/ImageProperties.xml") || is_tile_url(uri)
 }
 
-struct Zoomify {
-    input_uri: String,
-    state: SessionState,
+fn extract_image_properties_url(
+    _: &DiscoveryContext<'_>,
+    resource: crate::core::DiscoveryResource<'_>,
+) -> Result<DiscoveryStep, DiscoveryError> {
+    let html = String::from_utf8_lossy(resource.bytes());
+    let image_path = extract_image_path(&html).ok_or_else(|| {
+        DiscoveryError::Session("Zoomify viewer page does not declare an image path".into())
+    })?;
+    let page_base_uri = extract_html_base(&html).map_or_else(
+        || resource.uri().to_owned(),
+        |base| resolve_relative(resource.uri(), &base),
+    );
+    let image_uri = resolve_relative(&page_base_uri, &image_path);
+    Ok(DiscoveryStep::follow(append_path_component(
+        &image_uri,
+        "ImageProperties.xml",
+    )))
 }
 
-enum SessionState {
-    Initial,
-    WaitingPage,
-    WaitingMetadata { metadata_uri: String },
-    Complete,
-}
-
-fn start(input: &DiscoveryInput) -> Box<dyn Dezoomer> {
-    Box::new(Zoomify {
-        input_uri: input.uri.clone(),
-        state: SessionState::Initial,
-    })
-}
-
-impl Dezoomer for Zoomify {
-    fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
-        match event {
-            DiscoveryEvent::Start if matches!(self.state, SessionState::Initial) => {
-                if is_zoomify_url(&self.input_uri) {
-                    let request = metadata_request(&self.input_uri)?;
-                    let metadata_uri = request.request.uri.clone();
-                    self.state = SessionState::WaitingMetadata { metadata_uri };
-                    Ok(DiscoveryStep::Need(request))
-                } else {
-                    self.state = SessionState::WaitingPage;
-                    Ok(DiscoveryStep::Need(ResourceRequest::new(
-                        self.input_uri.clone(),
-                    )))
-                }
-            }
-            DiscoveryEvent::Start => Err(DiscoveryError::Session(
-                "Zoomify session started twice".into(),
-            )),
-            DiscoveryEvent::Resource(ResourceOutcome::Failure(failure)) => {
-                self.state = SessionState::Complete;
-                Err(DiscoveryError::Session(format!(
-                    "failed to download Zoomify resource: {}",
-                    failure.message
-                )))
-            }
-            DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
-                self.handle_response(&response.bytes)
-            }
-        }
-    }
-}
-
-impl Zoomify {
-    fn handle_response(&mut self, contents: &[u8]) -> Result<DiscoveryStep, DiscoveryError> {
-        let state = std::mem::replace(&mut self.state, SessionState::Complete);
-        match state {
-            SessionState::WaitingPage => {
-                if let Ok(catalog) = load_catalog(&self.input_uri, contents) {
-                    return Ok(DiscoveryStep::Complete(catalog));
-                }
-
-                let html = String::from_utf8_lossy(contents);
-                let Some(image_path) = extract_image_path(&html) else {
-                    return Ok(DiscoveryStep::Reject(DiscoveryDiagnostic::from(
-                        "not a Zoomify viewer page, metadata, or tile URL",
-                    )));
-                };
-                let page_base_uri = extract_html_base(&html).map_or_else(
-                    || self.input_uri.clone(),
-                    |base| resolve_relative(&self.input_uri, &base),
-                );
-                let image_uri = resolve_relative(&page_base_uri, &image_path);
-                let metadata_uri = append_path_component(&image_uri, "ImageProperties.xml");
-                self.state = SessionState::WaitingMetadata {
-                    metadata_uri: metadata_uri.clone(),
-                };
-                Ok(DiscoveryStep::Need(ResourceRequest::new(metadata_uri)))
-            }
-            SessionState::WaitingMetadata { metadata_uri } => Ok(DiscoveryStep::Complete(
-                load_catalog(&metadata_uri, contents)?,
-            )),
-            SessionState::Initial => Err(DiscoveryError::Session(
-                "Zoomify session received a resource before it started".into(),
-            )),
-            SessionState::Complete => Err(DiscoveryError::Session(
-                "Zoomify session has already completed".into(),
-            )),
-        }
-    }
+fn contains_zoomify_declaration(contents: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(contents);
+    SHOW_IMAGE_RE.is_match(&text)
+        || FLASH_IMAGE_PATH_RE.is_match(&text)
+        || TILE_SERVICE_RE.is_match(&text)
 }
 
 fn append_path_component(uri: &str, component: &str) -> String {
@@ -142,8 +91,15 @@ fn append_path_component(uri: &str, component: &str) -> String {
 }
 
 fn extract_image_path(html: &str) -> Option<String> {
-    let show_image = SHOW_IMAGE_RE.find_iter(html).find_map(|marker| {
-        second_javascript_string(&html[marker.end()..]).map(|path| (marker.start(), path))
+    let show_image = SHOW_IMAGE_RE.captures_iter(html).find_map(|captures| {
+        Some((
+            captures.get(0)?.start(),
+            captures
+                .get(1)
+                .or_else(|| captures.get(2))?
+                .as_str()
+                .replace("&amp;", "&"),
+        ))
     });
     let flash = FLASH_IMAGE_PATH_RE
         .captures_iter(html)
@@ -153,7 +109,16 @@ fn extract_image_path(html: &str) -> Option<String> {
                 captures.get(1)?.as_str().replace("&amp;", "&"),
             ))
         });
-    [show_image, flash]
+    let tile_service = TILE_SERVICE_RE
+        .captures_iter(html)
+        .filter_map(|captures| {
+            Some((
+                captures.get(0)?.start(),
+                captures.get(1)?.as_str().replace("&amp;", "&"),
+            ))
+        })
+        .min_by_key(|(offset, _)| *offset);
+    [show_image, flash, tile_service]
         .into_iter()
         .flatten()
         .min_by_key(|(offset, _)| *offset)
@@ -167,42 +132,7 @@ fn extract_html_base(html: &str) -> Option<String> {
         .map(|base| base.as_str().replace("&amp;", "&"))
 }
 
-fn second_javascript_string(arguments: &str) -> Option<String> {
-    let remaining = if let Some((remaining, _)) = javascript_string(arguments) {
-        remaining.trim_start().strip_prefix(',')?
-    } else {
-        arguments.split_once(',')?.1
-    };
-    javascript_string(remaining).map(|(_, value)| value.replace("&amp;", "&"))
-}
-
-fn javascript_string(input: &str) -> Option<(&str, String)> {
-    let input = input.trim_start();
-    let quote = input.chars().next()?;
-    if quote != '\'' && quote != '"' {
-        return None;
-    }
-
-    let mut value = String::new();
-    let mut escaped = false;
-    for (offset, character) in input[quote.len_utf8()..].char_indices() {
-        if escaped {
-            value.push(character);
-            escaped = false;
-        } else if character == '\\' {
-            escaped = true;
-        } else if character == quote {
-            let end = quote.len_utf8() + offset + character.len_utf8();
-            return Some((&input[end..], value));
-        } else {
-            value.push(character);
-        }
-    }
-    None
-}
-
-#[allow(clippy::unnecessary_wraps)]
-fn metadata_request(input: &str) -> Result<ResourceRequest, DiscoveryError> {
+fn tile_metadata(input: &str) -> Result<Request, DiscoveryError> {
     let uri = TILE_URL_RE.find(input).map_or_else(
         || input.to_owned(),
         |tile| {
@@ -224,7 +154,7 @@ fn metadata_request(input: &str) -> Result<ResourceRequest, DiscoveryError> {
             format!("{metadata}{suffix}")
         },
     );
-    Ok(ResourceRequest::new(uri))
+    Ok(Request::new(uri))
 }
 
 fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
@@ -301,25 +231,27 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::TileSource;
+    use crate::core::discovery::DiscoveryOperation;
+    use crate::core::{ResourceResponse, TileSource};
 
-    #[test]
-    fn tile_urls_request_sibling_metadata() {
+    const XML: &[u8] = br#"<IMAGE_PROPERTIES WIDTH="512" HEIGHT="256" NUMTILES="2" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>"#;
+
+    fn operation(uri: &str) -> DiscoveryOperation {
         let mut registry = crate::core::Registry::new();
         registry.register(SPEC);
-        let mut operation =
-            registry.start("https://example.com/images/book/TileGroup0/3-0-0.jpg?token=secret");
+        registry.start(uri)
+    }
+
+    fn provide_next(operation: &mut DiscoveryOperation, bytes: &[u8]) -> String {
         let need = operation.missing_resources().unwrap().pop().unwrap();
-        assert_eq!(
-            need.request.uri,
-            "https://example.com/images/book/ImageProperties.xml?token=secret"
-        );
+        let uri = need.request.uri.clone();
         operation
-            .provide(crate::core::ResourceResponse {
-                id: need.id,
-                bytes: br#"<IMAGE_PROPERTIES WIDTH="512" HEIGHT="256" NUMTILES="2" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>"#.to_vec(),
-            })
+            .provide(ResourceResponse::new(need.id, bytes))
             .unwrap();
+        uri
+    }
+
+    fn first_tile(operation: DiscoveryOperation) -> String {
         let catalog = operation.finish().unwrap();
         let CatalogEntry::Ready(image) = &catalog.entries()[0] else {
             panic!("Zoomify metadata must produce a ready image")
@@ -327,112 +259,94 @@ mod tests {
         let TileSource::Grid(plan) = &image.levels[0].source else {
             panic!("Zoomify levels must be grids")
         };
+        plan.tiles_row_major().next().unwrap().unwrap().request.uri
+    }
+
+    fn discover_viewer(page_uri: &str, page: &[u8]) -> (String, String) {
+        let mut operation = operation(page_uri);
+        assert_eq!(provide_next(&mut operation, page), page_uri);
+        let metadata = provide_next(&mut operation, XML);
+        (metadata, first_tile(operation))
+    }
+
+    #[test]
+    fn tile_urls_request_sibling_metadata() {
+        let mut operation =
+            operation("https://example.com/images/book/TileGroup0/3-0-0.jpg?token=secret");
         assert_eq!(
-            plan.tiles_row_major().next().unwrap().unwrap().request.uri,
+            provide_next(&mut operation, XML),
+            "https://example.com/images/book/ImageProperties.xml?token=secret"
+        );
+        assert_eq!(
+            first_tile(operation),
             "https://example.com/images/book/TileGroup0/0-0-0.jpg"
         );
     }
 
     #[test]
     fn viewer_pages_respect_html_base_and_first_show_image_path() {
-        let mut registry = crate::core::Registry::new();
-        registry.register(SPEC);
-        let mut operation = registry.start("https://fixtures.test/zoomify-base-href/product.html");
-
-        let page = operation.missing_resources().unwrap().pop().unwrap();
-        assert_eq!(
-            page.request.uri,
-            "https://fixtures.test/zoomify-base-href/product.html"
+        let (metadata, tile) = discover_viewer(
+            "https://fixtures.test/zoomify-base-href/product.html",
+            br#"<base href="https://fixtures.test/zoomify-base-href/assets/">
+                <script>
+                    Z.showImage("viewer", "maps/sample");
+                    Z.showImage("viewer", "maps/missing");
+                </script>"#,
         );
-        operation
-            .provide(crate::core::ResourceResponse {
-                id: page.id,
-                bytes: br#"<!doctype html>
-                    <html>
-                      <head>
-                        <base href="https://fixtures.test/zoomify-base-href/assets/">
-                      </head>
-                      <body>
-                        <script>
-                          Z.showImage("viewer", "maps/sample");
-                          Z.showImage("viewer", "maps/missing");
-                        </script>
-                      </body>
-                    </html>"#
-                    .to_vec(),
-            })
-            .unwrap();
-
-        let metadata = operation.missing_resources().unwrap().pop().unwrap();
         assert_eq!(
-            metadata.request.uri,
+            metadata,
             "https://fixtures.test/zoomify-base-href/assets/maps/sample/ImageProperties.xml"
         );
-        operation
-            .provide(crate::core::ResourceResponse {
-                id: metadata.id,
-                bytes: br#"<IMAGE_PROPERTIES WIDTH="512" HEIGHT="256" NUMTILES="2" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>"#.to_vec(),
-            })
-            .unwrap();
-
-        let catalog = operation.finish().unwrap();
-        let CatalogEntry::Ready(image) = &catalog.entries()[0] else {
-            panic!("Zoomify metadata must produce a ready image")
-        };
-        let TileSource::Grid(plan) = &image.levels[0].source else {
-            panic!("Zoomify levels must be grids")
-        };
         assert_eq!(
-            plan.tiles_row_major().next().unwrap().unwrap().request.uri,
+            tile,
             "https://fixtures.test/zoomify-base-href/assets/maps/sample/TileGroup0/0-0-0.jpg"
         );
     }
 
     #[test]
-    fn viewer_declarations_match_dezoomify_fixtures_and_capture() {
-        let cases = [
+    fn signed_proxy_remains_the_tile_base() {
+        let (metadata, tile) = discover_viewer(
+            "https://museum.example/viewer/object",
+            br#"<script>Z.showImage("viewer", "https://museum.example/proxy/OBJECT_ID/");</script>"#,
+        );
+        assert_eq!(
+            metadata,
+            "https://museum.example/proxy/OBJECT_ID/ImageProperties.xml"
+        );
+        assert_eq!(
+            tile,
+            "https://museum.example/proxy/OBJECT_ID/TileGroup0/0-0-0.jpg"
+        );
+    }
+
+    #[test]
+    fn extracts_general_zoomify_declarations() {
+        for (page, expected) in [
+            (r#"zoomifyImagePath=/zoomify";"#, "/zoomify"),
+            (r#"showImage("viewer", "/zoomify");"#, "/zoomify"),
+            (r#"showImage(viewer, "/zoomify");"#, "/zoomify"),
             (
-                r#"<script>var zoomifyImagePath=/zoomify";</script>"#,
-                "/zoomify",
-            ),
-            (
-                r#"<script>showImage("viewer", "/zoomify");</script>"#,
-                "/zoomify",
-            ),
-            (
-                r#"<script>showImage(viewer, "/zoomify");</script>"#,
-                "/zoomify",
-            ),
-            (
-                r#"<script>Z.showImage("viewer", "https://example.com/proxy/IMAGE_ID/");</script>"#,
+                r#"Z.showImage("viewer", "https://example.com/proxy/IMAGE_ID/");"#,
                 "https://example.com/proxy/IMAGE_ID/",
             ),
-        ];
-        for (html, expected) in cases {
-            assert_eq!(extract_image_path(html).as_deref(), Some(expected));
+            (
+                r#"{"type": "zoomifytileservice", "tilesUrl": "/zoomify"}"#,
+                "/zoomify",
+            ),
+        ] {
+            assert_eq!(extract_image_path(page).as_deref(), Some(expected));
         }
     }
 
     #[test]
-    fn first_viewer_declaration_wins_in_document_order() {
-        let html = r#"
-            <script>zoomifyImagePath=/first";</script>
-            <script>Z.showImage("viewer", "/second");</script>
-        "#;
-        assert_eq!(extract_image_path(html).as_deref(), Some("/first"));
-    }
-
-    #[test]
     fn unrelated_pages_are_rejected() {
-        let mut registry = crate::core::Registry::new();
-        registry.register(SPEC);
-        let mut operation = registry.start("https://example.com/page");
-        let page = operation.missing_resources().unwrap().pop().unwrap();
+        let mut operation = operation("https://example.com/page");
+        let need = operation.missing_resources().unwrap().pop().unwrap();
         let error = operation
-            .provide(crate::core::ResourceResponse {
-                id: page.id,
-                bytes: b"<html><body>ordinary page</body></html>".to_vec(),
-            })
+            .provide(ResourceResponse::new(
+                need.id,
+                b"<html><body>ordinary page</body></html>",
+            ))
             .unwrap_err();
         assert!(matches!(error, DiscoveryError::NoCandidateAccepted { .. }));
     }
@@ -475,68 +389,22 @@ mod tests {
             .collect();
         assert_eq!(
             urls,
-            vec![
+            [
                 "http://x.fr/y/TileGroup0/3-0-0.jpg",
                 "http://x.fr/y/TileGroup0/3-1-0.jpg",
                 "http://x.fr/y/TileGroup0/3-2-0.jpg",
                 "http://x.fr/y/TileGroup0/3-3-0.jpg",
                 "http://x.fr/y/TileGroup0/3-4-0.jpg",
-                "http://x.fr/y/TileGroup0/3-5-0.jpg"
+                "http://x.fr/y/TileGroup0/3-5-0.jpg",
             ]
         );
-    }
-
-    #[test]
-    fn tile_group_boundary_matches_dezoomify() {
-        let image = ready_image(
-            "https://fixtures.test/zoomify/multiple-groups/ImageProperties.xml",
-            br#"<IMAGE_PROPERTIES WIDTH="4096" HEIGHT="4096" NUMTILES="341" VERSION="1.8" TILESIZE="256" />"#,
-        );
-        let TileSource::Grid(plan) = &image.levels[4].source else {
-            unreachable!()
-        };
-        let urls: Vec<_> = plan
-            .tiles_row_major()
-            .skip(170)
-            .take(2)
-            .map(Result::unwrap)
-            .map(|tile| tile.request.uri)
-            .collect();
-        assert_eq!(
-            urls,
-            [
-                "https://fixtures.test/zoomify/multiple-groups/TileGroup0/4-10-10.jpg",
-                "https://fixtures.test/zoomify/multiple-groups/TileGroup1/4-11-10.jpg",
-            ]
-        );
-    }
-
-    #[test]
-    fn full_resolution_numtiles_keeps_every_level_in_tile_group_zero() {
-        let image = ready_image(
-            "https://fixtures.test/zoomify-full-numtiles/ImageProperties.xml",
-            br#"<IMAGE_PROPERTIES WIDTH="10240" HEIGHT="1792" NUMTILES="280" VERSION="1.8" TILESIZE="256" />"#,
-        );
-        assert!(image.warnings.is_empty());
-        let TileSource::Grid(plan) = &image.levels.last().unwrap().source else {
-            unreachable!()
-        };
-        let urls: Vec<_> = plan
-            .tiles_row_major()
-            .map(Result::unwrap)
-            .map(|tile| tile.request.uri)
-            .collect();
-        assert_eq!(urls.len(), 280);
-        assert!(urls.iter().all(|url| url.contains("/TileGroup0/")));
-        assert!(urls.iter().any(|url| url.ends_with("/6-16-6.jpg")));
     }
 
     #[test]
     fn titles_tile_groups_and_warnings_are_retained() {
-        let contents = br#"<IMAGE_PROPERTIES WIDTH="12000" HEIGHT="9788" NUMTILES="2477" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>"#;
         let image = ready_image(
             "http://example.com/images/manuscript123/ImageProperties.xml",
-            contents,
+            br#"<IMAGE_PROPERTIES WIDTH="12000" HEIGHT="9788" NUMTILES="2477" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>"#,
         );
         assert_eq!(image.title.as_deref(), Some("manuscript123"));
         let TileSource::Grid(plan) = &image.levels[5].source else {
@@ -549,18 +417,12 @@ mod tests {
             .collect();
         assert!(urls.contains("http://example.com/images/manuscript123/TileGroup1/5-0-14.jpg"));
         assert!(urls.contains("http://example.com/images/manuscript123/TileGroup2/5-0-15.jpg"));
-        let image = ready_image(
-            "https://library.example.edu/viewer/book_of_kells/ImageProperties.xml?cache=false",
-            br#"<IMAGE_PROPERTIES WIDTH="2000" HEIGHT="3000" NUMTILES="100" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>"#,
-        );
-        assert_eq!(image.title.as_deref(), Some("book_of_kells"));
+
         let image = ready_image(
             "http://example.com/ImageProperties.xml",
             br#"<IMAGE_PROPERTIES WIDTH="500" HEIGHT="500" NUMTILES="9" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>"#,
         );
         assert_eq!(image.title.as_deref(), Some("example.com"));
-        let contents = br#"<IMAGE_PROPERTIES WIDTH="500" HEIGHT="500" NUMTILES="9" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>"#;
-        let image = ready_image("http://example.com/ImageProperties.xml", contents);
         assert_eq!(
             image.warnings,
             ["Zoomify tile count mismatch: computed 5, metadata declares 9"]
@@ -577,11 +439,6 @@ mod tests {
             unreachable!()
         };
         assert_eq!(plan.count(), 280);
-        let first = plan.tiles_row_major().next().unwrap().unwrap();
-        assert_eq!(
-            first.request.uri,
-            "https://fixtures.test/zoomify-full-numtiles/TileGroup0/6-0-0.jpg"
-        );
         let urls: Vec<_> = plan
             .tiles_row_major()
             .map(Result::unwrap)

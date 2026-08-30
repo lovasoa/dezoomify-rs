@@ -12,272 +12,189 @@ use krpano_metadata::{KrpanoMetadata, XY, all_sides};
 use log::{debug, info, warn};
 
 use crate::Vec2d;
-use crate::core::discovery::DiscoveryEvent;
 use crate::core::resolve_relative;
 use crate::core::{
-    CatalogEntry, Dezoomer, DezoomerSpec, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
-    DiscoveryStep, Grid, GridRequests, GridTile, ImageCatalog, ImageDescriptor, LevelDescriptor,
-    Request, ResourceOutcome, ResourceRequest, StableId,
+    CatalogEntry, DezoomerSpec, DiscoveryContext, DiscoveryError, DiscoveryFailure, DiscoveryMatch,
+    DiscoveryResource, DiscoveryRoute, DiscoveryStep, Grid, GridRequests, GridTile, ImageCatalog,
+    ImageDescriptor, LevelDescriptor, Request, StableId,
 };
 use crate::krpano::krpano_metadata::{ImageInfo, LevelDesc};
 use crate::template::Template;
 
 mod krpano_metadata;
 
-pub const SPEC: DezoomerSpec =
-    DezoomerSpec::stateful("krpano", start).preferring(|uri| uri.contains("tiles.xml"));
+const ROUTES: &[DiscoveryRoute] = &[
+    DiscoveryMatch::content_matching(looks_like_xml_or_encrypted).then(handle_xml),
+    DiscoveryMatch::content_matching(looks_like_viewer_js).then(handle_viewer_js),
+    DiscoveryMatch::content_matching(looks_like_krpano_html).then(handle_html),
+    DiscoveryMatch::url_matching(is_javascript_uri).then(handle_viewer_js),
+];
 
-/// The krpano metadata dezoomer.
-///
-/// The dezoomer owns only parser state. The application supplies the requested
-/// HTML, XML, and viewer-script bytes through [`Dezoomer::advance`].
-pub struct Krpano {
-    input_uri: String,
-    state: SessionState,
-}
+pub const SPEC: DezoomerSpec = DezoomerSpec::new("krpano", ROUTES)
+    .on_failure(handle_failure)
+    .preferring(|uri| uri.contains("tiles.xml"));
 
-enum SessionState {
-    Initial,
-    WaitingInitial,
-    NeedXml {
-        xml_uri: String,
-        viewer_js: Vec<u8>,
-        remaining_js_uris: Vec<String>,
-    },
-    NeedViewerJs {
-        xml_uri: String,
-        xml_contents: Vec<u8>,
-        remaining_js_uris: Vec<String>,
-    },
-    Complete,
-}
-
-impl Dezoomer for Krpano {
-    fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
-        match event {
-            DiscoveryEvent::Start if matches!(self.state, SessionState::Initial) => {
-                self.state = SessionState::WaitingInitial;
-                Ok(need(&self.input_uri))
-            }
-            DiscoveryEvent::Start => Err(DiscoveryError::Session(
-                "krpano session started twice".into(),
-            )),
-            DiscoveryEvent::Resource(ResourceOutcome::Failure(failure)) => {
-                self.handle_failure(failure.message.as_str())
-            }
-            DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
-                self.handle_response(&response.bytes)
-            }
-        }
+fn handle_html(
+    context: &DiscoveryContext<'_>,
+    resource: DiscoveryResource<'_>,
+) -> Result<DiscoveryStep, DiscoveryError> {
+    if find_xml(context).is_some() {
+        return handle_viewer_js(context, resource);
     }
+    let html = String::from_utf8_lossy(resource.bytes());
+    let xml_uri = extract_xml_from_embedpano(&html).map_or_else(
+        || sibling_uri(resource.uri(), "tour.xml"),
+        |reference| resolve_relative(resource.uri(), &reference),
+    );
+    debug!("krpano: resolved XML URI {xml_uri}");
+    Ok(need(&xml_uri))
 }
 
-fn start(input: &DiscoveryInput) -> Box<dyn Dezoomer> {
-    Box::new(Krpano {
-        input_uri: input.uri.clone(),
-        state: SessionState::Initial,
-    })
-}
+fn handle_xml(
+    context: &DiscoveryContext<'_>,
+    resource: DiscoveryResource<'_>,
+) -> Result<DiscoveryStep, DiscoveryError> {
+    let contents = resource.bytes();
+    if !is_encrypted_xml(contents) {
+        return complete(resource.uri(), contents);
+    }
 
-impl Krpano {
-    fn handle_failure(&mut self, message: &str) -> Result<DiscoveryStep, DiscoveryError> {
-        debug!("krpano: resource failure: {message}");
-        let state = std::mem::replace(&mut self.state, SessionState::Complete);
-        match state {
-            SessionState::NeedViewerJs {
-                xml_uri,
-                xml_contents,
-                mut remaining_js_uris,
-            } => {
-                warn!("krpano: viewer JS fetch failed for {xml_uri}: {message}");
-                if let Some(next_js_uri) = next_js_candidate(&mut remaining_js_uris) {
-                    debug!("krpano: trying next viewer JS candidate {next_js_uri}");
-                    self.state = SessionState::NeedViewerJs {
-                        xml_uri,
-                        xml_contents,
-                        remaining_js_uris,
-                    };
-                    Ok(need(&next_js_uri))
-                } else {
-                    Err(DiscoveryError::Session(format!(
-                        "failed to download krpano viewer script: {message}"
-                    )))
-                }
-            }
-            SessionState::Initial | SessionState::WaitingInitial | SessionState::NeedXml { .. } => {
+    let viewer_js = context
+        .resources()
+        .filter(|candidate| candidate.uri() != resource.uri())
+        .filter(|candidate| is_javascript_resource(*candidate))
+        .filter_map(|candidate| extract_viewer_js(candidate.bytes()))
+        .next_back();
+    match decrypt_xml(contents, viewer_js.as_deref()) {
+        Ok(decrypted) => complete(resource.uri(), &decrypted),
+        Err(error) => next_viewer(context, resource, resource.uri()).map_or_else(
+            || {
                 Err(DiscoveryError::Session(format!(
-                    "failed to download krpano metadata: {message}"
+                    "unable to decrypt krpano XML: {error}"
                 )))
-            }
-            SessionState::Complete => Err(DiscoveryError::Session(
-                "krpano session has already completed".into(),
-            )),
-        }
+            },
+            |uri| Ok(need(&uri)),
+        ),
     }
+}
 
-    fn handle_response(&mut self, contents: &[u8]) -> Result<DiscoveryStep, DiscoveryError> {
-        let state = std::mem::replace(&mut self.state, SessionState::Complete);
-        match state {
-            SessionState::WaitingInitial => self.handle_initial(contents),
-            SessionState::Initial => Err(DiscoveryError::Session(
-                "krpano session received a resource before it started".into(),
-            )),
-            SessionState::NeedXml {
-                xml_uri,
-                viewer_js,
-                remaining_js_uris,
-            } => self.handle_xml(contents, xml_uri, &viewer_js, remaining_js_uris),
-            SessionState::NeedViewerJs {
-                xml_uri,
-                xml_contents,
-                remaining_js_uris,
-            } => self.handle_viewer_js(contents, xml_uri, xml_contents, remaining_js_uris),
-            SessionState::Complete => Err(DiscoveryError::Session(
-                "krpano session has already completed".into(),
-            )),
+fn handle_viewer_js(
+    context: &DiscoveryContext<'_>,
+    resource: DiscoveryResource<'_>,
+) -> Result<DiscoveryStep, DiscoveryError> {
+    let Some(xml) = find_xml(context) else {
+        if extract_viewer_js(resource.bytes()).is_none() {
+            return Err(DiscoveryError::Session(
+                "not krpano viewer JavaScript".into(),
+            ));
         }
+        return Ok(need(&sibling_uri(resource.uri(), "tour.xml")));
+    };
+    let viewer_js =
+        extract_viewer_js(resource.bytes()).unwrap_or_else(|| resource.bytes().to_vec());
+    match decrypt_xml(xml.bytes(), Some(&viewer_js)) {
+        Ok(decrypted) => {
+            info!("krpano: successfully decrypted XML using viewer JS");
+            complete(xml.uri(), &decrypted)
+        }
+        Err(error) => next_viewer(context, resource, xml.uri()).map_or_else(
+            || {
+                Err(DiscoveryError::Session(format!(
+                    "unable to decrypt krpano XML: {error}"
+                )))
+            },
+            |uri| Ok(need(&uri)),
+        ),
     }
+}
 
-    fn handle_initial(&mut self, contents: &[u8]) -> Result<DiscoveryStep, DiscoveryError> {
-        debug!("krpano: handling initial response for {}", self.input_uri);
-        if !looks_like_krpano_xml(contents) && looks_like_viewer_js(contents) {
-            debug!("krpano: initial response looks like viewer JS, requesting tour.xml sibling");
-            let xml_uri = sibling_uri(&self.input_uri, "tour.xml");
-            self.state = SessionState::NeedXml {
-                xml_uri: xml_uri.clone(),
-                viewer_js: contents.to_vec(),
-                remaining_js_uris: Vec::new(),
-            };
-            return Ok(need(&xml_uri));
+fn handle_failure(
+    context: &DiscoveryContext<'_>,
+    resource: DiscoveryFailure<'_>,
+) -> Result<DiscoveryStep, DiscoveryError> {
+    let message = resource.failure().message.as_str();
+    debug!("krpano: resource failure: {message}");
+    if let Some(xml) = find_xml(context) {
+        warn!(
+            "krpano: viewer JS fetch failed for {}: {message}",
+            xml.uri()
+        );
+        if let Some(uri) = next_viewer_after_failure(context, resource.uri(), xml.uri()) {
+            return Ok(need(&uri));
         }
-
-        if !looks_like_krpano_xml(contents) && looks_like_krpano_html(contents) {
-            debug!("krpano: initial response looks like HTML, extracting XML and JS candidates");
-            let html = String::from_utf8_lossy(contents);
-            let remaining_js_uris = extract_js_candidates_from_html(&html, &self.input_uri);
-            debug!(
-                "krpano: found {} JS candidates in HTML",
-                remaining_js_uris.len()
-            );
-            let xml_uri = extract_xml_from_embedpano(&html).map_or_else(
-                || sibling_uri(&self.input_uri, "tour.xml"),
-                |reference| resolve_relative(&self.input_uri, &reference),
-            );
-            debug!("krpano: resolved XML URI {xml_uri}");
-            self.state = SessionState::NeedXml {
-                xml_uri: xml_uri.clone(),
-                viewer_js: Vec::new(),
-                remaining_js_uris,
-            };
-            return Ok(need(&xml_uri));
-        }
-
-        if is_encrypted_xml(contents) {
-            debug!("krpano: initial XML is encrypted, attempting decryption without viewer JS");
-            if let Ok(decrypted) = decrypt_xml(contents, None) {
-                debug!("krpano: decrypted XML without viewer JS");
-                return self.complete(&self.input_uri.clone(), &decrypted);
-            }
-            debug!("krpano: decryption without viewer JS failed, trying viewer JS candidates");
-            let mut candidates = viewer_js_candidates_for_xml(&self.input_uri);
-            let viewer_uri = next_js_candidate(&mut candidates)
-                .unwrap_or_else(|| sibling_uri(&self.input_uri, "tour.js"));
-            self.state = SessionState::NeedViewerJs {
-                xml_uri: self.input_uri.clone(),
-                xml_contents: contents.to_vec(),
-                remaining_js_uris: candidates,
-            };
-            return Ok(need(&viewer_uri));
-        }
-
-        if looks_like_krpano_xml(contents) {
-            debug!("krpano: initial response is plain XML, completing");
-            return self.complete(&self.input_uri.clone(), contents);
-        }
-
-        Ok(DiscoveryStep::Reject(DiscoveryDiagnostic::from(
-            "not krpano HTML, viewer JavaScript, or XML metadata",
-        )))
+        return Err(DiscoveryError::Session(format!(
+            "failed to download krpano viewer script: {message}"
+        )));
     }
+    Err(DiscoveryError::Session(format!(
+        "failed to download krpano metadata: {message}"
+    )))
+}
 
-    fn handle_xml(
-        &mut self,
-        contents: &[u8],
-        xml_uri: String,
-        viewer_js: &[u8],
-        mut remaining_js_uris: Vec<String>,
-    ) -> Result<DiscoveryStep, DiscoveryError> {
-        if !is_encrypted_xml(contents) {
-            debug!("krpano: XML at {xml_uri} is not encrypted, completing");
-            return self.complete(&xml_uri, contents);
-        }
-        debug!("krpano: XML at {xml_uri} is encrypted, attempting decryption");
+fn find_xml<'a>(context: &DiscoveryContext<'a>) -> Option<DiscoveryResource<'a>> {
+    context
+        .resources()
+        .rev()
+        .find(|resource| looks_like_xml_or_encrypted(resource.bytes()))
+}
 
-        match decrypt_xml(contents, (!viewer_js.is_empty()).then_some(viewer_js)) {
-            Ok(decrypted) => {
-                debug!("krpano: successfully decrypted XML at {xml_uri}");
-                self.complete(&xml_uri, &decrypted)
-            }
-            Err(error) => {
-                warn!("krpano: failed to decrypt XML at {xml_uri}: {error}");
-                let Some(viewer_uri) = next_js_candidate(&mut remaining_js_uris) else {
-                    return Err(DiscoveryError::Session(format!(
-                        "unable to decrypt krpano XML: {error}"
-                    )));
-                };
-                debug!("krpano: trying next viewer JS candidate {viewer_uri}");
-                self.state = SessionState::NeedViewerJs {
-                    xml_uri,
-                    xml_contents: contents.to_vec(),
-                    remaining_js_uris,
-                };
-                Ok(need(&viewer_uri))
-            }
-        }
-    }
+fn next_viewer(
+    context: &DiscoveryContext<'_>,
+    current: DiscoveryResource<'_>,
+    xml_uri: &str,
+) -> Option<String> {
+    let initial = context.resources().next().unwrap_or(current);
+    next_viewer_from_initial(context, initial, current.uri(), xml_uri)
+}
 
-    fn handle_viewer_js(
-        &mut self,
-        contents: &[u8],
-        xml_uri: String,
-        xml_contents: Vec<u8>,
-        mut remaining_js_uris: Vec<String>,
-    ) -> Result<DiscoveryStep, DiscoveryError> {
-        debug!("krpano: received viewer JS for {xml_uri}, attempting decryption");
-        let viewer_js = extract_viewer_js(contents).unwrap_or_else(|| contents.to_vec());
-        debug!("krpano: extracted {} bytes of viewer JS", viewer_js.len());
-        match decrypt_xml(&xml_contents, Some(&viewer_js)) {
-            Ok(decrypted) => {
-                info!("krpano: successfully decrypted XML using viewer JS");
-                self.complete(&xml_uri, &decrypted)
-            }
-            Err(error) => {
-                warn!("krpano: decryption failed with viewer JS: {error}");
-                let Some(viewer_uri) = next_js_candidate(&mut remaining_js_uris) else {
-                    return Err(DiscoveryError::Session(format!(
-                        "unable to decrypt krpano XML: {error}"
-                    )));
-                };
-                debug!("krpano: trying next viewer JS candidate {viewer_uri}");
-                self.state = SessionState::NeedViewerJs {
-                    xml_uri,
-                    xml_contents,
-                    remaining_js_uris,
-                };
-                Ok(need(&viewer_uri))
-            }
-        }
-    }
+fn next_viewer_after_failure(
+    context: &DiscoveryContext<'_>,
+    current_uri: &str,
+    xml_uri: &str,
+) -> Option<String> {
+    let initial = context.resources().next()?;
+    next_viewer_from_initial(context, initial, current_uri, xml_uri)
+}
 
-    fn complete(&mut self, uri: &str, bytes: &[u8]) -> Result<DiscoveryStep, DiscoveryError> {
-        let catalog = load_catalog(uri, bytes)?;
-        self.state = SessionState::Complete;
-        Ok(DiscoveryStep::Complete(catalog))
-    }
+fn next_viewer_from_initial(
+    context: &DiscoveryContext<'_>,
+    initial: DiscoveryResource<'_>,
+    current_uri: &str,
+    xml_uri: &str,
+) -> Option<String> {
+    let mut candidates = if looks_like_krpano_html(initial.bytes()) {
+        extract_js_candidates_from_html(&String::from_utf8_lossy(initial.bytes()), initial.uri())
+    } else if is_javascript_resource(initial) {
+        Vec::new()
+    } else {
+        viewer_js_candidates_for_xml(xml_uri)
+    };
+    candidates.retain(|candidate| candidate != current_uri && !context.has_visited(candidate));
+    next_js_candidate(&mut candidates)
+}
+
+fn is_javascript_resource(resource: DiscoveryResource<'_>) -> bool {
+    is_javascript_uri(resource.uri()) || contains_viewer_js(resource.bytes())
+}
+
+fn is_javascript_uri(uri: &str) -> bool {
+    is_javascript_src(uri)
+}
+
+fn contains_viewer_js(contents: &[u8]) -> bool {
+    extract_viewer_js(contents).is_some()
+}
+
+fn looks_like_xml_or_encrypted(contents: &[u8]) -> bool {
+    is_encrypted_xml(contents) || looks_like_krpano_xml(contents)
+}
+
+fn complete(uri: &str, bytes: &[u8]) -> Result<DiscoveryStep, DiscoveryError> {
+    load_catalog(uri, bytes).map(DiscoveryStep::Complete)
 }
 
 fn need(uri: &str) -> DiscoveryStep {
-    DiscoveryStep::Need(ResourceRequest::new(uri))
+    DiscoveryStep::follow(uri)
 }
 
 /// True if the content looks like a krpano XML file rather than HTML.
@@ -628,7 +545,8 @@ impl GridRequests for KrpanoLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::TileSource;
+    use crate::core::discovery::{DiscoveryOperation, ResourceFailure, ResourceNeed};
+    use crate::core::{ResourceResponse, TileSource};
 
     fn image(catalog: ImageCatalog) -> ImageDescriptor {
         match catalog.into_entries().into_iter().next().unwrap() {
@@ -653,25 +571,15 @@ mod tests {
     }
 
     fn discover_single_resource(uri: &str, bytes: Vec<u8>) -> ImageCatalog {
-        let input = DiscoveryInput::from(uri);
-        let mut session = start(&input);
-        assert!(matches!(
-            session.advance(DiscoveryEvent::Start).unwrap(),
-            DiscoveryStep::Need(ResourceRequest { request })
-                if request.uri == uri
-        ));
-        match session
-            .advance(DiscoveryEvent::Resource(&ResourceOutcome::Response(
-                crate::core::ResourceResponse {
-                    id: crate::core::RequestId(0),
-                    bytes,
-                },
-            )))
-            .unwrap()
-        {
-            DiscoveryStep::Complete(catalog) => catalog,
-            _ => panic!("plain XML completes discovery"),
-        }
+        let mut registry = crate::core::Registry::new();
+        registry.register(SPEC);
+        let mut operation = registry.start(uri);
+        let need = operation.missing_resources().unwrap().pop().unwrap();
+        assert_eq!(need.request.uri, uri);
+        operation
+            .provide(ResourceResponse::new(need.id, bytes))
+            .unwrap();
+        operation.finish().unwrap()
     }
 
     #[test]
@@ -967,36 +875,142 @@ mod tests {
 
     #[test]
     fn viewer_js_is_detected_before_html_embed_markers() {
-        let mut session = start(&DiscoveryInput::from("https://example.com/krpano.js"));
-        let _ = session.advance(DiscoveryEvent::Start).unwrap();
-        let step = session
-            .advance(DiscoveryEvent::Resource(&ResourceOutcome::Response(
-                crate::core::ResourceResponse {
-                    id: crate::core::RequestId(0),
-                    bytes: b"function embedpano(opts) { /* krpano viewer */ }".to_vec(),
-                },
-            )))
+        let mut registry = crate::core::Registry::new();
+        registry.register(SPEC);
+        let mut operation = registry.start("https://example.com/krpano.js");
+        let script = operation.missing_resources().unwrap().pop().unwrap();
+        operation
+            .provide(ResourceResponse::new(
+                script.id,
+                b"function embedpano(opts) { /* krpano viewer */ }",
+            ))
             .unwrap();
-        assert!(
-            matches!(step, DiscoveryStep::Need(ResourceRequest { request }) if request.uri == "https://example.com/tour.xml")
+        assert_eq!(
+            operation
+                .missing_resources()
+                .unwrap()
+                .pop()
+                .unwrap()
+                .request
+                .uri,
+            "https://example.com/tour.xml"
+        );
+    }
+
+    #[test]
+    fn html_with_inline_viewer_code_keeps_its_explicit_xml_url() {
+        let mut registry = crate::core::Registry::new();
+        registry.register(SPEC);
+        let mut operation = registry.start("https://example.com/pano/index.html");
+        let page = operation.missing_resources().unwrap().pop().unwrap();
+        operation
+            .provide(ResourceResponse::new(
+                page.id,
+                br#"<html><script>
+                    function embedpano(opts) { return opts; }
+                    embedpano({xml: "scenes/custom.xml", target: "pano"});
+                </script></html>"#,
+            ))
+            .unwrap();
+        assert_eq!(
+            operation
+                .missing_resources()
+                .unwrap()
+                .pop()
+                .unwrap()
+                .request
+                .uri,
+            "https://example.com/pano/scenes/custom.xml"
         );
     }
 
     #[test]
     fn old_create_pano_viewer_js_is_detected_as_viewer_js() {
-        let mut session = start(&DiscoveryInput::from("https://example.com/viewer.js"));
-        let _ = session.advance(DiscoveryEvent::Start).unwrap();
-        let step = session
-            .advance(DiscoveryEvent::Resource(&ResourceOutcome::Response(
-                crate::core::ResourceResponse {
-                    id: crate::core::RequestId(0),
-                    bytes: b"function createPanoViewer(opts) { return buildViewer(opts); }"
-                        .to_vec(),
-                },
-            )))
+        let mut registry = crate::core::Registry::new();
+        registry.register(SPEC);
+        let mut operation = registry.start("https://example.com/viewer.js");
+        let script = operation.missing_resources().unwrap().pop().unwrap();
+        operation
+            .provide(ResourceResponse::new(
+                script.id,
+                b"function createPanoViewer(opts) { return buildViewer(opts); }",
+            ))
             .unwrap();
-        assert!(
-            matches!(step, DiscoveryStep::Need(ResourceRequest { request }) if request.uri == "https://example.com/tour.xml")
+        assert_eq!(
+            operation
+                .missing_resources()
+                .unwrap()
+                .pop()
+                .unwrap()
+                .request
+                .uri,
+            "https://example.com/tour.xml"
+        );
+    }
+
+    fn operation_waiting_for_first_viewer() -> (DiscoveryOperation, ResourceNeed) {
+        let mut registry = crate::core::Registry::new();
+        registry.register(SPEC);
+        let mut operation = registry.start("https://example.com/pano/index.html");
+        let page = operation.missing_resources().unwrap().pop().unwrap();
+        operation
+            .provide(ResourceResponse::new(
+                page.id,
+                br#"<html><script src="first.js"></script><script src="second.js"></script>
+                    <script>embedpano({xml: "tour.xml"});</script></html>"#,
+            ))
+            .unwrap();
+        let xml = operation.missing_resources().unwrap().pop().unwrap();
+        operation
+            .provide(ResourceResponse::new(
+                xml.id,
+                b"<encrypted>not-valid-krpano-data</encrypted>",
+            ))
+            .unwrap();
+        let viewer = operation.missing_resources().unwrap().pop().unwrap();
+        assert_eq!(viewer.request.uri, "https://example.com/pano/first.js");
+        (operation, viewer)
+    }
+
+    #[test]
+    fn failed_viewer_decryption_advances_to_the_next_candidate() {
+        let (mut operation, first) = operation_waiting_for_first_viewer();
+        operation
+            .provide(ResourceResponse::new(
+                first.id,
+                b"invalid viewer JavaScript",
+            ))
+            .unwrap();
+        assert_eq!(
+            operation
+                .missing_resources()
+                .unwrap()
+                .pop()
+                .unwrap()
+                .request
+                .uri,
+            "https://example.com/pano/second.js"
+        );
+    }
+
+    #[test]
+    fn failed_viewer_acquisition_advances_to_the_next_candidate() {
+        let (mut operation, first) = operation_waiting_for_first_viewer();
+        operation
+            .provide_failure(ResourceFailure {
+                id: first.id,
+                message: "unavailable".into(),
+            })
+            .unwrap();
+        assert_eq!(
+            operation
+                .missing_resources()
+                .unwrap()
+                .pop()
+                .unwrap()
+                .request
+                .uri,
+            "https://example.com/pano/second.js"
         );
     }
 

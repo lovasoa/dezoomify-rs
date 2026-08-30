@@ -1,11 +1,10 @@
 //! Pure Google Arts & Culture two-stage discovery.
 
 use crate::Vec2d;
-use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
-    CatalogEntry, Dezoomer, DezoomerSpec, DiscoveryError, DiscoveryInput, DiscoveryStep, Grid,
-    ImageCatalog, ImageDescriptor, LevelDescriptor, ProcessingRecipe, Request, ResourceOutcome,
-    ResourceRequest, StableId,
+    CatalogEntry, DezoomerSpec, DiscoveryContext, DiscoveryError, DiscoveryMatch,
+    DiscoveryResource, DiscoveryRoute, DiscoveryStep, Grid, ImageCatalog, ImageDescriptor,
+    LevelDescriptor, ProcessingRecipe, Request, StableId,
 };
 use std::sync::Arc;
 use tile_info::{PageInfo, TileInfo};
@@ -13,58 +12,42 @@ pub(crate) mod decryption;
 mod tile_info;
 mod url;
 
-pub const SPEC: DezoomerSpec = DezoomerSpec::stateful("google_arts_and_culture", start)
+const ROUTES: &[DiscoveryRoute] = &[
+    DiscoveryMatch::url_suffix("=g").then(parse_tile_information),
+    DiscoveryMatch::any().then(parse_page),
+];
+
+pub const SPEC: DezoomerSpec = DezoomerSpec::new("google_arts_and_culture", ROUTES)
     .recognizing(is_google_arts_url, "not a Google Arts & Culture URL");
 
 fn is_google_arts_url(uri: &str) -> bool {
-    uri.contains("artsandculture.google.com") || uri.contains("g.co/arts/") || uri.ends_with("=g")
+    uri.contains("artsandculture.google.com") || uri.contains("g.co/arts/")
 }
 
-pub struct Gap {
-    uri: String,
-    page: Option<Arc<PageInfo>>,
-    requested: bool,
+fn parse_page(
+    _context: &DiscoveryContext<'_>,
+    resource: DiscoveryResource<'_>,
+) -> Result<DiscoveryStep, DiscoveryError> {
+    let source = std::str::from_utf8(resource.bytes())
+        .map_err(|error| DiscoveryError::Session(error.to_string()))?;
+    let page = source
+        .parse::<PageInfo>()
+        .map_err(|error| DiscoveryError::Session(error.to_string()))?;
+    Ok(DiscoveryStep::Follow(Request::new(page.tile_info_url())))
 }
 
-impl Dezoomer for Gap {
-    fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
-        match event {
-            DiscoveryEvent::Start if !self.requested => {
-                self.requested = true;
-                Ok(DiscoveryStep::Need(ResourceRequest::new(self.uri.clone())))
-            }
-            DiscoveryEvent::Resource(ResourceOutcome::Response(response))
-                if self.page.is_none() =>
-            {
-                let source = std::str::from_utf8(&response.bytes)
-                    .map_err(|error| DiscoveryError::Session(error.to_string()))?;
-                let page: PageInfo = source
-                    .parse::<PageInfo>()
-                    .map_err(|error| DiscoveryError::Session(error.to_string()))?;
-                let next = page.tile_info_url();
-                self.page = Some(Arc::new(page));
-                Ok(DiscoveryStep::Need(ResourceRequest::new(next)))
-            }
-            DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
-                catalog(self.page.as_ref().expect("page set"), &response.bytes)
-                    .map(DiscoveryStep::Complete)
-            }
-            DiscoveryEvent::Resource(ResourceOutcome::Failure(failure)) => {
-                Err(DiscoveryError::Session(failure.message.clone()))
-            }
-            DiscoveryEvent::Start => {
-                Err(DiscoveryError::Session("GAP session started twice".into()))
-            }
-        }
-    }
-}
-
-fn start(input: &DiscoveryInput) -> Box<dyn Dezoomer> {
-    Box::new(Gap {
-        uri: input.uri.clone(),
-        page: None,
-        requested: false,
-    })
+fn parse_tile_information(
+    context: &DiscoveryContext<'_>,
+    resource: DiscoveryResource<'_>,
+) -> Result<DiscoveryStep, DiscoveryError> {
+    let page = context
+        .resources()
+        .map(DiscoveryResource::bytes)
+        .filter_map(|bytes| std::str::from_utf8(bytes).ok())
+        .find_map(|source| source.parse::<PageInfo>().ok())
+        .map(Arc::new)
+        .ok_or_else(|| DiscoveryError::Session("Google Arts page metadata is missing".into()))?;
+    catalog(&page, resource.bytes()).map(DiscoveryStep::Complete)
 }
 
 fn catalog(page: &Arc<PageInfo>, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
@@ -119,63 +102,55 @@ fn catalog(page: &Arc<PageInfo>, bytes: &[u8]) -> Result<ImageCatalog, Discovery
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{RequestId, ResourceResponse, TileSource};
-
-    fn response(bytes: &[u8]) -> ResourceOutcome {
-        ResourceOutcome::Response(ResourceResponse {
-            id: RequestId(0),
-            bytes: bytes.to_vec(),
-        })
-    }
+    use crate::core::{ResourceResponse, TileSource};
 
     fn fixture_catalog() -> ImageCatalog {
-        let input = DiscoveryInput::from("https://artsandculture.google.com/asset/test");
-        let mut session = start(&input);
-        session.advance(DiscoveryEvent::Start).unwrap();
-        let page = response(include_bytes!(
-            "../../testdata/google_arts_and_culture/page_source.html"
-        ));
-        session.advance(DiscoveryEvent::Resource(&page)).unwrap();
-        let tile_info = response(include_bytes!(
-            "../../testdata/google_arts_and_culture/tile_info.xml"
-        ));
-        let DiscoveryStep::Complete(catalog) = session
-            .advance(DiscoveryEvent::Resource(&tile_info))
-            .unwrap()
-        else {
-            panic!("fixture tile information must complete discovery");
-        };
-        catalog
+        let mut registry = crate::core::Registry::new();
+        registry.register(SPEC);
+        let mut operation = registry.start("https://artsandculture.google.com/asset/test");
+        let page = operation.missing_resources().unwrap().pop().unwrap();
+        operation
+            .provide(ResourceResponse::new(
+                page.id,
+                include_bytes!("../../testdata/google_arts_and_culture/page_source.html"),
+            ))
+            .unwrap();
+        let tile_info = operation.missing_resources().unwrap().pop().unwrap();
+        operation
+            .provide(ResourceResponse::new(
+                tile_info.id,
+                include_bytes!("../../testdata/google_arts_and_culture/tile_info.xml"),
+            ))
+            .unwrap();
+        operation.finish().unwrap()
     }
 
     #[test]
     fn discovers_fixture_as_five_replayable_levels() {
-        let input = DiscoveryInput::from("https://artsandculture.google.com/asset/test");
-        let mut session = start(&input);
-        let DiscoveryStep::Need(page) = session.advance(DiscoveryEvent::Start).unwrap() else {
-            panic!("Google Arts discovery must request the page");
-        };
-        assert_eq!(page.request.uri, input.uri);
-
-        let page = response(include_bytes!(
-            "../../testdata/google_arts_and_culture/page_source.html"
-        ));
-        let DiscoveryStep::Need(tile_info) =
-            session.advance(DiscoveryEvent::Resource(&page)).unwrap()
-        else {
-            panic!("the page must lead to tile information");
-        };
+        let mut registry = crate::core::Registry::new();
+        registry.register(SPEC);
+        let input = "https://artsandculture.google.com/asset/test";
+        let mut operation = registry.start(input);
+        let page = operation.missing_resources().unwrap().pop().unwrap();
+        assert_eq!(page.request.uri, input);
+        operation
+            .provide(
+                ResourceResponse::new(
+                    page.id,
+                    include_bytes!("../../testdata/google_arts_and_culture/page_source.html"),
+                )
+                .with_content_type("text/html; charset=utf-8"),
+            )
+            .unwrap();
+        let tile_info = operation.missing_resources().unwrap().pop().unwrap();
         assert!(tile_info.request.uri.ends_with("=g"));
-
-        let tile_info = response(include_bytes!(
-            "../../testdata/google_arts_and_culture/tile_info.xml"
-        ));
-        let DiscoveryStep::Complete(catalog) = session
-            .advance(DiscoveryEvent::Resource(&tile_info))
-            .unwrap()
-        else {
-            panic!("tile information must complete discovery");
-        };
+        operation
+            .provide(ResourceResponse::new(
+                tile_info.id,
+                include_bytes!("../../testdata/google_arts_and_culture/tile_info.xml"),
+            ))
+            .unwrap();
+        let catalog = operation.finish().unwrap();
         let [CatalogEntry::Ready(image)] = catalog.entries() else {
             panic!("Google Arts produces one ready image");
         };
@@ -212,6 +187,17 @@ mod tests {
         let mut registry = crate::core::Registry::new();
         registry.register(SPEC);
         let mut operation = registry.start("https://example.com/test");
+        assert!(matches!(
+            operation.missing_resources(),
+            Err(DiscoveryError::NoCandidateAccepted { .. })
+        ));
+    }
+
+    #[test]
+    fn does_not_advertise_tile_metadata_without_the_required_page_context() {
+        let mut registry = crate::core::Registry::new();
+        registry.register(SPEC);
+        let mut operation = registry.start("https://lh3.googleusercontent.com/image-id=g");
         assert!(matches!(
             operation.missing_resources(),
             Err(DiscoveryError::NoCandidateAccepted { .. })
@@ -258,20 +244,24 @@ mod tests {
     }
 
     #[test]
-    fn invalid_tile_information_is_reported_as_a_session_error() {
-        let input = DiscoveryInput::from("https://artsandculture.google.com/asset/test");
-        let mut session = start(&input);
-        session.advance(DiscoveryEvent::Start).unwrap();
-        let page = response(include_bytes!(
-            "../../testdata/google_arts_and_culture/page_source.html"
-        ));
-        session.advance(DiscoveryEvent::Resource(&page)).unwrap();
-        let invalid = response(b"<invalid>not a tile info</invalid>");
-        let Err(DiscoveryError::Session(message)) =
-            session.advance(DiscoveryEvent::Resource(&invalid))
-        else {
-            panic!("invalid tile XML must be rejected by the pure session");
-        };
-        assert!(message.contains("invalid Google Arts tile XML"));
+    fn invalid_tile_information_is_reported_as_a_parser_error() {
+        let mut registry = crate::core::Registry::new();
+        registry.register(SPEC);
+        let mut operation = registry.start("https://artsandculture.google.com/asset/test");
+        let page = operation.missing_resources().unwrap().pop().unwrap();
+        operation
+            .provide(ResourceResponse::new(
+                page.id,
+                include_bytes!("../../testdata/google_arts_and_culture/page_source.html"),
+            ))
+            .unwrap();
+        let tile_info = operation.missing_resources().unwrap().pop().unwrap();
+        let error = operation
+            .provide(ResourceResponse::new(
+                tile_info.id,
+                b"<invalid>not a tile info</invalid>",
+            ))
+            .unwrap_err();
+        assert!(error.to_string().contains("invalid Google Arts tile XML"));
     }
 }

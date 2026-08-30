@@ -5,35 +5,39 @@ use std::sync::Arc;
 
 use crate::Vec2d;
 use crate::core::{
-    CatalogEntry, DezoomerSpec, DiscoveryError, Grid, ImageCatalog, ImageDescriptor,
-    LevelDescriptor, Request, ResourceRequest, StableId,
+    CatalogEntry, DezoomerSpec, DiscoveryError, DiscoveryMatch, Grid, ImageCatalog,
+    ImageDescriptor, LevelDescriptor, Request, StableId,
 };
 
 const META: &str = "&OBJ=Max-size&OBJ=Tile-size&OBJ=Resolution-number";
 
-pub const SPEC: DezoomerSpec =
-    DezoomerSpec::routed("iipimage", |uri| Ok(metadata_request(uri)), catalog)
-        .recognizing(is_iip, "not an IIPImage URL")
-        .preferring(|uri| uri.to_ascii_lowercase().contains("?fif"));
+pub const SPEC: DezoomerSpec = DezoomerSpec::new(
+    "iipimage",
+    &[
+        DiscoveryMatch::url_matching(needs_metadata).map_url(metadata_url),
+        DiscoveryMatch::any().extract(catalog),
+    ],
+)
+.recognizing(is_iip, "not an IIPImage URL")
+.preferring(|uri| uri.to_ascii_lowercase().contains("?fif"));
 
 fn is_iip(uri: &str) -> bool {
     uri.ends_with(META) || uri.to_ascii_lowercase().contains("?fif")
 }
 
-fn metadata_request(input: &str) -> ResourceRequest {
-    let uri = if input.ends_with(META) {
-        input.to_owned()
-    } else {
-        format!(
-            "{}{}",
-            input
-                .chars()
-                .take_while(|character| *character != '&')
-                .collect::<String>(),
-            META
-        )
-    };
-    ResourceRequest::new(uri)
+fn needs_metadata(uri: &str) -> bool {
+    !uri.ends_with(META)
+}
+
+fn metadata_url(input: &str) -> Result<Request, DiscoveryError> {
+    Ok(Request::new(format!(
+        "{}{}",
+        input
+            .chars()
+            .take_while(|character| *character != '&')
+            .collect::<String>(),
+        META
+    )))
 }
 
 fn catalog(uri: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
@@ -128,7 +132,7 @@ mod tests {
     fn lowercase_fif_urls_request_canonical_metadata() {
         let uri = "https://publications-images.artic.edu/fcgi-bin/iipsrv.fcgi?fif=osci/Renoir_11/Color_Corrected/G39094sm2.ptif&jtl=4,11";
         assert_eq!(
-            metadata_request(uri).request.uri,
+            metadata_url(uri).unwrap().uri,
             "https://publications-images.artic.edu/fcgi-bin/iipsrv.fcgi?fif=osci/Renoir_11/Color_Corrected/G39094sm2.ptif&OBJ=Max-size&OBJ=Tile-size&OBJ=Resolution-number"
         );
     }
