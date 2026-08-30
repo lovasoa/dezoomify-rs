@@ -18,12 +18,17 @@ mod image_properties;
 pub const SPEC: DezoomerSpec = DezoomerSpec::stateful("zoomify", start).preferring(is_zoomify_url);
 
 static SHOW_IMAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\bZ\s*\.\s*showImage\s*\(").expect("constant Zoomify showImage pattern")
+    Regex::new(r"(?i)(?:\bZ\s*\.\s*)?\bshowImage\s*\(").expect("constant Zoomify showImage pattern")
 });
 
 static FLASH_IMAGE_PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)\bzoomifyImagePath\s*=\s*([^&\s<'\"]+)"#)
+    Regex::new(r#"(?i)\bzoomifyImagePath\s*=\s*([^'"&]*)(?:['"&])"#)
         .expect("constant Zoomify FlashVars pattern")
+});
+
+static HTML_BASE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?is)<base\s+[^>]*\bhref\s*=\s*["']([^"']*)"#)
+        .expect("constant HTML base pattern")
 });
 
 static TILE_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -106,7 +111,11 @@ impl Zoomify {
                         "not a Zoomify viewer page, metadata, or tile URL",
                     )));
                 };
-                let image_uri = resolve_relative(&self.input_uri, &image_path);
+                let page_base_uri = extract_html_base(&html).map_or_else(
+                    || self.input_uri.clone(),
+                    |base| resolve_relative(&self.input_uri, &base),
+                );
+                let image_uri = resolve_relative(&page_base_uri, &image_path);
                 let metadata_uri = append_path_component(&image_uri, "ImageProperties.xml");
                 self.state = SessionState::WaitingMetadata {
                     metadata_uri: metadata_uri.clone(),
@@ -133,20 +142,37 @@ fn append_path_component(uri: &str, component: &str) -> String {
 }
 
 fn extract_image_path(html: &str) -> Option<String> {
-    for marker in SHOW_IMAGE_RE.find_iter(html) {
-        if let Some(path) = second_javascript_string(&html[marker.end()..]) {
-            return Some(path);
-        }
-    }
-    FLASH_IMAGE_PATH_RE
+    let show_image = SHOW_IMAGE_RE.find_iter(html).find_map(|marker| {
+        second_javascript_string(&html[marker.end()..]).map(|path| (marker.start(), path))
+    });
+    let flash = FLASH_IMAGE_PATH_RE
+        .captures_iter(html)
+        .find_map(|captures| {
+            Some((
+                captures.get(0)?.start(),
+                captures.get(1)?.as_str().replace("&amp;", "&"),
+            ))
+        });
+    [show_image, flash]
+        .into_iter()
+        .flatten()
+        .min_by_key(|(offset, _)| *offset)
+        .map(|(_, path)| path)
+}
+
+fn extract_html_base(html: &str) -> Option<String> {
+    HTML_BASE_RE
         .captures(html)
         .and_then(|captures| captures.get(1))
-        .map(|path| path.as_str().replace("&amp;", "&"))
+        .map(|base| base.as_str().replace("&amp;", "&"))
 }
 
 fn second_javascript_string(arguments: &str) -> Option<String> {
-    let (remaining, _) = javascript_string(arguments)?;
-    let remaining = remaining.trim_start().strip_prefix(',')?;
+    let remaining = if let Some((remaining, _)) = javascript_string(arguments) {
+        remaining.trim_start().strip_prefix(',')?
+    } else {
+        arguments.split_once(',')?.1
+    };
     javascript_string(remaining).map(|(_, value)| value.replace("&amp;", "&"))
 }
 
@@ -237,6 +263,8 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
                 Vec2d::default(),
                 move |tile| {
                     let cell: Vec2d = tile.coord.into();
+                    // Some producers declare only the full-resolution tile
+                    // count and consequently store every level in TileGroup0.
                     let tile_group = if full_resolution_only {
                         0
                     } else {
@@ -306,23 +334,31 @@ mod tests {
     }
 
     #[test]
-    fn viewer_pages_resolve_the_standard_show_image_path() {
+    fn viewer_pages_respect_html_base_and_first_show_image_path() {
         let mut registry = crate::core::Registry::new();
         registry.register(SPEC);
-        let mut operation = registry.start("https://example.com/catalog/item.html");
+        let mut operation = registry.start("https://fixtures.test/zoomify-base-href/product.html");
 
         let page = operation.missing_resources().unwrap().pop().unwrap();
-        assert_eq!(page.request.uri, "https://example.com/catalog/item.html");
+        assert_eq!(
+            page.request.uri,
+            "https://fixtures.test/zoomify-base-href/product.html"
+        );
         operation
             .provide(crate::core::ResourceResponse {
                 id: page.id,
-                bytes: br"<script>
-                    Z.showImage(
-                        'viewer',
-                        '/proxy/IMAGE_ID/',
-                        'zToolbarVisible=1'
-                    );
-                </script>"
+                bytes: br#"<!doctype html>
+                    <html>
+                      <head>
+                        <base href="https://fixtures.test/zoomify-base-href/assets/">
+                      </head>
+                      <body>
+                        <script>
+                          Z.showImage("viewer", "maps/sample");
+                          Z.showImage("viewer", "maps/missing");
+                        </script>
+                      </body>
+                    </html>"#
                     .to_vec(),
             })
             .unwrap();
@@ -330,7 +366,7 @@ mod tests {
         let metadata = operation.missing_resources().unwrap().pop().unwrap();
         assert_eq!(
             metadata.request.uri,
-            "https://example.com/proxy/IMAGE_ID/ImageProperties.xml"
+            "https://fixtures.test/zoomify-base-href/assets/maps/sample/ImageProperties.xml"
         );
         operation
             .provide(crate::core::ResourceResponse {
@@ -348,19 +384,42 @@ mod tests {
         };
         assert_eq!(
             plan.tiles_row_major().next().unwrap().unwrap().request.uri,
-            "https://example.com/proxy/IMAGE_ID/TileGroup0/0-0-0.jpg"
+            "https://fixtures.test/zoomify-base-href/assets/maps/sample/TileGroup0/0-0-0.jpg"
         );
     }
 
     #[test]
-    fn viewer_pages_support_flashvars_image_paths() {
-        assert_eq!(
-            extract_image_path(
-                r#"<param name="FlashVars" value="zoomifyImagePath=../images/book/&amp;zoomifySlider=0">"#
-            )
-            .as_deref(),
-            Some("../images/book/")
-        );
+    fn viewer_declarations_match_dezoomify_fixtures_and_capture() {
+        let cases = [
+            (
+                r#"<script>var zoomifyImagePath=/zoomify";</script>"#,
+                "/zoomify",
+            ),
+            (
+                r#"<script>showImage("viewer", "/zoomify");</script>"#,
+                "/zoomify",
+            ),
+            (
+                r#"<script>showImage(viewer, "/zoomify");</script>"#,
+                "/zoomify",
+            ),
+            (
+                r#"<script>Z.showImage("viewer", "https://example.com/proxy/IMAGE_ID/");</script>"#,
+                "https://example.com/proxy/IMAGE_ID/",
+            ),
+        ];
+        for (html, expected) in cases {
+            assert_eq!(extract_image_path(html).as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn first_viewer_declaration_wins_in_document_order() {
+        let html = r#"
+            <script>zoomifyImagePath=/first";</script>
+            <script>Z.showImage("viewer", "/second");</script>
+        "#;
+        assert_eq!(extract_image_path(html).as_deref(), Some("/first"));
     }
 
     #[test]
@@ -425,6 +484,51 @@ mod tests {
                 "http://x.fr/y/TileGroup0/3-5-0.jpg"
             ]
         );
+    }
+
+    #[test]
+    fn tile_group_boundary_matches_dezoomify() {
+        let image = ready_image(
+            "https://fixtures.test/zoomify/multiple-groups/ImageProperties.xml",
+            br#"<IMAGE_PROPERTIES WIDTH="4096" HEIGHT="4096" NUMTILES="341" VERSION="1.8" TILESIZE="256" />"#,
+        );
+        let TileSource::Grid(plan) = &image.levels[4].source else {
+            unreachable!()
+        };
+        let urls: Vec<_> = plan
+            .tiles_row_major()
+            .skip(170)
+            .take(2)
+            .map(Result::unwrap)
+            .map(|tile| tile.request.uri)
+            .collect();
+        assert_eq!(
+            urls,
+            [
+                "https://fixtures.test/zoomify/multiple-groups/TileGroup0/4-10-10.jpg",
+                "https://fixtures.test/zoomify/multiple-groups/TileGroup1/4-11-10.jpg",
+            ]
+        );
+    }
+
+    #[test]
+    fn full_resolution_numtiles_keeps_every_level_in_tile_group_zero() {
+        let image = ready_image(
+            "https://fixtures.test/zoomify-full-numtiles/ImageProperties.xml",
+            br#"<IMAGE_PROPERTIES WIDTH="10240" HEIGHT="1792" NUMTILES="280" VERSION="1.8" TILESIZE="256" />"#,
+        );
+        assert!(image.warnings.is_empty());
+        let TileSource::Grid(plan) = &image.levels.last().unwrap().source else {
+            unreachable!()
+        };
+        let urls: Vec<_> = plan
+            .tiles_row_major()
+            .map(Result::unwrap)
+            .map(|tile| tile.request.uri)
+            .collect();
+        assert_eq!(urls.len(), 280);
+        assert!(urls.iter().all(|url| url.contains("/TileGroup0/")));
+        assert!(urls.iter().any(|url| url.ends_with("/6-16-6.jpg")));
     }
 
     #[test]
