@@ -102,8 +102,9 @@ https://artsandculture.google.com/asset/light-in-the-dark/ZQFouDGMVmsI2w
 
 ### Zoomify
 
-You can give dezoomify-rs a URL to the `ImageProperties.xml` file or to one
-of the image tiles.
+You can give dezoomify-rs the URL of a Zoomify viewer page, the
+`ImageProperties.xml` file, or one of the image tiles. Viewer-page discovery
+supports the standard `Z.showImage` and legacy `zoomifyImagePath` declarations.
 You can use [dezoomify-extension](https://lovasoa.github.io/dezoomify-extension/) to
 find the URL of this file.
 

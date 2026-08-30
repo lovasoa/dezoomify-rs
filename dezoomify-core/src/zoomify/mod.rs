@@ -1,4 +1,4 @@
-//! Pure discovery for Zoomify `ImageProperties.xml` pyramids.
+//! Pure discovery for Zoomify viewers and `ImageProperties.xml` pyramids.
 
 use std::sync::{Arc, LazyLock};
 
@@ -6,16 +6,25 @@ use image_properties::ImageProperties;
 use regex::Regex;
 
 use crate::Vec2d;
+use crate::core::discovery::DiscoveryEvent;
 use crate::core::{
-    CatalogEntry, DezoomerSpec, DiscoveryError, Grid, ImageCatalog, ImageDescriptor,
-    LevelDescriptor, Request, ResourceRequest, StableId,
+    CatalogEntry, Dezoomer, DezoomerSpec, DiscoveryDiagnostic, DiscoveryError, DiscoveryInput,
+    DiscoveryStep, Grid, ImageCatalog, ImageDescriptor, LevelDescriptor, Request, ResourceOutcome,
+    ResourceRequest, StableId, resolve_relative,
 };
 
 mod image_properties;
 
-pub const SPEC: DezoomerSpec = DezoomerSpec::routed("zoomify", metadata_request, load_catalog)
-    .recognizing(is_zoomify_url, "not a Zoomify metadata or tile URL")
-    .preferring(is_zoomify_url);
+pub const SPEC: DezoomerSpec = DezoomerSpec::stateful("zoomify", start).preferring(is_zoomify_url);
+
+static SHOW_IMAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\bZ\s*\.\s*showImage\s*\(").expect("constant Zoomify showImage pattern")
+});
+
+static FLASH_IMAGE_PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)\bzoomifyImagePath\s*=\s*([^&\s<'\"]+)"#)
+        .expect("constant Zoomify FlashVars pattern")
+});
 
 static TILE_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:^|/)TileGroup\d+/\d+-\d+-\d+\.jpe?g(?:[?#].*)?$")
@@ -28,6 +37,142 @@ fn is_tile_url(uri: &str) -> bool {
 
 fn is_zoomify_url(uri: &str) -> bool {
     uri.contains("/ImageProperties.xml") || is_tile_url(uri)
+}
+
+struct Zoomify {
+    input_uri: String,
+    state: SessionState,
+}
+
+enum SessionState {
+    Initial,
+    WaitingPage,
+    WaitingMetadata { metadata_uri: String },
+    Complete,
+}
+
+fn start(input: &DiscoveryInput) -> Box<dyn Dezoomer> {
+    Box::new(Zoomify {
+        input_uri: input.uri.clone(),
+        state: SessionState::Initial,
+    })
+}
+
+impl Dezoomer for Zoomify {
+    fn advance(&mut self, event: DiscoveryEvent<'_>) -> Result<DiscoveryStep, DiscoveryError> {
+        match event {
+            DiscoveryEvent::Start if matches!(self.state, SessionState::Initial) => {
+                if is_zoomify_url(&self.input_uri) {
+                    let request = metadata_request(&self.input_uri)?;
+                    let metadata_uri = request.request.uri.clone();
+                    self.state = SessionState::WaitingMetadata { metadata_uri };
+                    Ok(DiscoveryStep::Need(request))
+                } else {
+                    self.state = SessionState::WaitingPage;
+                    Ok(DiscoveryStep::Need(ResourceRequest::new(
+                        self.input_uri.clone(),
+                    )))
+                }
+            }
+            DiscoveryEvent::Start => Err(DiscoveryError::Session(
+                "Zoomify session started twice".into(),
+            )),
+            DiscoveryEvent::Resource(ResourceOutcome::Failure(failure)) => {
+                self.state = SessionState::Complete;
+                Err(DiscoveryError::Session(format!(
+                    "failed to download Zoomify resource: {}",
+                    failure.message
+                )))
+            }
+            DiscoveryEvent::Resource(ResourceOutcome::Response(response)) => {
+                self.handle_response(&response.bytes)
+            }
+        }
+    }
+}
+
+impl Zoomify {
+    fn handle_response(&mut self, contents: &[u8]) -> Result<DiscoveryStep, DiscoveryError> {
+        let state = std::mem::replace(&mut self.state, SessionState::Complete);
+        match state {
+            SessionState::WaitingPage => {
+                if let Ok(catalog) = load_catalog(&self.input_uri, contents) {
+                    return Ok(DiscoveryStep::Complete(catalog));
+                }
+
+                let html = String::from_utf8_lossy(contents);
+                let Some(image_path) = extract_image_path(&html) else {
+                    return Ok(DiscoveryStep::Reject(DiscoveryDiagnostic::from(
+                        "not a Zoomify viewer page, metadata, or tile URL",
+                    )));
+                };
+                let image_uri = resolve_relative(&self.input_uri, &image_path);
+                let metadata_uri = append_path_component(&image_uri, "ImageProperties.xml");
+                self.state = SessionState::WaitingMetadata {
+                    metadata_uri: metadata_uri.clone(),
+                };
+                Ok(DiscoveryStep::Need(ResourceRequest::new(metadata_uri)))
+            }
+            SessionState::WaitingMetadata { metadata_uri } => Ok(DiscoveryStep::Complete(
+                load_catalog(&metadata_uri, contents)?,
+            )),
+            SessionState::Initial => Err(DiscoveryError::Session(
+                "Zoomify session received a resource before it started".into(),
+            )),
+            SessionState::Complete => Err(DiscoveryError::Session(
+                "Zoomify session has already completed".into(),
+            )),
+        }
+    }
+}
+
+fn append_path_component(uri: &str, component: &str) -> String {
+    let suffix_start = uri.find(['?', '#']).unwrap_or(uri.len());
+    let (path, suffix) = uri.split_at(suffix_start);
+    format!("{}/{component}{suffix}", path.trim_end_matches('/'))
+}
+
+fn extract_image_path(html: &str) -> Option<String> {
+    for marker in SHOW_IMAGE_RE.find_iter(html) {
+        if let Some(path) = second_javascript_string(&html[marker.end()..]) {
+            return Some(path);
+        }
+    }
+    FLASH_IMAGE_PATH_RE
+        .captures(html)
+        .and_then(|captures| captures.get(1))
+        .map(|path| path.as_str().replace("&amp;", "&"))
+}
+
+fn second_javascript_string(arguments: &str) -> Option<String> {
+    let (remaining, _) = javascript_string(arguments)?;
+    let remaining = remaining.trim_start().strip_prefix(',')?;
+    javascript_string(remaining).map(|(_, value)| value.replace("&amp;", "&"))
+}
+
+fn javascript_string(input: &str) -> Option<(&str, String)> {
+    let input = input.trim_start();
+    let quote = input.chars().next()?;
+    if quote != '\'' && quote != '"' {
+        return None;
+    }
+
+    let mut value = String::new();
+    let mut escaped = false;
+    for (offset, character) in input[quote.len_utf8()..].char_indices() {
+        if escaped {
+            value.push(character);
+            escaped = false;
+        } else if character == '\\' {
+            escaped = true;
+        } else if character == quote {
+            let end = quote.len_utf8() + offset + character.len_utf8();
+            return Some((&input[end..], value));
+        } else {
+            value.push(character);
+        }
+    }
+    None
 }
 
 #[allow(clippy::unnecessary_wraps)]
@@ -60,6 +205,11 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
     let properties: ImageProperties = serde_xml_rs::from_reader(contents).map_err(|error| {
         DiscoveryError::Session(format!("unable to parse Zoomify XML: {error}"))
     })?;
+    if properties.width == 0 || properties.height == 0 || properties.tile_size == 0 {
+        return Err(DiscoveryError::Session(
+            "Zoomify XML must declare positive WIDTH, HEIGHT, and TILESIZE values".into(),
+        ));
+    }
     let base_url: Arc<str> = url
         .split("/ImageProperties.xml")
         .next()
@@ -153,6 +303,79 @@ mod tests {
             plan.tiles_row_major().next().unwrap().unwrap().request.uri,
             "https://example.com/images/book/TileGroup0/0-0-0.jpg"
         );
+    }
+
+    #[test]
+    fn viewer_pages_resolve_the_standard_show_image_path() {
+        let mut registry = crate::core::Registry::new();
+        registry.register(SPEC);
+        let mut operation = registry.start("https://example.com/catalog/item.html");
+
+        let page = operation.missing_resources().unwrap().pop().unwrap();
+        assert_eq!(page.request.uri, "https://example.com/catalog/item.html");
+        operation
+            .provide(crate::core::ResourceResponse {
+                id: page.id,
+                bytes: br"<script>
+                    Z.showImage(
+                        'viewer',
+                        '/proxy/IMAGE_ID/',
+                        'zToolbarVisible=1'
+                    );
+                </script>"
+                    .to_vec(),
+            })
+            .unwrap();
+
+        let metadata = operation.missing_resources().unwrap().pop().unwrap();
+        assert_eq!(
+            metadata.request.uri,
+            "https://example.com/proxy/IMAGE_ID/ImageProperties.xml"
+        );
+        operation
+            .provide(crate::core::ResourceResponse {
+                id: metadata.id,
+                bytes: br#"<IMAGE_PROPERTIES WIDTH="512" HEIGHT="256" NUMTILES="2" NUMIMAGES="1" VERSION="1.8" TILESIZE="256"/>"#.to_vec(),
+            })
+            .unwrap();
+
+        let catalog = operation.finish().unwrap();
+        let CatalogEntry::Ready(image) = &catalog.entries()[0] else {
+            panic!("Zoomify metadata must produce a ready image")
+        };
+        let TileSource::Grid(plan) = &image.levels[0].source else {
+            panic!("Zoomify levels must be grids")
+        };
+        assert_eq!(
+            plan.tiles_row_major().next().unwrap().unwrap().request.uri,
+            "https://example.com/proxy/IMAGE_ID/TileGroup0/0-0-0.jpg"
+        );
+    }
+
+    #[test]
+    fn viewer_pages_support_flashvars_image_paths() {
+        assert_eq!(
+            extract_image_path(
+                r#"<param name="FlashVars" value="zoomifyImagePath=../images/book/&amp;zoomifySlider=0">"#
+            )
+            .as_deref(),
+            Some("../images/book/")
+        );
+    }
+
+    #[test]
+    fn unrelated_pages_are_rejected() {
+        let mut registry = crate::core::Registry::new();
+        registry.register(SPEC);
+        let mut operation = registry.start("https://example.com/page");
+        let page = operation.missing_resources().unwrap().pop().unwrap();
+        let error = operation
+            .provide(crate::core::ResourceResponse {
+                id: page.id,
+                bytes: b"<html><body>ordinary page</body></html>".to_vec(),
+            })
+            .unwrap_err();
+        assert!(matches!(error, DiscoveryError::NoCandidateAccepted { .. }));
     }
 
     fn ready_image(url: &str, contents: &[u8]) -> ImageDescriptor {
