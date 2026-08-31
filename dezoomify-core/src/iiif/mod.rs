@@ -3,6 +3,7 @@ use std::sync::{Arc, LazyLock};
 use custom_error::custom_error;
 use regex::bytes::Regex as BytesRegex;
 use tile_info::ImageInfo;
+use url::Url;
 
 use crate::Vec2d;
 use crate::core::{
@@ -25,13 +26,22 @@ static MICRIO_CUSTOM_ELEMENT: LazyLock<BytesRegex> = LazyLock::new(|| {
 });
 
 const ROUTES: &[DiscoveryRoute] = &[
+    DiscoveryMatch::UrlPredicate(has_manifest_parameter).map_url(manifest_parameter),
+    DiscoveryMatch::UrlPredicate(is_onb_entry).map_url(onb_manifest),
+    DiscoveryMatch::UrlPredicate(is_contentdm_record).map_url(contentdm_metadata),
+    DiscoveryMatch::UrlPredicate(is_contentdm_metadata).then(follow_contentdm_info),
     DiscoveryMatch::ContentPredicate(contains_micrio_element).then(follow_micrio_element),
     DiscoveryMatch::Any.extract(catalog),
 ];
 
 /// IIIF dezoomer. See <https://iiif.io/>.
 pub const SPEC: DezoomerSpec = DezoomerSpec::new("iiif", ROUTES).preferring(|uri| {
-    uri.contains("info.json") || uri.contains("iiif") || uri.contains("manifest.json")
+    uri.contains("info.json")
+        || uri.contains("iiif")
+        || uri.contains("manifest.json")
+        || has_manifest_parameter(uri)
+        || is_onb_entry(uri)
+        || is_contentdm_record(uri)
 });
 
 /// Determines the best title for an image from IIIF manifest metadata
@@ -72,6 +82,119 @@ impl From<IIIFError> for DiscoveryError {
     fn from(err: IIIFError) -> Self {
         Self::Session(err.to_string())
     }
+}
+
+fn has_manifest_parameter(uri: &str) -> bool {
+    manifest_parameter_value(uri).is_some()
+}
+
+fn manifest_parameter(uri: &str) -> Result<Request, DiscoveryError> {
+    manifest_parameter_value(uri)
+        .map(Request::new)
+        .ok_or_else(|| DiscoveryError::Session("missing IIIF manifest parameter".into()))
+}
+
+fn manifest_parameter_value(uri: &str) -> Option<String> {
+    let url = Url::parse(uri).ok()?;
+    url.query_pairs()
+        .find_map(|(name, value)| (name == "manifest").then(|| value.into_owned()))
+        .or_else(|| {
+            url.fragment().and_then(|fragment| {
+                url::form_urlencoded::parse(fragment.trim_start_matches('?').as_bytes())
+                    .find_map(|(name, value)| (name == "manifest").then(|| value.into_owned()))
+            })
+        })
+        .filter(|value| !value.is_empty())
+}
+
+fn is_onb_entry(uri: &str) -> bool {
+    let Ok(url) = Url::parse(uri) else {
+        return false;
+    };
+    matches!(url.host_str(), Some("viewer.onb.ac.at"))
+        || matches!(url.host_str(), Some("digital.onb.ac.at"))
+            && url.path() == "/RepViewer/viewer.faces"
+            && url.query_pairs().any(|(name, _)| name == "doc")
+}
+
+fn onb_manifest(uri: &str) -> Result<Request, DiscoveryError> {
+    let url = Url::parse(uri).map_err(|_| DiscoveryError::Session("invalid ONB URL".into()))?;
+    let identifier = match url.host_str() {
+        Some("viewer.onb.ac.at") => url
+            .path_segments()
+            .and_then(|mut segments| segments.next())
+            .map(str::to_owned),
+        Some("digital.onb.ac.at") => url
+            .query_pairs()
+            .find_map(|(name, value)| (name == "doc").then(|| value.into_owned())),
+        _ => None,
+    }
+    .filter(|identifier| !identifier.is_empty())
+    .ok_or_else(|| DiscoveryError::Session("missing ONB document identifier".into()))?;
+    Ok(Request::new(format!(
+        "https://api.onb.ac.at/iiif/presentation/v3/manifest/{identifier}"
+    )))
+}
+
+fn is_contentdm_record(uri: &str) -> bool {
+    let Ok(url) = Url::parse(uri) else {
+        return false;
+    };
+    let segments = url.path_segments().map(Iterator::collect::<Vec<_>>);
+    matches!(segments.as_deref(), Some(["digital", "collection", _, "id", id, ..]) if id.parse::<u64>().is_ok())
+}
+
+fn contentdm_metadata(uri: &str) -> Result<Request, DiscoveryError> {
+    let url =
+        Url::parse(uri).map_err(|_| DiscoveryError::Session("invalid CONTENTdm URL".into()))?;
+    let segments = url
+        .path_segments()
+        .map(Iterator::collect::<Vec<_>>)
+        .ok_or_else(|| DiscoveryError::Session("invalid CONTENTdm path".into()))?;
+    let ["digital", "collection", collection, "id", identifier, ..] = segments.as_slice() else {
+        return Err(DiscoveryError::Session(
+            "invalid CONTENTdm record URL".into(),
+        ));
+    };
+    Ok(Request::new(format!(
+        "{}/digital/api/singleitem/collection/{collection}/id/{identifier}",
+        url.origin().ascii_serialization()
+    )))
+}
+
+fn is_contentdm_metadata(uri: &str) -> bool {
+    Url::parse(uri).is_ok_and(|url| {
+        matches!(
+            url.path_segments()
+                .map(Iterator::collect::<Vec<_>>)
+                .as_deref(),
+            Some(["digital", "api", "singleitem", "collection", _, "id", _])
+        )
+    })
+}
+
+fn follow_contentdm_info(
+    _: &DiscoveryContext<'_>,
+    resource: DiscoveryResource<'_>,
+) -> Result<DiscoveryStep, DiscoveryError> {
+    let info_uri = serde_json::from_slice::<serde_json::Value>(resource.bytes())
+        .ok()
+        .and_then(|value| value.get("iiifInfoUri")?.as_str().map(str::to_owned))
+        .filter(|uri| !uri.is_empty())
+        .ok_or_else(|| DiscoveryError::Session("CONTENTdm metadata has no IIIF URL".into()))?;
+    let base = Url::parse(resource.final_uri())
+        .map_err(|_| DiscoveryError::Session("invalid CONTENTdm metadata URL".into()))?;
+    let origin = base.origin().ascii_serialization();
+    let uri = if Url::parse(&info_uri).is_ok() {
+        info_uri
+    } else if info_uri.starts_with("/digital/") {
+        format!("{origin}{info_uri}")
+    } else if info_uri.starts_with('/') {
+        format!("{origin}/digital{info_uri}")
+    } else {
+        format!("{origin}/digital/{info_uri}")
+    };
+    Ok(DiscoveryStep::Follow(Request::new(uri)))
 }
 
 fn contains_micrio_element(contents: &[u8]) -> bool {
