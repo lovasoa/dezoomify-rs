@@ -1,12 +1,14 @@
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use custom_error::custom_error;
+use regex::bytes::Regex as BytesRegex;
 use tile_info::ImageInfo;
 
 use crate::Vec2d;
 use crate::core::{
-    CatalogEntry, DeferredImage, DezoomerSpec, DiscoveryError, DiscoveryMatch, Grid, GridRequests,
-    GridTile, ImageCatalog, ImageDescriptor, LevelDescriptor, Request, StableId,
+    CatalogEntry, DeferredImage, DezoomerSpec, DiscoveryContext, DiscoveryError, DiscoveryMatch,
+    DiscoveryResource, DiscoveryRoute, DiscoveryStep, Grid, GridRequests, GridTile, ImageCatalog,
+    ImageDescriptor, LevelDescriptor, Request, StableId,
 };
 use crate::iiif::tile_info::TileSizeFormat;
 use crate::json_utils::all_json;
@@ -17,11 +19,20 @@ pub mod tile_info;
 #[cfg(test)]
 mod title_tests;
 
+static MICRIO_CUSTOM_ELEMENT: LazyLock<BytesRegex> = LazyLock::new(|| {
+    BytesRegex::new(r#"(?is)<micr-io\b[^>]*\bid\s*=\s*["'](?P<id>[A-Za-z0-9]{5})["']"#)
+        .expect("constant Micrio custom element pattern")
+});
+
+const ROUTES: &[DiscoveryRoute] = &[
+    DiscoveryMatch::ContentPredicate(contains_micrio_element).then(follow_micrio_element),
+    DiscoveryMatch::Any.extract(catalog),
+];
+
 /// IIIF dezoomer. See <https://iiif.io/>.
-pub const SPEC: DezoomerSpec = DezoomerSpec::new("iiif", &[DiscoveryMatch::Any.extract(catalog)])
-    .preferring(|uri| {
-        uri.contains("info.json") || uri.contains("iiif") || uri.contains("manifest.json")
-    });
+pub const SPEC: DezoomerSpec = DezoomerSpec::new("iiif", ROUTES).preferring(|uri| {
+    uri.contains("info.json") || uri.contains("iiif") || uri.contains("manifest.json")
+});
 
 /// Determines the best title for an image from IIIF manifest metadata
 #[must_use]
@@ -61,6 +72,26 @@ impl From<IIIFError> for DiscoveryError {
     fn from(err: IIIFError) -> Self {
         Self::Session(err.to_string())
     }
+}
+
+fn contains_micrio_element(contents: &[u8]) -> bool {
+    MICRIO_CUSTOM_ELEMENT.is_match(contents)
+}
+
+fn follow_micrio_element(
+    _: &DiscoveryContext<'_>,
+    resource: DiscoveryResource<'_>,
+) -> Result<DiscoveryStep, DiscoveryError> {
+    let id = MICRIO_CUSTOM_ELEMENT
+        .captures(resource.bytes())
+        .and_then(|captures| captures.name("id"))
+        .map(|capture| std::str::from_utf8(capture.as_bytes()))
+        .transpose()
+        .map_err(|_| DiscoveryError::Session("Micrio custom element ID is not UTF-8".into()))?
+        .ok_or_else(|| DiscoveryError::Session("Micrio custom element lacks an ID".into()))?;
+    Ok(DiscoveryStep::Follow(Request::new(format!(
+        "https://i.micr.io/{id}/info.json"
+    ))))
 }
 
 fn catalog(uri: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
