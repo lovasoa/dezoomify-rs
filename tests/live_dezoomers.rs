@@ -106,6 +106,10 @@ live_dezoomer!(
     "https://philamuseum.org/collection/object/101731"
 );
 live_dezoomer!(
+    iiif_liechtenstein_collections,
+    "https://www.liechtensteincollections.at/en/collections-online/forest-landscape"
+);
+live_dezoomer!(
     iiif_oklahoma_contentdm,
     "https://dc.library.okstate.edu/digital/collection/OKMaps/id/6483/rec/6"
 );
