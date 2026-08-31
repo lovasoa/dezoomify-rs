@@ -29,7 +29,7 @@ static SHOW_IMAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 static FLASH_IMAGE_PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)\bzoomifyImagePath\s*=\s*([^'"&]*)(?:['"&])"#)
+    Regex::new(r#"(?i)\bzoomifyImagePath\s*=\s*(?:"([^"]*)"|'([^']*)'|([^'"&\s]+))"#)
         .expect("constant Zoomify FlashVars pattern")
 });
 
@@ -67,8 +67,8 @@ fn extract_image_properties_url(
         DiscoveryError::Session("Zoomify viewer page does not declare an image path".into())
     })?;
     let page_base_uri = extract_html_base(&html).map_or_else(
-        || resource.uri().to_owned(),
-        |base| resolve_relative(resource.uri(), &base),
+        || resource.final_uri().to_owned(),
+        |base| resolve_relative(resource.final_uri(), &base),
     );
     let image_uri = resolve_relative(&page_base_uri, &image_path);
     Ok(DiscoveryStep::Follow(Request::new(append_path_component(
@@ -106,7 +106,12 @@ fn extract_image_path(html: &str) -> Option<String> {
         .find_map(|captures| {
             Some((
                 captures.get(0)?.start(),
-                captures.get(1)?.as_str().replace("&amp;", "&"),
+                captures
+                    .get(1)
+                    .or_else(|| captures.get(2))
+                    .or_else(|| captures.get(3))?
+                    .as_str()
+                    .replace("&amp;", "&"),
             ))
         });
     let tile_service = TILE_SERVICE_RE
@@ -252,6 +257,19 @@ mod tests {
         uri
     }
 
+    fn provide_next_at(
+        operation: &mut DiscoveryOperation,
+        bytes: &[u8],
+        final_uri: &str,
+    ) -> String {
+        let need = operation.missing_resources().unwrap().pop().unwrap();
+        let uri = need.request.uri.clone();
+        operation
+            .provide(ResourceResponse::new(need.id, bytes).with_final_uri(final_uri))
+            .unwrap();
+        uri
+    }
+
     fn first_tile(operation: DiscoveryOperation) -> String {
         let catalog = operation.finish().unwrap();
         let CatalogEntry::Ready(image) = &catalog.entries()[0] else {
@@ -305,6 +323,23 @@ mod tests {
     }
 
     #[test]
+    fn viewer_pages_resolve_relative_paths_against_the_redirect_target() {
+        let mut operation = operation("https://museum.example/object/12");
+        assert_eq!(
+            provide_next_at(
+                &mut operation,
+                br#"<script>Z.showImage("viewer", "tiles");</script>"#,
+                "https://cdn.example/viewer/12/index.html",
+            ),
+            "https://museum.example/object/12"
+        );
+        assert_eq!(
+            provide_next(&mut operation, XML),
+            "https://cdn.example/viewer/12/tiles/ImageProperties.xml"
+        );
+    }
+
+    #[test]
     fn signed_proxy_remains_the_tile_base() {
         let (metadata, tile) = discover_viewer(
             "https://museum.example/viewer/object",
@@ -324,6 +359,7 @@ mod tests {
     fn extracts_general_zoomify_declarations() {
         for (page, expected) in [
             (r#"zoomifyImagePath=/zoomify";"#, "/zoomify"),
+            (r#"zoomifyImagePath = "/zoomify";"#, "/zoomify"),
             (r#"showImage("viewer", "/zoomify");"#, "/zoomify"),
             (r#"showImage(viewer, "/zoomify");"#, "/zoomify"),
             (

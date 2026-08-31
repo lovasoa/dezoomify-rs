@@ -20,6 +20,7 @@ pub struct ResourceNeed {
 pub struct ResourceResponse {
     pub id: RequestId,
     pub bytes: Vec<u8>,
+    final_uri: Option<String>,
 }
 impl ResourceResponse {
     #[must_use]
@@ -27,7 +28,15 @@ impl ResourceResponse {
         Self {
             id,
             bytes: bytes.into(),
+            final_uri: None,
         }
+    }
+
+    /// Set the URI reached after the host followed redirects.
+    #[must_use]
+    pub fn with_final_uri(mut self, uri: impl Into<String>) -> Self {
+        self.final_uri = Some(uri.into());
+        self
     }
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -37,7 +46,7 @@ pub struct ResourceFailure {
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ResourceOutcome {
-    Response(Vec<u8>),
+    Response(ResourceResponse),
     Failure(ResourceFailure),
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -65,12 +74,18 @@ pub enum DiscoveryStep {
 pub struct DiscoveryResource<'a> {
     request: &'a Request,
     bytes: &'a [u8],
+    final_uri: &'a str,
 }
 
 impl<'a> DiscoveryResource<'a> {
     #[must_use]
     pub const fn uri(self) -> &'a str {
         self.request.uri.as_str()
+    }
+    /// The URI after host-level redirects, or [`Self::uri`] when unavailable.
+    #[must_use]
+    pub const fn final_uri(self) -> &'a str {
+        self.final_uri
     }
     #[must_use]
     pub fn bytes(self) -> &'a [u8] {
@@ -89,9 +104,10 @@ impl<'a> DiscoveryContext<'a> {
             .iter()
             .filter_map(|id| self.requests.get(id.0))
             .filter_map(|record| match record.outcome.as_ref()? {
-                ResourceOutcome::Response(bytes) => Some(DiscoveryResource {
+                ResourceOutcome::Response(response) => Some(DiscoveryResource {
                     request: &record.request,
-                    bytes,
+                    bytes: &response.bytes,
+                    final_uri: response.final_uri.as_deref().unwrap_or(&record.request.uri),
                 }),
                 ResourceOutcome::Failure(_) => None,
             })
@@ -293,7 +309,6 @@ pub enum DiscoveryError {
     NotComplete,
     Session(String),
     TransitionLimitExceeded,
-    ResourceLimitExceeded,
     MetadataSizeLimitExceeded,
 }
 
@@ -312,7 +327,6 @@ impl fmt::Display for DiscoveryError {
             Self::NotComplete => f.write_str("discovery is not complete"),
             Self::Session(message) => f.write_str(message),
             Self::TransitionLimitExceeded => f.write_str("discovery transition limit exceeded"),
-            Self::ResourceLimitExceeded => f.write_str("discovery resource limit exceeded"),
             Self::MetadataSizeLimitExceeded => {
                 f.write_str("discovery metadata size limit exceeded")
             }
@@ -418,7 +432,7 @@ impl DiscoveryOperation {
             })
     }
     pub fn provide(&mut self, response: ResourceResponse) -> Result<(), DiscoveryError> {
-        self.provide_outcome(response.id, ResourceOutcome::Response(response.bytes))
+        self.provide_outcome(response.id, ResourceOutcome::Response(response))
     }
     pub fn provide_failure(&mut self, failure: ResourceFailure) -> Result<(), DiscoveryError> {
         self.provide_outcome(failure.id, ResourceOutcome::Failure(failure))
@@ -434,10 +448,10 @@ impl DiscoveryOperation {
         if resource.outcome.is_some() {
             return Err(DiscoveryError::RequestAlreadyProvided(id));
         }
-        if let ResourceOutcome::Response(bytes) = &outcome {
+        if let ResourceOutcome::Response(response) = &outcome {
             self.retained_bytes = self
                 .retained_bytes
-                .checked_add(bytes.len())
+                .checked_add(response.bytes.len())
                 .filter(|total| *total <= self.limits.retained_bytes)
                 .ok_or(DiscoveryError::MetadataSizeLimitExceeded)?;
         }
@@ -522,10 +536,14 @@ impl DiscoveryOperation {
             .as_ref()
             .expect("ready candidate has an outcome")
         {
-            ResourceOutcome::Response(bytes) => dispatch_resource(
+            ResourceOutcome::Response(response) => dispatch_resource(
                 routes,
                 &context,
-                DiscoveryResource { request, bytes },
+                DiscoveryResource {
+                    request,
+                    bytes: &response.bytes,
+                    final_uri: response.final_uri.as_deref().unwrap_or(&request.uri),
+                },
                 "resource did not match any discovery route",
             ),
             ResourceOutcome::Failure(failure) => on_failure.map_or_else(

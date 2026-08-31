@@ -20,6 +20,11 @@ const BUILTINS: &[DezoomerSpec] = &[
     bulk_text::SPEC,
 ];
 
+/// Built-in dezoomer names in candidate priority order.
+pub fn builtin_names() -> impl Iterator<Item = &'static str> {
+    BUILTINS.iter().map(DezoomerSpec::name)
+}
+
 /// An ordered set of dezoomers to try. Earlier registrations have priority.
 #[derive(Default, Clone)]
 pub struct Registry {
@@ -87,12 +92,12 @@ mod tests {
 
     #[test]
     fn every_builtin_name_resolves_to_a_single_program() {
-        for builtin in BUILTINS {
-            let registry = registry_for(builtin.name()).unwrap_or_else(|| {
-                panic!("built-in `{}` must resolve", builtin.name());
+        for name in builtin_names() {
+            let registry = registry_for(name).unwrap_or_else(|| {
+                panic!("built-in `{name}` must resolve");
             });
             assert_eq!(registry.specs.len(), 1);
-            assert_eq!(registry.specs[0].name(), builtin.name());
+            assert_eq!(registry.specs[0].name(), name);
         }
         assert!(registry_for("nope").is_none());
     }

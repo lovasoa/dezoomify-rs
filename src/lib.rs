@@ -961,7 +961,7 @@ mod tests {
         };
         let child = ImageDescriptor {
             id: "iiif-image".into(),
-            title: None,
+            title: Some("Discovered title".into()),
             format: "iiif".into(),
             levels: Vec::new(),
             warnings: vec!["image warning".into()],
@@ -974,6 +974,21 @@ mod tests {
         };
         assert_eq!(image.title.as_deref(), Some("Manifest title"));
         assert_eq!(image.warnings, ["manifest warning", "image warning"]);
+
+        let catalog = inherit_deferred_context(
+            ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
+                title: Some("Discovered title".into()),
+                ..Default::default()
+            })]),
+            &DeferredImage {
+                title: None,
+                ..parent
+            },
+        );
+        let [CatalogEntry::Ready(image)] = catalog.entries() else {
+            panic!("resolved child must remain ready")
+        };
+        assert_eq!(image.title.as_deref(), Some("Discovered title"));
     }
 
     #[test]

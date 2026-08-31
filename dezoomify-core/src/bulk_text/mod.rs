@@ -24,7 +24,7 @@ fn catalog(uri: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
             CatalogEntry::Deferred(DeferredImage {
                 id: StableId::new(format!("bulk:{index}")),
                 uri: image.uri,
-                title: Some(image.title),
+                title: image.title,
                 warnings: Vec::new(),
             })
         },
@@ -43,7 +43,7 @@ fn is_bulk_file(uri: &str) -> bool {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ListedImage {
     uri: String,
-    title: String,
+    title: Option<String>,
 }
 
 #[cfg(test)]
@@ -70,7 +70,7 @@ fn parse_text_urls_with_base(
             let title = parts
                 .next()
                 .filter(|title| !title.is_empty())
-                .map_or_else(|| title_from_uri(&uri, line_number), str::to_owned);
+                .map(str::to_owned);
             Ok(ListedImage { uri, title })
         })
         .collect()
@@ -125,22 +125,6 @@ fn validate_uri(input: &str, line: usize) -> Result<(), DiscoveryError> {
     )))
 }
 
-fn title_from_uri(uri: &str, line: usize) -> String {
-    url::Url::parse(uri)
-        .ok()
-        .and_then(|url| {
-            url.path_segments()?
-                .rfind(|segment| !segment.is_empty())
-                .map(str::to_owned)
-        })
-        .map(|name| {
-            name.rsplit_once('.')
-                .map_or(name.clone(), |(stem, _)| stem.to_owned())
-        })
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| format!("URL_{line}"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,15 +150,15 @@ mod tests {
             vec![
                 ListedImage {
                     uri: "https://example.test/a.jpg".into(),
-                    title: "A title".into()
+                    title: Some("A title".into())
                 },
                 ListedImage {
                     uri: "./local.dzi".into(),
-                    title: "URL_3".into()
+                    title: None
                 },
                 ListedImage {
                     uri: "https://example.org/manifest.json".into(),
-                    title: "manifest".into()
+                    title: None
                 },
             ]
         );
@@ -182,17 +166,10 @@ mod tests {
             "http://example.com/image1.jpg My Custom Title\nhttps://example.org/manifest.json Another Title",
         )
         .unwrap();
-        assert_eq!(urls[0].title, "My Custom Title");
-        assert_eq!(urls[1].title, "Another Title");
+        assert_eq!(urls[0].title.as_deref(), Some("My Custom Title"));
+        assert_eq!(urls[1].title.as_deref(), Some("Another Title"));
         let error = parse_text_urls("not_a_valid_url").unwrap_err().to_string();
         assert!(error.contains("line 1") && error.contains("not_a_valid_url"));
-        assert_eq!(title_from_uri("http://example.com/image.jpg", 1), "image");
-        assert_eq!(
-            title_from_uri("https://example.org/path/manifest.json", 2),
-            "manifest"
-        );
-        assert_eq!(title_from_uri("http://example.com/", 3), "URL_3");
-        assert_eq!(title_from_uri("not_a_url", 4), "URL_4");
     }
 
     #[test]
@@ -205,7 +182,7 @@ mod tests {
         assert_eq!(catalog.len(), 2);
         let entries = catalog.into_entries();
         assert!(
-            matches!(entries[0], CatalogEntry::Deferred(DeferredImage { ref uri, ref title, .. }) if uri == "http://example.com/image1.jpg" && title.as_deref() == Some("image1"))
+            matches!(entries[0], CatalogEntry::Deferred(DeferredImage { ref uri, title: None, .. }) if uri == "http://example.com/image1.jpg")
         );
         assert!(
             matches!(entries[1], CatalogEntry::Deferred(DeferredImage { ref uri, .. }) if uri == "https://example.org/manifest.json")

@@ -23,7 +23,7 @@ pub use model::{
     Request, StableId, TileId, TileRole, TileSpec,
 };
 pub use processing::ProcessingError;
-pub use registry::{Registry, default_registry, registry_for};
+pub use registry::{Registry, builtin_names, default_registry, registry_for};
 pub use tile_plan::{
     Grid, GridCoord, GridRequests, GridTile, Positioned, PositionedTile, TileSource,
     TileSourceError,
