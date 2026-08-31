@@ -1,0 +1,9 @@
+{
+  "@context": "http://iiif.io/api/image/2/context.json",
+  "@id": "http://10.0.0.42/iiif/private-id",
+  "width": 512,
+  "height": 512,
+  "tiles": [{ "width": 256, "scaleFactors": [1, 2] }],
+  "qualities": ["native"],
+  "formats": ["png"]
+}

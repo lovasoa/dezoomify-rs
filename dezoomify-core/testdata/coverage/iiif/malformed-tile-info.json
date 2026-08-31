@@ -1,0 +1,9 @@
+{
+  "@context": "http://iiif.io/api/image/2/context.json",
+  "@id": "https://fixtures.test/iiif-malformed-tile",
+  "width": 512,
+  "height": 512,
+  "tile_width": 4096,
+  "qualities": ["default"],
+  "formats": ["jpg"]
+}

@@ -1,0 +1,10 @@
+{
+  "@context": "http://iiif.io/api/image/3/context.json",
+  "id": "https://fixtures.test/iiif-v3/non-divisible",
+  "type": "ImageService3",
+  "width": 4960,
+  "height": 5241,
+  "tiles": [{ "width": 1024, "height": 1024, "scaleFactors": [8] }],
+  "extraQualities": ["default"],
+  "extraFormats": ["jpg"]
+}

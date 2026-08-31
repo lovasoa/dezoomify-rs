@@ -15,6 +15,12 @@ use dezoomify_core::core::{
 
 type Resource<'a> = (&'a str, &'a [u8]);
 
+macro_rules! coverage_fixture {
+    ($path:literal) => {
+        include_bytes!(concat!("../testdata/coverage/", $path))
+    };
+}
+
 fn discover(input: &str, resources: &[Resource<'_>]) -> Result<ImageCatalog, DiscoveryError> {
     let registry = default_registry(input);
     let mut operation = registry.start(input);
@@ -187,31 +193,11 @@ fn dezoomer_deepzoom_overlap_case() {
     );
 }
 
-const IIIF_V2: &[u8] = br#"{
-  "@context": "http://iiif.io/api/image/2/context.json",
-  "@id": "http://127.0.0.1:9877/iiif/v2",
-  "width": 512,
-  "height": 512,
-  "tiles": [{ "width": 256, "scaleFactors": [1, 2] }],
-  "qualities": ["native"],
-  "formats": ["png"]
-}"#;
-
-const IIIF_V3: &[u8] = br#"{
-  "@context": "http://iiif.io/api/image/3/context.json",
-  "id": "https://fixtures.test/iiif-v3",
-  "type": "ImageService3",
-  "width": 512,
-  "height": 512,
-  "tiles": [{ "width": 256, "height": 256, "scaleFactors": [1, 2] }],
-  "extraQualities": ["default", "gray"],
-  "extraFormats": ["jpg", "webp"]
-}"#;
-
 #[test]
 fn dezoomer_iiif_image_service_cases() {
     let input = "http://127.0.0.1:9877/fixtures/iiif-v2/info.json";
-    let image = ready_image(discover(input, &[(input, IIIF_V2)]).unwrap());
+    let image =
+        ready_image(discover(input, &[(input, coverage_fixture!("iiif/v2-info.json"))]).unwrap());
     assert_eq!(image.format.as_str(), "iiif");
     assert!(
         tile_urls(image.levels.last().unwrap())
@@ -220,7 +206,8 @@ fn dezoomer_iiif_image_service_cases() {
     );
 
     let input = "https://fixtures.test/iiif-v3/info.json";
-    let image = ready_image(discover(input, &[(input, IIIF_V3)]).unwrap());
+    let image =
+        ready_image(discover(input, &[(input, coverage_fixture!("iiif/v3-info.json"))]).unwrap());
     assert!(
         tile_urls(image.levels.last().unwrap())
             .iter()
@@ -249,15 +236,13 @@ fn dezoomer_iiif_image_service_cases() {
     );
 
     let input = "https://fixtures.test/iiif-v3/non-divisible/info.json";
-    let non_divisible = br#"{
-      "@context": "http://iiif.io/api/image/3/context.json",
-      "id": "https://fixtures.test/iiif-v3/non-divisible",
-      "type": "ImageService3",
-      "width": 4960, "height": 5241,
-      "tiles": [{ "width": 1024, "height": 1024, "scaleFactors": [8] }],
-      "extraQualities": ["default"], "extraFormats": ["jpg"]
-    }"#;
-    let image = ready_image(discover(input, &[(input, non_divisible)]).unwrap());
+    let image = ready_image(
+        discover(
+            input,
+            &[(input, coverage_fixture!("iiif/non-divisible-info.json"))],
+        )
+        .unwrap(),
+    );
     let level = image
         .levels
         .iter()
@@ -270,16 +255,13 @@ fn dezoomer_iiif_image_service_cases() {
     );
 
     let input = "https://fixtures.test/iiif-map-view/info.json";
-    let invalid_tile_width = br#"{
-      "@context": "http://library.stanford.edu/iiif/image-api/1.1/context.json",
-      "@id": "https://fixtures.test/iiif-map-view",
-      "width": 9392, "height": 8770,
-      "tile_width": 9392, "tile_height": 8770,
-      "scale_factors": [1, 2, 4, 8, 16, 32, 64, 128],
-      "qualities": ["native"], "formats": ["jpg"],
-      "profile": "http://library.stanford.edu/iiif/image-api/1.1/compliance.html#level2"
-    }"#;
-    let image = ready_image(discover(input, &[(input, invalid_tile_width)]).unwrap());
+    let image = ready_image(
+        discover(
+            input,
+            &[(input, coverage_fixture!("iiif/map-view-info.json"))],
+        )
+        .unwrap(),
+    );
     let level = image
         .levels
         .iter()
@@ -292,52 +274,49 @@ fn dezoomer_iiif_image_service_cases() {
     );
 
     let input = "http://127.0.0.1:9877/fixtures/iiif-private-id/info.json";
-    let private_id = br#"{
-      "@context": "http://iiif.io/api/image/2/context.json",
-      "@id": "http://10.0.0.42/iiif/private-id",
-      "width": 512, "height": 512,
-      "tiles": [{ "width": 256, "scaleFactors": [1, 2] }],
-      "qualities": ["native"], "formats": ["png"]
-    }"#;
-    let image = ready_image(discover(input, &[(input, private_id)]).unwrap());
+    let image = ready_image(
+        discover(
+            input,
+            &[(input, coverage_fixture!("iiif/private-id-info.json"))],
+        )
+        .unwrap(),
+    );
     assert!(tile_urls(image.levels.last().unwrap()).iter().any(|url| url
         == "http://127.0.0.1:9877/fixtures/iiif-private-id/0,0,256,256/256,256/0/native.png"));
 
     let input = "http://127.0.0.1:9877/fixtures/iiif-default-port/info.json";
-    let default_port = br#"{
-      "@context": "http://iiif.io/api/image/2/context.json",
-      "@id": "http://127.0.0.1:80/iiif/default-port",
-      "width": 512, "height": 512,
-      "tiles": [{ "width": 256, "scaleFactors": [1, 2] }],
-      "qualities": ["native"], "formats": ["jpg"]
-    }"#;
-    let image = ready_image(discover(input, &[(input, default_port)]).unwrap());
+    let image = ready_image(
+        discover(
+            input,
+            &[(input, coverage_fixture!("iiif/default-port-info.json"))],
+        )
+        .unwrap(),
+    );
     assert!(tile_urls(image.levels.last().unwrap()).iter().any(
         |url| url == "http://127.0.0.1:9877/iiif/default-port/0,0,256,256/256,256/0/native.jpg"
     ));
 
     let input = "https://fixtures.test/iiif-malformed-tile/info.json";
-    let malformed = br#"{
-      "@context": "http://iiif.io/api/image/2/context.json",
-      "@id": "https://fixtures.test/iiif-malformed-tile",
-      "width": 512, "height": 512, "tile_width": 4096,
-      "qualities": ["default"], "formats": ["jpg"]
-    }"#;
-    let image = ready_image(discover(input, &[(input, malformed)]).unwrap());
+    let image = ready_image(
+        discover(
+            input,
+            &[(input, coverage_fixture!("iiif/malformed-tile-info.json"))],
+        )
+        .unwrap(),
+    );
     assert_eq!(
         tile_urls(image.levels.last().unwrap()),
         ["https://fixtures.test/iiif-malformed-tile/0,0,512,512/512,512/0/default.jpg"]
     );
 
     let input = "https://fixtures.test/iiif-v2/edge-dimensions/info.json";
-    let edge_dimensions = br#"{
-      "@context": "http://iiif.io/api/image/2/context.json",
-      "@id": "https://fixtures.test/iiif-v2/edge-dimensions",
-      "width": 600, "height": 384,
-      "tiles": [{ "width": 256, "height": 256, "scaleFactors": [1] }],
-      "qualities": ["default"], "formats": ["jpg"]
-    }"#;
-    let image = ready_image(discover(input, &[(input, edge_dimensions)]).unwrap());
+    let image = ready_image(
+        discover(
+            input,
+            &[(input, coverage_fixture!("iiif/edge-dimensions-info.json"))],
+        )
+        .unwrap(),
+    );
     assert!(tile_urls(image.levels.last().unwrap()).iter().any(|url| url
         == "https://fixtures.test/iiif-v2/edge-dimensions/256,256,256,128/256,128/0/default.jpg"));
 }
@@ -345,27 +324,16 @@ fn dezoomer_iiif_image_service_cases() {
 #[test]
 fn dezoomer_iiif_manifest_case() {
     let manifest_input = "https://fixtures.test/iiif-presentation/manifest.json";
-    let manifest = br#"{
-      "@context": "http://iiif.io/api/presentation/2/context.json",
-      "@id": "https://fixtures.test/iiif-presentation/manifest.json",
-      "@type": "sc:Manifest",
-      "sequences": [{"canvases": [{"images": [{"resource": {
-        "@id": "https://fixtures.test/iiif-presentation/full.jpg",
-        "service": [{"@id": "https://fixtures.test/iiif-presentation/image",
-          "profile": "http://iiif.io/api/image/2/level2.json"}]
-      }}]}]}]
-    }"#;
     let info_input = "https://fixtures.test/iiif-presentation/image/info.json";
-    let info = br#"{
-      "@context": "http://iiif.io/api/image/2/context.json",
-      "@id": "https://fixtures.test/iiif-presentation/image",
-      "width": 512, "height": 512,
-      "tiles": [{ "width": 256, "scaleFactors": [1, 2] }],
-      "qualities": ["native"], "formats": ["jpg"]
-    }"#;
     let catalog = discover(
         manifest_input,
-        &[(manifest_input, manifest), (info_input, info)],
+        &[
+            (
+                manifest_input,
+                coverage_fixture!("iiif/presentation-manifest.json"),
+            ),
+            (info_input, coverage_fixture!("iiif/presentation-info.json")),
+        ],
     )
     .unwrap();
     let [CatalogEntry::Deferred(deferred)] = catalog.entries() else {
@@ -373,7 +341,13 @@ fn dezoomer_iiif_manifest_case() {
     };
     assert_eq!(deferred.uri, info_input);
 
-    let image = ready_image(discover(info_input, &[(info_input, info)]).unwrap());
+    let image = ready_image(
+        discover(
+            info_input,
+            &[(info_input, coverage_fixture!("iiif/presentation-info.json"))],
+        )
+        .unwrap(),
+    );
     assert!(
         tile_urls(image.levels.last().unwrap())
             .iter()
@@ -384,16 +358,11 @@ fn dezoomer_iiif_manifest_case() {
 #[test]
 fn dezoomer_iiif_plain_image_manifest_remains_deferred() {
     let input = "https://fixtures.test/iiif-presentation/plain-image-manifest.json";
-    let manifest = br#"{
-      "@context": "http://iiif.io/api/presentation/2/context.json",
-      "@id": "https://fixtures.test/iiif-presentation/plain-image-manifest.json",
-      "@type": "sc:Manifest",
-      "sequences": [{"canvases": [{"images": [{"resource": {
-        "@id": "https://fixtures.test/iiif-presentation/plain.jpg",
-        "@type": "dctypes:Image", "format": "image/jpeg"
-      }}]}]}]
-    }"#;
-    let catalog = discover(input, &[(input, manifest)]).unwrap();
+    let catalog = discover(
+        input,
+        &[(input, coverage_fixture!("iiif/plain-image-manifest.json"))],
+    )
+    .unwrap();
     assert!(matches!(
         &catalog.entries()[0],
         CatalogEntry::Deferred(image) if image.uri == "https://fixtures.test/iiif-presentation/plain.jpg"

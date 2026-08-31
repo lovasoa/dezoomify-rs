@@ -1,0 +1,10 @@
+{
+  "@context": "http://iiif.io/api/image/3/context.json",
+  "id": "https://fixtures.test/iiif-v3",
+  "type": "ImageService3",
+  "width": 512,
+  "height": 512,
+  "tiles": [{ "width": 256, "height": 256, "scaleFactors": [1, 2] }],
+  "extraQualities": ["default", "gray"],
+  "extraFormats": ["jpg", "webp"]
+}

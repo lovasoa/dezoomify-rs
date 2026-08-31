@@ -12,72 +12,40 @@ use tempfile::Builder as TempDirBuilder;
 
 use dezoomify_rs::{Arguments, ZoomError, dezoomify, process_bulk};
 
-/// Dezoom a file locally
-#[tokio::test(flavor = "multi_thread")]
-pub async fn custom_size_local_zoomify_tiles() {
-    // Get absolute path to avoid working directory issues
-    let workspace_root = get_workspace_root();
-    let input_path = workspace_root.join("testdata/zoomify/test_custom_size/ImageProperties.xml");
-    let expected_path =
-        workspace_root.join("testdata/zoomify/test_custom_size/expected_result.jpg");
-
-    test_image(
-        input_path.to_str().unwrap(),
-        expected_path.to_str().unwrap(),
-    )
-    .await
-    .unwrap()
+macro_rules! local_image_fixture {
+    ($name:ident, $input:literal, $expected:literal) => {
+        #[tokio::test(flavor = "multi_thread")]
+        async fn $name() {
+            let workspace_root = get_workspace_root();
+            let input = workspace_root.join("testdata").join($input);
+            let expected = workspace_root.join("testdata").join($expected);
+            test_image(input.to_str().unwrap(), expected.to_str().unwrap())
+                .await
+                .unwrap();
+        }
+    };
 }
 
-#[tokio::test(flavor = "multi_thread")]
-pub async fn zoomify_tile_url_input() {
-    let workspace_root = get_workspace_root();
-    let input_path = workspace_root.join("testdata/zoomify/test_custom_size/TileGroup0/3-0-0.jpg");
-    let expected_source =
-        workspace_root.join("testdata/zoomify/test_custom_size/expected_result.jpg");
-    let expected_dir = TempDirBuilder::new()
-        .prefix("dezoomify-rs-zoomify-tile-test")
-        .tempdir()
-        .unwrap();
-    let expected_path = expected_dir.path().join("expected.jpg");
-    std::fs::copy(expected_source, &expected_path).unwrap();
-
-    test_image(
-        input_path.to_str().unwrap(),
-        expected_path.to_str().unwrap(),
-    )
-    .await
-    .unwrap()
-}
-
-#[tokio::test(flavor = "multi_thread")]
-pub async fn local_generic_tiles() {
-    // Get absolute path to avoid working directory issues
-    let workspace_root = get_workspace_root();
-    let input_path = workspace_root.join("testdata/generic/map_{{X}}_{{Y}}.jpg");
-    let expected_path = workspace_root.join("testdata/deepzoom/expected_result.png");
-
-    test_image(
-        input_path.to_str().unwrap(),
-        expected_path.to_str().unwrap(),
-    )
-    .await
-    .unwrap()
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn legacy_seadragon_embed() {
-    let workspace_root = get_workspace_root();
-    let input_path = workspace_root.join("testdata/deepzoom/legacy-embed.html");
-    let expected_path = workspace_root.join("testdata/generic/map_expected.png");
-
-    test_image(
-        input_path.to_str().unwrap(),
-        expected_path.to_str().unwrap(),
-    )
-    .await
-    .unwrap()
-}
+local_image_fixture!(
+    custom_size_local_zoomify_tiles,
+    "zoomify/test_custom_size/ImageProperties.xml",
+    "zoomify/test_custom_size/expected_result.jpg"
+);
+local_image_fixture!(
+    zoomify_tile_url_input,
+    "zoomify/test_custom_size/TileGroup0/3-0-0.jpg",
+    "zoomify/test_custom_size/expected_result.jpg"
+);
+local_image_fixture!(
+    local_generic_tiles,
+    "generic/map_{{X}}_{{Y}}.jpg",
+    "generic/map_expected.png"
+);
+local_image_fixture!(
+    legacy_seadragon_embed,
+    "deepzoom/legacy-embed.html",
+    "deepzoom/expected_result.png"
+);
 
 #[tokio::test(flavor = "multi_thread")]
 pub async fn bulk_mode_local_tiles() {
@@ -89,52 +57,19 @@ pub async fn bulk_mode_end_to_end_cli() {
     test_bulk_mode_cli_end_to_end().await.unwrap()
 }
 
-/// Get the workspace root directory (where Cargo.toml is located)
 fn get_workspace_root() -> PathBuf {
-    let mut current_dir = std::env::current_dir().expect("Failed to get current directory");
-
-    // Walk up the directory tree until we find Cargo.toml
-    loop {
-        if current_dir.join("Cargo.toml").exists() {
-            return current_dir;
-        }
-        if let Some(parent) = current_dir.parent() {
-            current_dir = parent.to_path_buf();
-        } else {
-            break;
-        }
-    }
-
-    // If we can't find Cargo.toml by walking up, try using the CARGO_MANIFEST_DIR environment variable
-    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        let manifest_path = PathBuf::from(manifest_dir);
-        if manifest_path.join("Cargo.toml").exists() {
-            return manifest_path;
-        }
-    }
-
-    // Last resort: try relative path from where tests typically run
-    let test_workspace = PathBuf::from("../");
-    if test_workspace.join("Cargo.toml").exists() {
-        return test_workspace
-            .canonicalize()
-            .expect("Failed to canonicalize path");
-    }
-
-    // If all else fails, return current directory and let tests fail with better error message
-    std::env::current_dir().expect("Failed to get current directory")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-#[allow(clippy::needless_lifetimes)]
 #[allow(clippy::field_reassign_with_default)]
-pub async fn dezoom_image<'a>(input: &str, expected: &'a str) -> Result<TmpFile<'a>, ZoomError> {
+pub async fn dezoom_image<'a>(input: &'a str, expected: &'a str) -> Result<TmpFile<'a>, ZoomError> {
     let mut args: Arguments = Default::default();
     args.input_uri = Some(input.into());
     args.largest = true;
     args.retries = 0;
     args.logging = "error".into();
 
-    let tmp_file = TmpFile(expected);
+    let tmp_file = TmpFile { input, expected };
     args.outfile = Some(tmp_file.to_path_buf());
     dezoomify(&args).await.expect("Dezooming failed");
     Ok(tmp_file)
@@ -172,13 +107,19 @@ fn assert_images_equal(a: DynamicImage, b: DynamicImage) {
     assert!(dist < 3, "The distance between the two images is {}", dist);
 }
 
-pub struct TmpFile<'a>(&'a str);
+pub struct TmpFile<'a> {
+    input: &'a str,
+    expected: &'a str,
+}
 
 impl<'a> TmpFile<'a> {
-    fn to_path_buf(&'a self) -> PathBuf {
+    fn to_path_buf(&self) -> PathBuf {
         let mut out_file = std::env::temp_dir();
-        out_file.push(format!("dezoomify-out-{}", hash(self.0)));
-        let orig_path: &Path = self.0.as_ref();
+        out_file.push(format!(
+            "dezoomify-out-{}",
+            hash((self.input, self.expected))
+        ));
+        let orig_path: &Path = self.expected.as_ref();
         out_file.set_extension(orig_path.extension().expect("missing extension"));
         out_file
     }

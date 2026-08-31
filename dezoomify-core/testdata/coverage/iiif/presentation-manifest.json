@@ -1,0 +1,10 @@
+{
+  "@context": "http://iiif.io/api/presentation/2/context.json",
+  "@id": "https://fixtures.test/iiif-presentation/manifest.json",
+  "@type": "sc:Manifest",
+  "sequences": [{ "canvases": [{ "images": [{ "resource": {
+    "@id": "https://fixtures.test/iiif-presentation/full.jpg",
+    "service": [{ "@id": "https://fixtures.test/iiif-presentation/image",
+      "profile": "http://iiif.io/api/image/2/level2.json" }]
+  }}]}]}]
+}

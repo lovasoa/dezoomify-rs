@@ -1,0 +1,12 @@
+{
+  "@context": "http://library.stanford.edu/iiif/image-api/1.1/context.json",
+  "@id": "https://fixtures.test/iiif-map-view",
+  "width": 9392,
+  "height": 8770,
+  "tile_width": 9392,
+  "tile_height": 8770,
+  "scale_factors": [1, 2, 4, 8, 16, 32, 64, 128],
+  "qualities": ["native"],
+  "formats": ["jpg"],
+  "profile": "http://library.stanford.edu/iiif/image-api/1.1/compliance.html#level2"
+}
