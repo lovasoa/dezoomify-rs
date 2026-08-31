@@ -9,7 +9,7 @@ use crate::Vec2d;
 use crate::core::{
     CatalogEntry, DeferredImage, DezoomerSpec, DiscoveryContext, DiscoveryError, DiscoveryMatch,
     DiscoveryResource, DiscoveryRoute, DiscoveryStep, Grid, GridRequests, GridTile, ImageCatalog,
-    ImageDescriptor, LevelDescriptor, Request, StableId,
+    ImageDescriptor, LevelDescriptor, Request, StableId, resolve_relative,
 };
 use crate::iiif::tile_info::TileSizeFormat;
 use crate::json_utils::all_json;
@@ -24,12 +24,33 @@ static MICRIO_CUSTOM_ELEMENT: LazyLock<BytesRegex> = LazyLock::new(|| {
     BytesRegex::new(r#"(?is)<micr-io\b[^>]*\bid\s*=\s*["'](?P<id>[A-Za-z0-9]{5})["']"#)
         .expect("constant Micrio custom element pattern")
 });
+static NATIONAL_GALLERY_IMAGE: LazyLock<BytesRegex> = LazyLock::new(|| {
+    BytesRegex::new(
+        r#"(?is)(?P<image>(?:https?://|/|\./|\.\./)[^"'\s<>]+\?IIIF=[^"'\s<>]+?/full/[^"'\s<>]+)"#,
+    )
+    .expect("constant National Gallery IIIF image pattern")
+});
+static LONDON_MUSEUM_SERVICE: LazyLock<BytesRegex> = LazyLock::new(|| {
+    BytesRegex::new(
+        r#"(?is)(?:src|data-src)\s*=\s*["'](?P<service>https?://collections\.londonmuseum\.net/iiif/3/[^"'\s<>]+?\.ptif)"#,
+    )
+    .expect("constant London Museum IIIF service pattern")
+});
+static PHILADELPHIA_MICRIO: LazyLock<BytesRegex> = LazyLock::new(|| {
+    BytesRegex::new(r#"(?is)(?:philamuseum|philadelphia museum).*?\\?"shortId\\?"\s*:\s*\\?"(?P<id>[A-Za-z0-9_-]{3,32})\\?""#)
+        .expect("constant Philadelphia Museum Micrio pattern")
+});
 
 const ROUTES: &[DiscoveryRoute] = &[
     DiscoveryMatch::UrlPredicate(has_manifest_parameter).map_url(manifest_parameter),
     DiscoveryMatch::UrlPredicate(is_onb_entry).map_url(onb_manifest),
     DiscoveryMatch::UrlPredicate(is_contentdm_record).map_url(contentdm_metadata),
     DiscoveryMatch::UrlPredicate(is_contentdm_metadata).then(follow_contentdm_info),
+    DiscoveryMatch::ContentPredicate(contains_national_gallery_image)
+        .then(follow_national_gallery_image),
+    DiscoveryMatch::ContentPredicate(contains_london_museum_service)
+        .then(follow_london_museum_service),
+    DiscoveryMatch::ContentPredicate(contains_philadelphia_micrio).then(follow_philadelphia_micrio),
     DiscoveryMatch::ContentPredicate(contains_micrio_element).then(follow_micrio_element),
     DiscoveryMatch::Any.extract(catalog),
 ];
@@ -195,6 +216,84 @@ fn follow_contentdm_info(
         format!("{origin}/digital/{info_uri}")
     };
     Ok(DiscoveryStep::Follow(Request::new(uri)))
+}
+
+fn contains_national_gallery_image(contents: &[u8]) -> bool {
+    NATIONAL_GALLERY_IMAGE.is_match(contents)
+}
+
+fn follow_national_gallery_image(
+    _: &DiscoveryContext<'_>,
+    resource: DiscoveryResource<'_>,
+) -> Result<DiscoveryStep, DiscoveryError> {
+    let image = capture_utf8(
+        &NATIONAL_GALLERY_IMAGE,
+        resource.bytes(),
+        "National Gallery IIIF image",
+    )?;
+    let metadata = image
+        .rsplit_once("/full/")
+        .map(|(service, _)| format!("{service}/info.json"))
+        .ok_or_else(|| DiscoveryError::Session("invalid National Gallery IIIF image URL".into()))?;
+    Ok(DiscoveryStep::Follow(Request::new(resolve_relative(
+        resource.final_uri(),
+        &metadata,
+    ))))
+}
+
+fn contains_london_museum_service(contents: &[u8]) -> bool {
+    LONDON_MUSEUM_SERVICE.is_match(contents)
+}
+
+fn follow_london_museum_service(
+    _: &DiscoveryContext<'_>,
+    resource: DiscoveryResource<'_>,
+) -> Result<DiscoveryStep, DiscoveryError> {
+    let service = capture_utf8(
+        &LONDON_MUSEUM_SERVICE,
+        resource.bytes(),
+        "London Museum IIIF service",
+    )?;
+    Ok(DiscoveryStep::Follow(Request::new(format!(
+        "{service}/info.json"
+    ))))
+}
+
+fn contains_philadelphia_micrio(contents: &[u8]) -> bool {
+    PHILADELPHIA_MICRIO.is_match(contents)
+}
+
+fn follow_philadelphia_micrio(
+    _: &DiscoveryContext<'_>,
+    resource: DiscoveryResource<'_>,
+) -> Result<DiscoveryStep, DiscoveryError> {
+    let id = capture_utf8(
+        &PHILADELPHIA_MICRIO,
+        resource.bytes(),
+        "Philadelphia Museum Micrio ID",
+    )?;
+    Ok(DiscoveryStep::Follow(Request::new(format!(
+        "https://i.micr.io/{id}/info.json"
+    ))))
+}
+
+fn capture_utf8<'a>(
+    pattern: &BytesRegex,
+    contents: &'a [u8],
+    label: &str,
+) -> Result<&'a str, DiscoveryError> {
+    pattern
+        .captures(contents)
+        .and_then(|captures| {
+            captures
+                .name("image")
+                .or_else(|| captures.name("service"))
+                .or_else(|| captures.name("id"))
+        })
+        .map(|capture| std::str::from_utf8(capture.as_bytes()))
+        .transpose()
+        .map_err(|_| DiscoveryError::Session(format!("{label} is not UTF-8")))?
+        .ok_or_else(|| DiscoveryError::Session(format!("missing {label}")))
 }
 
 fn contains_micrio_element(contents: &[u8]) -> bool {

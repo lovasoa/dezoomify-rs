@@ -547,6 +547,65 @@ fn dezoomer_iiif_url_adapters_follow_metadata() {
 }
 
 #[test]
+fn dezoomer_iiif_page_adapters_follow_metadata() {
+    let page = "https://fixtures.test/national-gallery.html";
+    let image = ready_image(
+        discover(
+            page,
+            &[
+                (page, coverage_fixture!("iiif/national-gallery.html")),
+                (
+                    "https://fixtures.test/server.iip?IIIF=/fronts/N-6660-00-000003-FS-PYR.tif/info.json",
+                    coverage_fixture!("iiif/national-gallery-info.json"),
+                ),
+            ],
+        )
+        .unwrap(),
+    );
+    assert_eq!(image.format.as_str(), "iiif");
+
+    let page = "https://fixtures.test/londonmuseum-object.html";
+    let image = ready_image(
+        discover(
+            page,
+            &[
+                (page, coverage_fixture!("iiif/londonmuseum-object.html")),
+                (
+                    "https://collections.londonmuseum.net/iiif/3/object-95380.ptif/info.json",
+                    coverage_fixture!("iiif/londonmuseum-info.json"),
+                ),
+            ],
+        )
+        .unwrap(),
+    );
+    assert_eq!(image.format.as_str(), "iiif");
+
+    for (page, page_fixture, info_fixture, id) in [
+        (
+            "https://fixtures.test/philamuseum-escaped.html",
+            coverage_fixture!("iiif/philamuseum-escaped.html") as &[u8],
+            coverage_fixture!("iiif/philamuseum-info.json") as &[u8],
+            "QYRjM",
+        ),
+        (
+            "https://fixtures.test/philamuseum-raw.html",
+            coverage_fixture!("iiif/philamuseum-raw.html") as &[u8],
+            coverage_fixture!("iiif/philamuseum-raw-info.json") as &[u8],
+            "Raw01",
+        ),
+    ] {
+        let info_uri = format!("https://i.micr.io/{id}/info.json");
+        let image = ready_image(
+            discover(page, &[(page, page_fixture), (&info_uri, info_fixture)]).unwrap(),
+        );
+        assert!(
+            tile_urls(image.levels.last().unwrap()).iter().any(|url| url
+                == &format!("https://i.micr.io/{id}/256,256,256,256/256,256/0/default.png"))
+        );
+    }
+}
+
+#[test]
 fn dezoomer_iipimage_query_case() {
     let input = "https://fixtures.test/iip?FIF=/image.tif";
     let metadata_input =
