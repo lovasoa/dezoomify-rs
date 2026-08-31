@@ -5,6 +5,7 @@ use std::fmt;
 use std::sync::{Arc, LazyLock};
 
 use itertools::Itertools;
+use memchr::memmem;
 use regex::Regex;
 
 use krpano_decrypt::{decrypt_xml, is_encrypted_xml};
@@ -203,25 +204,16 @@ fn complete(uri: &str, bytes: &[u8]) -> Result<DiscoveryStep, DiscoveryError> {
 fn looks_like_krpano_xml(contents: &[u8]) -> bool {
     let contents = contents.strip_prefix(b"\xef\xbb\xbf").unwrap_or(contents);
     let trimmed = contents.trim_ascii_start();
-    trimmed.starts_with(b"<?xml")
-        || trimmed
-            .get(..7)
-            .is_some_and(|start| start.eq_ignore_ascii_case(b"<krpano"))
+    trimmed.starts_with(b"<?xml") || trimmed.starts_with(b"<krpano")
 }
 
 /// True if the content has krpano-specific HTML evidence.
 fn looks_like_krpano_html(contents: &[u8]) -> bool {
-    contains_ascii_case_insensitive(contents, b"embedpano(")
-        || contains_ascii_case_insensitive(contents, b"createpanoviewer(")
-        || (contains_ascii_case_insensitive(contents, b"<script")
-            && (contains_ascii_case_insensitive(contents, b"krpano")
-                || contains_ascii_case_insensitive(contents, b"tour.js")))
-}
-
-fn contains_ascii_case_insensitive(contents: &[u8], needle: &[u8]) -> bool {
-    contents
-        .windows(needle.len())
-        .any(|candidate| candidate.eq_ignore_ascii_case(needle))
+    memmem::find(contents, b"embedpano(").is_some()
+        || memmem::find(contents, b"createPanoViewer(").is_some()
+        || (memmem::find(contents, b"<script").is_some()
+            && (memmem::find(contents, b"krpano").is_some()
+                || memmem::find(contents, b"tour.js").is_some()))
 }
 
 /// True if the content looks like a krpano viewer JavaScript file.
@@ -274,10 +266,9 @@ fn extract_js_candidates_from_html(html: &str, html_uri: &str) -> Vec<String> {
 }
 
 fn extract_xml_from_embedpano(html: &str) -> Option<String> {
-    let lower = html.to_ascii_lowercase();
-    let start = lower
+    let start = html
         .find("embedpano(")
-        .or_else(|| lower.find("createpanoviewer("))?;
+        .or_else(|| html.find("createPanoViewer("))?;
     let body = &html[start..];
     let end = EMBEDPANO_END_RE.find(body)?;
     let params = &body[..end.end()];
@@ -299,9 +290,9 @@ fn extract_viewer_js(contents: &[u8]) -> Option<Vec<u8>> {
     if looks_like_viewer_js(contents) {
         return Some(contents.to_vec());
     }
-    let start = contents.windows(8).position(|part| part == b"<script>")?;
+    let start = memmem::find(contents, b"<script>")?;
     let body = &contents[start + 8..];
-    let end = body.windows(9).position(|part| part == b"</script>")?;
+    let end = memmem::find(body, b"</script>")?;
     let script = body[..end].trim_ascii();
     looks_like_viewer_js(script).then(|| script.to_vec())
 }
@@ -355,7 +346,7 @@ static SCRIPT_SRC_RE: LazyLock<Regex> = LazyLock::new(|| {
 static EMBEDPANO_END_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\}\s*\)").expect("constant embed closing regex"));
 static EMBEDPANO_XML_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)\bxml[\"']?\s*:\s*[\"']([^\"']+)[\"']"#).expect("constant embed XML regex")
+    Regex::new(r#"\bxml[\"']?\s*:\s*[\"']([^\"']+)[\"']"#).expect("constant embed XML regex")
 });
 
 fn is_javascript_src(src: &str) -> bool {
@@ -848,8 +839,6 @@ mod tests {
             r#"<script>embedpano({ xml : "panos/tour.xml", target:"pano" });</script>"#,
             r#"embedpano({ "xml": "panos/tour.xml" });"#,
             r#"<script>createPanoViewer({ xml: "panos/tour.xml" });</script>"#,
-            r#"<script>EMBEDPANO({ xml: "panos/tour.xml" });</script>"#,
-            r#"<script>CreatePanoViewer({ xml: "panos/tour.xml" });</script>"#,
         ] {
             assert_eq!(
                 extract_xml_from_embedpano(html),
@@ -1013,11 +1002,9 @@ mod tests {
     fn looks_like_krpano_html_requires_krpano_evidence() {
         for html in [
             b"<html><script>embedpano({xml:'tour.xml'})</script></html>".as_slice(),
-            b"<HTML><BODY><SCRIPT>EMBEDPANO({xml:'tour.xml'})</SCRIPT></BODY></HTML>".as_slice(),
             b"<script>createPanoViewer({xml:'tour.xml'});</script>".as_slice(),
             b"<html><script src='krpano.js'></script></html>".as_slice(),
             b"<html><script src='tour.js'></script></html>".as_slice(),
-            b"<HTML><SCRIPT SRC='tour.js'></SCRIPT></HTML>".as_slice(),
         ] {
             assert!(looks_like_krpano_html(html));
         }

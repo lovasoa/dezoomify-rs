@@ -692,6 +692,7 @@ dependencies = [
  "json5",
  "krpano-decrypt",
  "log",
+ "memchr",
  "regex",
  "serde",
  "serde-xml-rs",
