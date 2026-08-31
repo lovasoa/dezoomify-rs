@@ -580,15 +580,15 @@ fn discovery_requests_metadata_then_returns_normalized_replayable_levels() {
     let need = operation.missing_resources().unwrap().pop().unwrap();
     assert_eq!(need.request.uri, "https://example.com/image/info.json");
     operation
-        .provide(crate::core::ResourceResponse {
-            id: need.id,
-            bytes: br#"{
+        .provide(crate::core::ResourceResponse::new(
+            need.id,
+            br#"{
           "type":"ImageService3", "id":"https://images.example/item",
           "width":1000, "height":1500,
           "tiles":[{"width":512,"height":512,"scaleFactors":[1,2,4]}]
         }"#
-            .to_vec(),
-        })
+            .as_slice(),
+        ))
         .unwrap();
     let catalog = operation.finish().unwrap();
     let [CatalogEntry::Ready(image)] = catalog.entries() else {

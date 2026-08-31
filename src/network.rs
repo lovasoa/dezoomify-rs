@@ -23,6 +23,7 @@ use dezoomify_core::core::{ProcessingRecipe, Request, TileSpec};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FetchedResource {
     pub(crate) bytes: Vec<u8>,
+    pub(crate) final_uri: String,
 }
 
 /// Fetch a described resource with request-specific headers.
@@ -51,6 +52,7 @@ pub(crate) async fn fetch_resource<'a>(
             response.status(),
             response.headers()
         );
+        let final_uri = response.url().to_string();
         let response = response.error_for_status()?;
         let mut contents = Vec::new();
         let bytes = response.bytes().await?;
@@ -61,7 +63,10 @@ pub(crate) async fn fetch_resource<'a>(
             contents.len(),
             display_bytes(&contents[..contents.len().min(256)])
         );
-        Ok(FetchedResource { bytes: contents })
+        Ok(FetchedResource {
+            bytes: contents,
+            final_uri,
+        })
     } else {
         debug!("Loading file: '{uri}'");
         let result = fs::read(uri).await?;
@@ -71,7 +76,10 @@ pub(crate) async fn fetch_resource<'a>(
             result.len(),
             display_bytes(&result[..result.len().min(256)])
         );
-        Ok(FetchedResource { bytes: result })
+        Ok(FetchedResource {
+            bytes: result,
+            final_uri: uri.to_owned(),
+        })
     }
 }
 
