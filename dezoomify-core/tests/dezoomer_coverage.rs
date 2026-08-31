@@ -52,6 +52,114 @@ fn ready_image(catalog: ImageCatalog) -> ImageDescriptor {
     }
 }
 
+#[test]
+fn automatic_discovery_selects_every_ready_format() {
+    let cases: &[(&str, &[Resource<'_>], &str)] = &[
+        (
+            "https://fixtures.test/tiles.yaml",
+            &[ (
+                "https://fixtures.test/tiles.yaml",
+                include_bytes!("../../tiles.yaml"),
+            ) ],
+            "custom",
+        ),
+        (
+            "https://fixtures.test/zoomify/ImageProperties.xml",
+            &[ (
+                "https://fixtures.test/zoomify/ImageProperties.xml",
+                br#"<IMAGE_PROPERTIES WIDTH="512" HEIGHT="512" NUMTILES="5" VERSION="1.8" TILESIZE="256" />"#,
+            ) ],
+            "zoomify",
+        ),
+        (
+            "https://fixtures.test/iiif/info.json",
+            &[ (
+                "https://fixtures.test/iiif/info.json",
+                coverage_fixture!("iiif/v3-info.json"),
+            ) ],
+            "iiif",
+        ),
+        (
+            "https://fixtures.test/deepzoom/sample.dzi",
+            &[ (
+                "https://fixtures.test/deepzoom/sample.dzi",
+                br#"<Image TileSize="256" Overlap="0" Format="jpg"><Size Width="512" Height="512" /></Image>"#,
+            ) ],
+            "deepzoom",
+        ),
+        (
+            "https://fixtures.test/krpano/pano.xml",
+            &[ (
+                "https://fixtures.test/krpano/pano.xml",
+                br#"<krpano><image tilesize="256"><level tiledimagewidth="512" tiledimageheight="512"><front url="tiles/l%l/%v_%h.jpg" /></level></image></krpano>"#,
+            ) ],
+            "krpano",
+        ),
+        (
+            "https://fixtures.test/iip?FIF=/image.tif",
+            &[ (
+                "https://fixtures.test/iip?FIF=/image.tif&OBJ=Max-size&OBJ=Tile-size&OBJ=Resolution-number",
+                b"Max-size:512 512\nTile-size:256 256\nResolution-number:2",
+            ) ],
+            "iipimage",
+        ),
+        (
+            "https://digitalcollections.nypl.org/items/a14f3200-fac1-012f-f7a4-58d385a7bbd0",
+            &[ (
+                "https://access.nypl.org/image.php/a14f3200-fac1-012f-f7a4-58d385a7bbd0/tiles/config.js",
+                br#"{"configs":{"0":{"size":{"width":"512","height":"512"},"tilesize":"256","overlap":"0","format":"jpg"}}}"#,
+            ) ],
+            "nypl",
+        ),
+    ];
+    for (input, resources, format) in cases {
+        assert_eq!(
+            ready_image(discover(input, resources).unwrap())
+                .format
+                .as_str(),
+            *format
+        );
+    }
+
+    let generic =
+        ready_image(discover("https://fixtures.test/tiles/{{X}}_{{Y}}.jpg", &[]).unwrap());
+    assert_eq!(generic.format.as_str(), "generic");
+
+    let input = "https://artsandculture.google.com/asset/test";
+    let mut operation = default_registry(input).start(input);
+    let page = operation.next_priority_need().unwrap().unwrap();
+    operation
+        .provide(ResourceResponse::new(
+            page.id,
+            include_bytes!("../testdata/google_arts_and_culture/page_source.html"),
+        ))
+        .unwrap();
+    let tile_info = operation.next_priority_need().unwrap().unwrap();
+    operation
+        .provide(ResourceResponse::new(
+            tile_info.id,
+            include_bytes!("../testdata/google_arts_and_culture/tile_info.xml"),
+        ))
+        .unwrap();
+    assert_eq!(
+        ready_image(operation.finish().unwrap()).format.as_str(),
+        "google_arts_and_culture"
+    );
+
+    let catalog = discover(
+        "https://fixtures.test/list.txt",
+        &[(
+            "https://fixtures.test/list.txt",
+            b"https://example.test/image.dzi",
+        )],
+    )
+    .unwrap();
+    let [CatalogEntry::Deferred(image)] = catalog.entries() else {
+        panic!("bulk text must produce a deferred entry");
+    };
+    assert_eq!(image.id.as_str(), "bulk:0");
+}
+
 fn grid(level: &LevelDescriptor) -> &Grid {
     match &level.source {
         TileSource::Grid(grid) => grid,
