@@ -21,8 +21,8 @@ static TILE_URL: LazyLock<Regex> = LazyLock::new(|| {
 pub const SPEC: DezoomerSpec = DezoomerSpec::new(
     "deepzoom",
     &[
-        DiscoveryMatch::url_matching(is_tile_url).map_url(tile_metadata),
-        DiscoveryMatch::any().extract(load_catalog),
+        DiscoveryMatch::UrlPredicate(is_tile_url).map_url(tile_metadata),
+        DiscoveryMatch::Any.extract(load_catalog),
     ],
 )
 .preferring(|uri| uri.contains(".dzi") || uri.contains("_files/"));

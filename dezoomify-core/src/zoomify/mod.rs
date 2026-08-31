@@ -15,9 +15,9 @@ use crate::core::{
 mod image_properties;
 
 const ROUTES: &[DiscoveryRoute] = &[
-    DiscoveryMatch::url_matching(is_tile_url).map_url(tile_metadata),
-    DiscoveryMatch::url_suffix("ImageProperties.xml").extract(load_catalog),
-    DiscoveryMatch::content_matching(contains_zoomify_declaration)
+    DiscoveryMatch::UrlPredicate(is_tile_url).map_url(tile_metadata),
+    DiscoveryMatch::UrlSuffix("ImageProperties.xml").extract(load_catalog),
+    DiscoveryMatch::ContentPredicate(contains_zoomify_declaration)
         .then(extract_image_properties_url),
 ];
 
@@ -71,10 +71,10 @@ fn extract_image_properties_url(
         |base| resolve_relative(resource.uri(), &base),
     );
     let image_uri = resolve_relative(&page_base_uri, &image_path);
-    Ok(DiscoveryStep::follow(append_path_component(
+    Ok(DiscoveryStep::Follow(Request::new(append_path_component(
         &image_uri,
         "ImageProperties.xml",
-    )))
+    ))))
 }
 
 fn contains_zoomify_declaration(contents: &[u8]) -> bool {
@@ -132,6 +132,7 @@ fn extract_html_base(html: &str) -> Option<String> {
         .map(|base| base.as_str().replace("&amp;", "&"))
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn tile_metadata(input: &str) -> Result<Request, DiscoveryError> {
     let uri = TILE_URL_RE.find(input).map_or_else(
         || input.to_owned(),

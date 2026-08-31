@@ -20,8 +20,8 @@ const POSTFIX: &str = "/tiles/config.js";
 pub const SPEC: DezoomerSpec = DezoomerSpec::new(
     "nypl",
     &[
-        DiscoveryMatch::url_matching(is_view_url).map_url(metadata_url),
-        DiscoveryMatch::any().extract(catalog),
+        DiscoveryMatch::UrlPredicate(is_view_url).map_url(metadata_url),
+        DiscoveryMatch::Any.extract(catalog),
     ],
 )
 .recognizing(

@@ -32,11 +32,7 @@ fn discover(input: &str, resources: &[Resource<'_>]) -> Result<ImageCatalog, Dis
                 need.request.uri
             )));
         };
-        operation.provide(ResourceResponse {
-            id: need.id,
-            bytes: bytes.to_vec(),
-            content_type: None,
-        })?;
+        operation.provide(ResourceResponse::new(need.id, bytes))?;
     }
 }
 

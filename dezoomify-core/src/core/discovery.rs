@@ -4,82 +4,42 @@
 //! resource to follow next. The application owns acquisition and feeds each
 //! outcome to [`DiscoveryOperation`].
 
-use std::collections::BTreeMap;
 use std::fmt;
 
 use super::model::{ImageCatalog, Request};
 
-/// Opaque input supplied to a discovery program.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct DiscoveryInput {
-    pub uri: String,
-}
-
-impl From<String> for DiscoveryInput {
-    fn from(uri: String) -> Self {
-        Self { uri }
-    }
-}
-
-impl From<&str> for DiscoveryInput {
-    fn from(uri: &str) -> Self {
-        Self { uri: uri.into() }
-    }
-}
-
-/// A stable identifier for one requested resource in an operation.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct RequestId(pub u64);
+pub struct RequestId(pub usize);
 
-/// A resource which must be supplied by the application before discovery can
-/// continue.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceNeed {
     pub id: RequestId,
     pub request: Request,
 }
-
-/// Bytes supplied by the application for a request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceResponse {
     pub id: RequestId,
     pub bytes: Vec<u8>,
-    /// HTTP media type, when the resource provider supplied one.
-    pub content_type: Option<String>,
 }
-
 impl ResourceResponse {
     #[must_use]
     pub fn new(id: RequestId, bytes: impl Into<Vec<u8>>) -> Self {
         Self {
             id,
             bytes: bytes.into(),
-            content_type: None,
         }
     }
-
-    #[must_use]
-    pub fn with_content_type(mut self, content_type: impl Into<String>) -> Self {
-        self.content_type = Some(content_type.into());
-        self
-    }
 }
-
-/// An application-reported failure to satisfy a request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceFailure {
     pub id: RequestId,
     pub message: String,
 }
-
-/// The resource result visible to a waiting program.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ResourceOutcome {
-    Response(ResourceResponse),
+    Response(Vec<u8>),
     Failure(ResourceFailure),
 }
-
-/// Bounds for a single discovery operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DiscoveryLimits {
     pub transitions: usize,
@@ -97,25 +57,14 @@ impl Default for DiscoveryLimits {
     }
 }
 
-/// One declarative result yielded by a discovery rule.
 pub enum DiscoveryStep {
-    /// Continue discovery with another resource described by this request.
     Follow(Request),
     Complete(ImageCatalog),
 }
-
-impl DiscoveryStep {
-    #[must_use]
-    pub fn follow(uri: impl Into<String>) -> Self {
-        Self::Follow(Request::new(uri))
-    }
-}
-
-/// One successfully acquired resource.
 #[derive(Clone, Copy, Debug)]
 pub struct DiscoveryResource<'a> {
     request: &'a Request,
-    response: &'a ResourceResponse,
+    bytes: &'a [u8],
 }
 
 impl<'a> DiscoveryResource<'a> {
@@ -123,72 +72,39 @@ impl<'a> DiscoveryResource<'a> {
     pub const fn uri(self) -> &'a str {
         self.request.uri.as_str()
     }
-
     #[must_use]
     pub fn bytes(self) -> &'a [u8] {
-        self.response.bytes.as_slice()
-    }
-
-    #[must_use]
-    pub fn content_type(self) -> Option<&'a str> {
-        self.response.content_type.as_deref()
+        self.bytes
     }
 }
-
-/// One resource acquisition failure delivered to a failure rule.
-#[derive(Clone, Copy, Debug)]
-pub struct DiscoveryFailure<'a> {
-    request: &'a Request,
-    failure: &'a ResourceFailure,
-}
-
-impl<'a> DiscoveryFailure<'a> {
-    #[must_use]
-    pub const fn uri(self) -> &'a str {
-        self.request.uri.as_str()
-    }
-
-    #[must_use]
-    pub const fn failure(self) -> &'a ResourceFailure {
-        self.failure
-    }
-}
-
-/// Read-only state supplied to a declarative route handler.
-///
-/// History is local to this candidate even when requests are deduplicated
-/// across candidates.
 pub struct DiscoveryContext<'a> {
     history_ids: &'a [RequestId],
-    requests: &'a BTreeMap<RequestId, ResourceNeed>,
-    outcomes: &'a BTreeMap<RequestId, ResourceOutcome>,
+    requests: &'a [ResourceRecord],
 }
 
 impl<'a> DiscoveryContext<'a> {
-    /// Earlier successful resources for this candidate, in discovery order.
     #[must_use]
     pub fn resources(&self) -> impl DoubleEndedIterator<Item = DiscoveryResource<'a>> + '_ {
-        self.history_ids.iter().filter_map(|id| {
-            let request = &self.requests.get(id)?.request;
-            let ResourceOutcome::Response(response) = self.outcomes.get(id)? else {
-                return None;
-            };
-            Some(DiscoveryResource { request, response })
-        })
+        self.history_ids
+            .iter()
+            .filter_map(|id| self.requests.get(id.0))
+            .filter_map(|record| match record.outcome.as_ref()? {
+                ResourceOutcome::Response(bytes) => Some(DiscoveryResource {
+                    request: &record.request,
+                    bytes,
+                }),
+                ResourceOutcome::Failure(_) => None,
+            })
     }
-
-    /// Whether this candidate already followed a resource with this URI,
-    /// regardless of whether acquisition succeeded.
     #[must_use]
     pub fn has_visited(&self, uri: &str) -> bool {
         self.history_ids.iter().any(|id| {
             self.requests
-                .get(id)
-                .is_some_and(|resource| resource.request.uri == uri)
+                .get(id.0)
+                .is_some_and(|r| r.request.uri == uri)
         })
     }
 }
-
 type RouteHandler = for<'a> fn(
     &DiscoveryContext<'a>,
     DiscoveryResource<'a>,
@@ -196,101 +112,55 @@ type RouteHandler = for<'a> fn(
 type CatalogExtractor = fn(&str, &[u8]) -> Result<ImageCatalog, DiscoveryError>;
 type FailureHandler = for<'a> fn(
     &DiscoveryContext<'a>,
-    DiscoveryFailure<'a>,
+    &'a Request,
+    &'a ResourceFailure,
 ) -> Result<DiscoveryStep, DiscoveryError>;
 type UrlMapper = fn(&str) -> Result<Request, DiscoveryError>;
 type UrlPredicate = fn(&str) -> bool;
 type ContentPredicate = fn(&[u8]) -> bool;
 
-/// A predicate for one declarative discovery route.
 #[derive(Clone, Copy, Debug)]
 pub enum DiscoveryMatch {
     Any,
     UrlSuffix(&'static str),
     UrlPredicate(UrlPredicate),
-    MediaTypes(&'static [&'static str]),
     ContentPredicate(ContentPredicate),
 }
 
 impl DiscoveryMatch {
     #[must_use]
-    pub const fn any() -> Self {
-        Self::Any
-    }
-
-    #[must_use]
-    pub const fn url_suffix(suffix: &'static str) -> Self {
-        Self::UrlSuffix(suffix)
-    }
-
-    #[must_use]
-    pub const fn url_matching(predicate: UrlPredicate) -> Self {
-        Self::UrlPredicate(predicate)
-    }
-
-    #[must_use]
-    pub const fn media_type(media_types: &'static [&'static str]) -> Self {
-        Self::MediaTypes(media_types)
-    }
-
-    #[must_use]
-    pub const fn content_matching(predicate: ContentPredicate) -> Self {
-        Self::ContentPredicate(predicate)
-    }
-
-    /// Run a multi-resource handler for a matching acquired resource.
-    #[must_use]
     pub const fn then(self, handler: RouteHandler) -> DiscoveryRoute {
-        DiscoveryRoute {
-            matcher: self,
-            handler: RouteAction::Then(handler),
-        }
+        self.route(RouteAction::Then(handler))
     }
-
-    /// Parse a matching resource directly into a catalog.
     #[must_use]
     pub const fn extract(self, extractor: CatalogExtractor) -> DiscoveryRoute {
-        DiscoveryRoute {
-            matcher: self,
-            handler: RouteAction::Extract(extractor),
-        }
+        self.route(RouteAction::Extract(extractor))
     }
-
-    /// Rewrite a matching input URI before the core acquires it.
     #[must_use]
     pub const fn map_url(self, mapper: UrlMapper) -> DiscoveryRoute {
+        self.route(RouteAction::MapUrl(mapper))
+    }
+    const fn route(self, handler: RouteAction) -> DiscoveryRoute {
         DiscoveryRoute {
             matcher: self,
-            handler: RouteAction::MapUrl(mapper),
+            handler,
         }
     }
 
-    fn matches_uri(self, uri: &str) -> bool {
-        let path = uri.split(['?', '#']).next().unwrap_or(uri);
+    fn matches(self, uri: &str, bytes: Option<&[u8]>) -> bool {
         match self {
             Self::Any => true,
-            Self::UrlSuffix(suffix) => path.ends_with(suffix),
+            Self::UrlSuffix(suffix) => uri
+                .split(['?', '#'])
+                .next()
+                .unwrap_or(uri)
+                .ends_with(suffix),
             Self::UrlPredicate(predicate) => predicate(uri),
-            Self::MediaTypes(_) | Self::ContentPredicate(_) => false,
-        }
-    }
-
-    fn matches_resource(self, resource: DiscoveryResource<'_>) -> bool {
-        match self {
-            Self::Any => true,
-            Self::UrlSuffix(_) | Self::UrlPredicate(_) => self.matches_uri(resource.uri()),
-            Self::MediaTypes(types) => resource.content_type().is_some_and(|value| {
-                let media_type = value.split(';').next().unwrap_or(value).trim();
-                types
-                    .iter()
-                    .any(|expected| media_type.eq_ignore_ascii_case(expected))
-            }),
-            Self::ContentPredicate(predicate) => predicate(resource.bytes()),
+            Self::ContentPredicate(predicate) => bytes.is_some_and(predicate),
         }
     }
 }
 
-/// An ordered declarative resource matcher and transition handler.
 #[derive(Clone, Copy, Debug)]
 pub struct DiscoveryRoute {
     matcher: DiscoveryMatch,
@@ -304,32 +174,6 @@ enum RouteAction {
     MapUrl(UrlMapper),
 }
 
-impl DiscoveryRoute {
-    fn handle(
-        self,
-        context: &DiscoveryContext<'_>,
-        resource: DiscoveryResource<'_>,
-    ) -> Option<Result<DiscoveryStep, DiscoveryError>> {
-        if !self.matcher.matches_resource(resource) {
-            return None;
-        }
-        Some(match self.handler {
-            RouteAction::Then(handler) => handler(context, resource),
-            RouteAction::Extract(extractor) => {
-                extractor(resource.uri(), resource.bytes()).map(DiscoveryStep::Complete)
-            }
-            RouteAction::MapUrl(_) => return None,
-        })
-    }
-
-    fn map_url(self, uri: &str) -> Option<Result<Request, DiscoveryError>> {
-        let RouteAction::MapUrl(mapper) = self.handler else {
-            return None;
-        };
-        self.matcher.matches_uri(uri).then(|| mapper(uri))
-    }
-}
-
 fn dispatch_resource(
     routes: &[DiscoveryRoute],
     context: &DiscoveryContext<'_>,
@@ -337,33 +181,40 @@ fn dispatch_resource(
     unmatched: &str,
 ) -> Result<DiscoveryStep, DiscoveryError> {
     for route in routes {
-        let Some(step) = route.handle(context, resource) else {
+        if !route
+            .matcher
+            .matches(resource.uri(), Some(resource.bytes()))
+        {
             continue;
+        }
+        return match route.handler {
+            RouteAction::Then(handler) => handler(context, resource),
+            RouteAction::Extract(extractor) => {
+                extractor(resource.uri(), resource.bytes()).map(DiscoveryStep::Complete)
+            }
+            RouteAction::MapUrl(_) => continue,
         };
-        return step;
     }
     Err(DiscoveryError::Session(unmatched.into()))
 }
 
-fn map_url(routes: &[DiscoveryRoute], uri: &str) -> Result<Request, DiscoveryError> {
+fn map_url(routes: &[DiscoveryRoute], request: Request) -> Result<Request, DiscoveryError> {
     for route in routes {
-        if let Some(mapped) = route.map_url(uri) {
-            return mapped;
+        if let RouteAction::MapUrl(mapper) = route.handler
+            && route.matcher.matches(&request.uri, None)
+        {
+            return mapper(&request.uri);
         }
     }
-    Ok(Request::new(uri))
+    Ok(request)
 }
 
 #[derive(Clone, Copy, Debug)]
 enum DiscoveryProgram {
     Immediate(fn(&str) -> Result<ImageCatalog, DiscoveryError>),
-    Rules {
-        routes: &'static [DiscoveryRoute],
-        on_failure: Option<FailureHandler>,
-    },
+    Rules(&'static [DiscoveryRoute], Option<FailureHandler>),
 }
 
-/// One co-located format declaration.
 #[derive(Clone, Copy, Debug)]
 pub struct DezoomerSpec {
     name: &'static str,
@@ -374,22 +225,10 @@ pub struct DezoomerSpec {
 }
 
 impl DezoomerSpec {
-    /// Declare ordered rules for resources acquired by the core.
-    ///
-    /// The core acquires the input URI automatically and dispatches every
-    /// successful resource through the same ordered rule list.
     #[must_use]
     pub const fn new(name: &'static str, routes: &'static [DiscoveryRoute]) -> Self {
-        Self::from_program(
-            name,
-            DiscoveryProgram::Rules {
-                routes,
-                on_failure: None,
-            },
-        )
+        Self::from_program(name, DiscoveryProgram::Rules(routes, None))
     }
-
-    /// Declare a format which completes from its input without a resource.
     #[must_use]
     pub const fn immediate(
         name: &'static str,
@@ -397,20 +236,14 @@ impl DezoomerSpec {
     ) -> Self {
         Self::from_program(name, DiscoveryProgram::Immediate(complete))
     }
-
-    /// Handle acquisition failures for formats with alternate resources.
     #[must_use]
     pub const fn on_failure(mut self, handler: FailureHandler) -> Self {
-        let DiscoveryProgram::Rules { routes, .. } = self.program else {
+        let DiscoveryProgram::Rules(routes, ..) = self.program else {
             panic!("an immediate dezoomer cannot handle resource failures");
         };
-        self.program = DiscoveryProgram::Rules {
-            routes,
-            on_failure: Some(handler),
-        };
+        self.program = DiscoveryProgram::Rules(routes, Some(handler));
         self
     }
-
     const fn from_program(name: &'static str, program: DiscoveryProgram) -> Self {
         Self {
             name,
@@ -420,8 +253,6 @@ impl DezoomerSpec {
             program,
         }
     }
-
-    /// Add authoritative input recognition and its rejection diagnostic.
     #[must_use]
     pub const fn recognizing(
         mut self,
@@ -432,23 +263,16 @@ impl DezoomerSpec {
         self.rejection = rejection;
         self
     }
-
-    /// Prefer this format during automatic discovery when the predicate matches.
     #[must_use]
     pub const fn preferring(mut self, prefer: fn(&str) -> bool) -> Self {
         self.prefer = prefer;
         self
     }
-
     #[must_use]
     pub const fn name(&self) -> &'static str {
         self.name
     }
 
-    /// Whether this format prefers the supplied input URI.
-    ///
-    /// Custom registry implementations can use this to apply the same ranking
-    /// policy as the built-in registry.
     #[must_use]
     pub fn prefers(&self, uri: &str) -> bool {
         (self.prefer)(uri)
@@ -461,7 +285,6 @@ impl PartialEq for DezoomerSpec {
     }
 }
 
-/// Pure discovery errors.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DiscoveryError {
     UnknownRequest(RequestId),
@@ -512,71 +335,60 @@ struct Candidate {
     history: Vec<RequestId>,
 }
 
-/// A pull-driven operation with no I/O or shared mutable parser state.
+struct ResourceRecord {
+    request: Request,
+    outcome: Option<ResourceOutcome>,
+}
+
 pub struct DiscoveryOperation {
-    input: DiscoveryInput,
+    input: String,
     candidates: Vec<Candidate>,
-    requests: BTreeMap<RequestId, ResourceNeed>,
-    request_ids: BTreeMap<Request, RequestId>,
-    outcomes: BTreeMap<RequestId, ResourceOutcome>,
+    requests: Vec<ResourceRecord>,
     diagnostics: Vec<(String, String)>,
     catalog: Option<ImageCatalog>,
-    next_request_id: u64,
     transitions: usize,
     retained_bytes: usize,
     limits: DiscoveryLimits,
 }
 
 impl DiscoveryOperation {
-    pub(crate) fn new(
-        input: &DiscoveryInput,
-        specs: &[DezoomerSpec],
-        limits: DiscoveryLimits,
-    ) -> Self {
-        let mut candidates = Vec::new();
-        for spec in specs {
-            candidates.push(Candidate {
-                spec: *spec,
+    pub(crate) fn new(input: String, specs: &[DezoomerSpec], limits: DiscoveryLimits) -> Self {
+        let candidates = specs
+            .iter()
+            .map(|&spec| Candidate {
+                spec,
                 state: CandidateState::New,
                 history: Vec::new(),
-            });
-        }
-        // Registry validation and URL ranking supply the canonical candidate
-        // order. Keep it intact here; sorting again would discard URL hints.
+            })
+            .collect();
         Self {
-            input: input.clone(),
+            input,
             candidates,
-            requests: BTreeMap::new(),
-            request_ids: BTreeMap::new(),
-            outcomes: BTreeMap::new(),
+            requests: Vec::new(),
             diagnostics: Vec::new(),
             catalog: None,
-            next_request_id: 0,
             transitions: 0,
             retained_bytes: 0,
             limits,
         }
     }
-
-    /// Return every outstanding request in stable identifier order.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if a candidate cannot transition.
+    fn resource(&self, id: RequestId) -> Option<&ResourceRecord> {
+        self.requests.get(id.0)
+    }
+    fn ready(&self, state: CandidateState) -> bool {
+        matches!(state, CandidateState::New)
+            || matches!(state, CandidateState::Waiting(id) if self
+                .resource(id)
+                .is_some_and(|resource| resource.outcome.is_some()))
+    }
     pub fn missing_resources(&mut self) -> Result<Vec<ResourceNeed>, DiscoveryError> {
         self.drive()?;
-        if self.catalog.is_some() {
-            return Ok(Vec::new());
-        }
-        Ok(self.outstanding_needs().collect())
+        Ok(if self.catalog.is_none() {
+            self.outstanding_needs().collect()
+        } else {
+            Vec::new()
+        })
     }
-
-    /// Return the outstanding resource needed by the highest-priority waiting candidate.
-    ///
-    /// When candidates wait on different URIs, this picks the resource of the
-    /// first waiting candidate in registry order, preserving depth-first
-    /// priority. If no candidate is waiting, falls back to the first
-    /// outstanding request.
     pub fn next_priority_need(&mut self) -> Result<Option<ResourceNeed>, DiscoveryError> {
         self.drive()?;
         if self.catalog.is_some() {
@@ -584,60 +396,52 @@ impl DiscoveryOperation {
         }
         for candidate in &self.candidates {
             if let CandidateState::Waiting(id) = candidate.state
-                && !self.outcomes.contains_key(&id)
-                && let Some(need) = self.requests.get(&id).cloned()
+                && let Some(resource) = self.resource(id)
+                && resource.outcome.is_none()
             {
-                return Ok(Some(need));
+                return Ok(Some(ResourceNeed {
+                    id,
+                    request: resource.request.clone(),
+                }));
             }
         }
         Ok(self.outstanding_needs().next())
     }
-
-    /// Needs which have no outcome yet, in stable identifier order.
     fn outstanding_needs(&self) -> impl Iterator<Item = ResourceNeed> + '_ {
         self.requests
             .iter()
-            .filter(|(id, _)| !self.outcomes.contains_key(id))
-            .map(|(_, need)| need.clone())
+            .enumerate()
+            .filter(|(_, resource)| resource.outcome.is_none())
+            .map(|(index, resource)| ResourceNeed {
+                id: RequestId(index),
+                request: resource.request.clone(),
+            })
     }
-
-    /// Supply successfully acquired bytes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for an unknown or already supplied request.
     pub fn provide(&mut self, response: ResourceResponse) -> Result<(), DiscoveryError> {
-        self.provide_outcome(response.id, ResourceOutcome::Response(response))
+        self.provide_outcome(response.id, ResourceOutcome::Response(response.bytes))
     }
-
-    /// Supply a failed acquisition without imposing retry policy.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for an unknown or already supplied request.
     pub fn provide_failure(&mut self, failure: ResourceFailure) -> Result<(), DiscoveryError> {
         self.provide_outcome(failure.id, ResourceOutcome::Failure(failure))
     }
-
     fn provide_outcome(
         &mut self,
         id: RequestId,
         outcome: ResourceOutcome,
     ) -> Result<(), DiscoveryError> {
-        if !self.requests.contains_key(&id) {
+        let Some(resource) = self.requests.get(id.0) else {
             return Err(DiscoveryError::UnknownRequest(id));
-        }
-        if self.outcomes.contains_key(&id) {
+        };
+        if resource.outcome.is_some() {
             return Err(DiscoveryError::RequestAlreadyProvided(id));
         }
-        if let ResourceOutcome::Response(response) = &outcome {
+        if let ResourceOutcome::Response(bytes) = &outcome {
             self.retained_bytes = self
                 .retained_bytes
-                .checked_add(response.bytes.len())
+                .checked_add(bytes.len())
                 .filter(|total| *total <= self.limits.retained_bytes)
                 .ok_or(DiscoveryError::MetadataSizeLimitExceeded)?;
         }
-        self.outcomes.insert(id, outcome);
+        self.requests[id.0].outcome = Some(outcome);
         self.drive()
     }
 
@@ -646,24 +450,28 @@ impl DiscoveryOperation {
         self.catalog.is_some()
     }
 
-    /// Consume this completed operation.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DiscoveryError::NotComplete`] when an application response is still needed.
     pub fn finish(mut self) -> Result<ImageCatalog, DiscoveryError> {
         self.drive()?;
         self.catalog.take().ok_or(DiscoveryError::NotComplete)
     }
-
     fn drive(&mut self) -> Result<(), DiscoveryError> {
         while self.catalog.is_none() {
-            let Some(index) = self.candidates.iter().position(|candidate| matches!(candidate.state, CandidateState::New) || matches!(candidate.state, CandidateState::Waiting(id) if self.outcomes.contains_key(&id))) else {
-                if self.requests.values().any(|need| !self.outcomes.contains_key(&need.id)) { return Ok(()); }
-                if self.candidates.iter().all(|candidate| matches!(candidate.state, CandidateState::Rejected)) {
-                    return Err(DiscoveryError::NoCandidateAccepted { diagnostics: self.diagnostics.clone() });
+            let Some(index) = self
+                .candidates
+                .iter()
+                .position(|candidate| self.ready(candidate.state))
+            else {
+                let pending = self.requests.iter().any(|r| r.outcome.is_none())
+                    || self
+                        .candidates
+                        .iter()
+                        .any(|c| !matches!(c.state, CandidateState::Rejected));
+                if pending {
+                    return Ok(());
                 }
-                return Ok(());
+                return Err(DiscoveryError::NoCandidateAccepted {
+                    diagnostics: self.diagnostics.clone(),
+                });
             };
             self.transitions += 1;
             if self.transitions > self.limits.transitions {
@@ -673,11 +481,8 @@ impl DiscoveryOperation {
                 .advance_candidate(index)
                 .and_then(|step| self.apply_step(index, step));
             match result {
-                Ok(()) => {}
-                Err(DiscoveryError::Session(message)) => {
-                    self.reject_candidate(index, message);
-                }
-                Err(error) => return Err(error),
+                Err(DiscoveryError::Session(message)) => self.reject_candidate(index, message),
+                result => result?,
             }
         }
         Ok(())
@@ -685,54 +490,48 @@ impl DiscoveryOperation {
 
     fn advance_candidate(&mut self, index: usize) -> Result<DiscoveryStep, DiscoveryError> {
         let candidate = &self.candidates[index];
-        let state = match candidate.state {
-            CandidateState::New => None,
-            CandidateState::Waiting(id) => Some(id),
-            CandidateState::Rejected => unreachable!("rejected candidates are not driven"),
-        };
-
-        if state.is_none() && !(candidate.spec.recognize)(&self.input.uri) {
-            return Err(DiscoveryError::Session(candidate.spec.rejection.into()));
+        if matches!(candidate.state, CandidateState::New) {
+            if !(candidate.spec.recognize)(&self.input) {
+                return Err(DiscoveryError::Session(candidate.spec.rejection.into()));
+            }
+            return match candidate.spec.program {
+                DiscoveryProgram::Immediate(complete) => {
+                    complete(&self.input).map(DiscoveryStep::Complete)
+                }
+                DiscoveryProgram::Rules(..) => {
+                    Ok(DiscoveryStep::Follow(Request::new(self.input.clone())))
+                }
+            };
         }
 
-        match (candidate.spec.program, state) {
-            (DiscoveryProgram::Immediate(complete), None) => {
-                complete(&self.input.uri).map(DiscoveryStep::Complete)
-            }
-            (DiscoveryProgram::Immediate(_), Some(_)) => {
-                unreachable!("immediate dezoomers never follow resources")
-            }
-            (DiscoveryProgram::Rules { .. }, None) => {
-                Ok(DiscoveryStep::Follow(Request::new(self.input.uri.clone())))
-            }
-            (DiscoveryProgram::Rules { routes, on_failure }, Some(id)) => {
-                let request = &self.requests[&id].request;
-                let previous_history = candidate
-                    .history
-                    .strip_suffix(&[id])
-                    .expect("the current resource is last in candidate history");
-                let context = DiscoveryContext {
-                    history_ids: previous_history,
-                    requests: &self.requests,
-                    outcomes: &self.outcomes,
-                };
-                match self
-                    .outcomes
-                    .get(&id)
-                    .expect("ready candidate has an outcome")
-                {
-                    ResourceOutcome::Response(response) => dispatch_resource(
-                        routes,
-                        &context,
-                        DiscoveryResource { request, response },
-                        "resource did not match any discovery route",
-                    ),
-                    ResourceOutcome::Failure(failure) => on_failure.map_or_else(
-                        || Err(DiscoveryError::Session(failure.message.clone())),
-                        |handler| handler(&context, DiscoveryFailure { request, failure }),
-                    ),
-                }
-            }
+        let CandidateState::Waiting(id) = candidate.state else {
+            unreachable!("rejected candidates are not driven");
+        };
+        let DiscoveryProgram::Rules(routes, on_failure) = candidate.spec.program else {
+            unreachable!("immediate dezoomers never follow resources");
+        };
+        let resource = self.resource(id).expect("ready request exists");
+        let request = &resource.request;
+        let previous_history = &candidate.history[..candidate.history.len() - 1];
+        let context = DiscoveryContext {
+            history_ids: previous_history,
+            requests: &self.requests,
+        };
+        match resource
+            .outcome
+            .as_ref()
+            .expect("ready candidate has an outcome")
+        {
+            ResourceOutcome::Response(bytes) => dispatch_resource(
+                routes,
+                &context,
+                DiscoveryResource { request, bytes },
+                "resource did not match any discovery route",
+            ),
+            ResourceOutcome::Failure(failure) => on_failure.map_or_else(
+                || Err(DiscoveryError::Session(failure.message.clone())),
+                |handler| handler(&context, request, failure),
+            ),
         }
     }
 
@@ -740,32 +539,29 @@ impl DiscoveryOperation {
         match step {
             DiscoveryStep::Follow(request) => {
                 let request = match self.candidates[index].spec.program {
-                    DiscoveryProgram::Rules { routes, .. } => map_url(routes, &request.uri)?,
+                    DiscoveryProgram::Rules(routes, ..) => map_url(routes, request)?,
                     DiscoveryProgram::Immediate(_) => request,
                 };
-                match self.register_request(request) {
-                    Ok(id) => {
-                        if self.candidates[index].history.contains(&id) {
-                            self.reject_candidate(
-                                index,
-                                "discovery followed the same resource twice".into(),
-                            );
-                        } else {
-                            self.candidates[index].history.push(id);
-                            self.candidates[index].state = CandidateState::Waiting(id);
-                        }
-                    }
-                    Err(DiscoveryError::ResourceLimitExceeded) => {
-                        self.reject_candidate(index, "discovery resource limit exceeded".into());
-                    }
-                    Err(error) => return Err(error),
+                let Some(id) = self.register_request(request) else {
+                    self.reject_candidate(index, "discovery resource limit exceeded".into());
+                    return Ok(());
+                };
+                if self.candidates[index].history.contains(&id) {
+                    self.reject_candidate(
+                        index,
+                        "discovery followed the same resource twice".into(),
+                    );
+                } else {
+                    self.candidates[index].history.push(id);
+                    self.candidates[index].state = CandidateState::Waiting(id);
                 }
             }
             DiscoveryStep::Complete(catalog) => {
-                let catalog = catalog
-                    .normalize()
-                    .map_err(|error| DiscoveryError::Session(error.to_string()))?;
-                self.catalog = Some(catalog);
+                self.catalog = Some(
+                    catalog
+                        .normalize()
+                        .map_err(|error| DiscoveryError::Session(error.to_string()))?,
+                );
             }
         }
         Ok(())
@@ -777,22 +573,28 @@ impl DiscoveryOperation {
         self.candidates[index].state = CandidateState::Rejected;
     }
 
-    fn register_request(&mut self, request: Request) -> Result<RequestId, DiscoveryError> {
-        if let Some(id) = self.request_ids.get(&request).copied() {
-            return Ok(id);
+    fn register_request(&mut self, request: Request) -> Option<RequestId> {
+        if let Some(index) = self
+            .requests
+            .iter()
+            .position(|resource| resource.request == request)
+        {
+            return Some(RequestId(index));
         }
         if self.requests.len() >= self.limits.resources {
-            return Err(DiscoveryError::ResourceLimitExceeded);
+            return None;
         }
-        let id = RequestId(self.next_request_id);
-        self.next_request_id += 1;
-        self.request_ids.insert(request.clone(), id);
-        self.requests.insert(id, ResourceNeed { id, request });
-        Ok(id)
+        let id = RequestId(self.requests.len());
+        self.requests.push(ResourceRecord {
+            request,
+            outcome: None,
+        });
+        Some(id)
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::unnecessary_wraps)]
 mod tests {
     use super::*;
     use crate::core::registry::Registry;
@@ -808,8 +610,8 @@ mod tests {
         Err(DiscoveryError::Session("wrong format".into()))
     }
 
-    const COMPLETE: &[DiscoveryRoute] = &[DiscoveryMatch::any().extract(catalog)];
-    const REJECT: &[DiscoveryRoute] = &[DiscoveryMatch::any().then(reject)];
+    const COMPLETE: &[DiscoveryRoute] = &[DiscoveryMatch::Any.extract(catalog)];
+    const REJECT: &[DiscoveryRoute] = &[DiscoveryMatch::Any.then(reject)];
 
     fn provide(operation: &mut DiscoveryOperation, bytes: &[u8]) {
         let need = operation.missing_resources().unwrap().pop().unwrap();
@@ -840,8 +642,8 @@ mod tests {
     }
 
     const MAPPED: &[DiscoveryRoute] = &[
-        DiscoveryMatch::url_matching(is_tile).map_url(tile_metadata),
-        DiscoveryMatch::url_suffix("/metadata").extract(catalog),
+        DiscoveryMatch::UrlPredicate(is_tile).map_url(tile_metadata),
+        DiscoveryMatch::UrlSuffix("/metadata").extract(catalog),
     ];
 
     #[test]
@@ -860,7 +662,9 @@ mod tests {
         resource: DiscoveryResource<'_>,
     ) -> Result<DiscoveryStep, DiscoveryError> {
         assert!(context.resources().next().is_none());
-        Ok(DiscoveryStep::follow(format!("{}/tiles", resource.uri())))
+        Ok(DiscoveryStep::Follow(
+            Request::new(format!("{}/tiles", resource.uri())).with_header("X-Test", "preserved"),
+        ))
     }
 
     fn finish_chain(
@@ -873,8 +677,8 @@ mod tests {
     }
 
     const CHAIN: &[DiscoveryRoute] = &[
-        DiscoveryMatch::url_suffix("/metadata").then(follow_tiles),
-        DiscoveryMatch::url_suffix("/tiles").then(finish_chain),
+        DiscoveryMatch::UrlSuffix("/metadata").then(follow_tiles),
+        DiscoveryMatch::UrlSuffix("/tiles").then(finish_chain),
     ];
 
     #[test]
@@ -883,9 +687,11 @@ mod tests {
         registry.register(DezoomerSpec::new("chain", CHAIN));
         let mut operation = registry.start("memory://image/metadata");
         provide(&mut operation, b"metadata");
+        let need = operation.next_priority_need().unwrap().unwrap();
+        assert_eq!(need.request.uri, "memory://image/metadata/tiles");
         assert_eq!(
-            operation.next_priority_need().unwrap().unwrap().request.uri,
-            "memory://image/metadata/tiles"
+            need.request.headers.get("X-Test").map(String::as_str),
+            Some("preserved")
         );
         provide(&mut operation, b"tiles");
         assert!(operation.finish().unwrap().is_empty());
@@ -900,6 +706,7 @@ mod tests {
         assert_eq!(operation.missing_resources().unwrap().len(), 1);
         provide(&mut operation, b"metadata");
         assert!(operation.is_complete());
+        assert!(operation.finish().unwrap().is_empty());
     }
 
     fn follow_a(
@@ -907,7 +714,7 @@ mod tests {
         _: DiscoveryResource<'_>,
     ) -> Result<DiscoveryStep, DiscoveryError> {
         assert!(context.resources().next().is_none());
-        Ok(DiscoveryStep::follow("memory://a"))
+        Ok(DiscoveryStep::Follow(Request::new("memory://a")))
     }
 
     fn follow_b(
@@ -915,11 +722,11 @@ mod tests {
         _: DiscoveryResource<'_>,
     ) -> Result<DiscoveryStep, DiscoveryError> {
         assert!(context.resources().next().is_none());
-        Ok(DiscoveryStep::follow("memory://b"))
+        Ok(DiscoveryStep::Follow(Request::new("memory://b")))
     }
 
-    const HISTORY_A: &[DiscoveryRoute] = &[DiscoveryMatch::any().then(follow_a)];
-    const HISTORY_B: &[DiscoveryRoute] = &[DiscoveryMatch::any().then(follow_b)];
+    const HISTORY_A: &[DiscoveryRoute] = &[DiscoveryMatch::Any.then(follow_a)];
+    const HISTORY_B: &[DiscoveryRoute] = &[DiscoveryMatch::Any.then(follow_b)];
 
     #[test]
     fn history_is_candidate_local_when_requests_are_shared() {
@@ -941,10 +748,11 @@ mod tests {
 
     fn recover(
         _: &DiscoveryContext<'_>,
-        failure: DiscoveryFailure<'_>,
+        request: &Request,
+        failure: &ResourceFailure,
     ) -> Result<DiscoveryStep, DiscoveryError> {
-        assert_eq!(failure.uri(), "memory://failure");
-        assert_eq!(failure.failure().message, "expected");
+        assert_eq!(request.uri, "memory://failure");
+        assert_eq!(failure.message, "expected");
         Ok(DiscoveryStep::Complete(ImageCatalog::default()))
     }
 
@@ -967,10 +775,10 @@ mod tests {
         _: &DiscoveryContext<'_>,
         resource: DiscoveryResource<'_>,
     ) -> Result<DiscoveryStep, DiscoveryError> {
-        Ok(DiscoveryStep::follow(resource.uri()))
+        Ok(DiscoveryStep::Follow(Request::new(resource.uri())))
     }
 
-    const REPEAT: &[DiscoveryRoute] = &[DiscoveryMatch::any().then(repeat)];
+    const REPEAT: &[DiscoveryRoute] = &[DiscoveryMatch::Any.then(repeat)];
 
     #[test]
     fn following_the_same_uri_is_rejected() {
@@ -988,13 +796,13 @@ mod tests {
         context: &DiscoveryContext<'_>,
         _: DiscoveryResource<'_>,
     ) -> Result<DiscoveryStep, DiscoveryError> {
-        Ok(DiscoveryStep::follow(format!(
+        Ok(DiscoveryStep::Follow(Request::new(format!(
             "memory://{}",
             context.resources().count()
-        )))
+        ))))
     }
 
-    const LOOP: &[DiscoveryRoute] = &[DiscoveryMatch::any().then(follow_again)];
+    const LOOP: &[DiscoveryRoute] = &[DiscoveryMatch::Any.then(follow_again)];
 
     #[test]
     fn operation_limits_are_enforced() {
@@ -1017,19 +825,37 @@ mod tests {
             .unwrap_err();
         assert_eq!(error, DiscoveryError::TransitionLimitExceeded);
 
-        let mut resources = registry.start_with_limits(
-            "memory://start",
+        let mut limited = Registry::new();
+        limited.register(DezoomerSpec::new("high", HIGH));
+        limited.register(DezoomerSpec::new("low", LOW));
+        let mut resources = limited.start_with_limits(
+            "memory://root",
             DiscoveryLimits {
-                resources: 1,
+                resources: 2,
                 ..Default::default()
             },
         );
-        let need = resources.missing_resources().unwrap().pop().unwrap();
-        assert!(
-            resources
-                .provide(ResourceResponse::new(need.id, []))
-                .is_err()
+        let high = resources
+            .missing_resources()
+            .unwrap()
+            .into_iter()
+            .find(|need| need.request.uri == "memory://high-1")
+            .unwrap();
+        assert_eq!(
+            resources.provide(ResourceResponse::new(high.id, [])),
+            Ok(())
         );
+        let low = resources
+            .missing_resources()
+            .unwrap()
+            .into_iter()
+            .find(|need| need.request.uri == "memory://low")
+            .unwrap();
+        resources
+            .provide(ResourceResponse::new(low.id, []))
+            .unwrap();
+        assert!(resources.is_complete());
+        assert!(resources.finish().unwrap().is_empty());
 
         let mut bytes = Registry::new();
         bytes.register(DezoomerSpec::new("bytes", COMPLETE));
@@ -1063,17 +889,17 @@ mod tests {
         _: &DiscoveryContext<'_>,
         _: DiscoveryResource<'_>,
     ) -> Result<DiscoveryStep, DiscoveryError> {
-        Ok(DiscoveryStep::follow("memory://high-2"))
+        Ok(DiscoveryStep::Follow(Request::new("memory://high-2")))
     }
 
     const HIGH: &[DiscoveryRoute] = &[
-        DiscoveryMatch::url_matching(is_root).map_url(high_start),
-        DiscoveryMatch::url_suffix("high-1").then(high_next),
-        DiscoveryMatch::url_suffix("high-2").extract(catalog),
+        DiscoveryMatch::UrlPredicate(is_root).map_url(high_start),
+        DiscoveryMatch::UrlSuffix("high-1").then(high_next),
+        DiscoveryMatch::UrlSuffix("high-2").extract(catalog),
     ];
     const LOW: &[DiscoveryRoute] = &[
-        DiscoveryMatch::url_matching(is_root).map_url(low_start),
-        DiscoveryMatch::any().extract(catalog),
+        DiscoveryMatch::UrlPredicate(is_root).map_url(low_start),
+        DiscoveryMatch::Any.extract(catalog),
     ];
 
     #[test]
@@ -1092,19 +918,6 @@ mod tests {
             operation.next_priority_need().unwrap().unwrap().request.uri,
             "memory://high-2"
         );
-    }
-
-    #[test]
-    fn media_type_matching_ignores_case_and_parameters() {
-        let request = Request::new("memory://page");
-        let response = ResourceResponse::new(RequestId(0), b"page")
-            .with_content_type("Text/HTML; charset=utf-8");
-        let resource = DiscoveryResource {
-            request: &request,
-            response: &response,
-        };
-        assert!(DiscoveryMatch::media_type(&["text/html"]).matches_resource(resource));
-        assert!(!DiscoveryMatch::media_type(&["text/xml"]).matches_resource(resource));
     }
 
     #[test]

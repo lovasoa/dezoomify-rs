@@ -1,6 +1,6 @@
 //! Stable registration and precedence policy for pure dezoomers.
 
-use super::discovery::{DezoomerSpec, DiscoveryInput, DiscoveryLimits, DiscoveryOperation};
+use super::discovery::{DezoomerSpec, DiscoveryLimits, DiscoveryOperation};
 use crate::{
     bulk_text, custom_yaml, dzi, generic, google_arts_and_culture, iiif, iipimage, krpano, nypl,
     zoomify,
@@ -39,18 +39,18 @@ impl Registry {
 
     /// Start a discovery operation with candidates in registration order.
     #[must_use]
-    pub fn start(&self, input: impl Into<DiscoveryInput>) -> DiscoveryOperation {
-        self.start_with_limits(input, DiscoveryLimits::default())
+    pub fn start(&self, uri: impl Into<String>) -> DiscoveryOperation {
+        self.start_with_limits(uri, DiscoveryLimits::default())
     }
 
     /// Start independent parser state with explicit operation limits.
     #[must_use]
     pub fn start_with_limits(
         &self,
-        input: impl Into<DiscoveryInput>,
+        uri: impl Into<String>,
         limits: DiscoveryLimits,
     ) -> DiscoveryOperation {
-        DiscoveryOperation::new(&input.into(), &self.specs, limits)
+        DiscoveryOperation::new(uri.into(), &self.specs, limits)
     }
 }
 

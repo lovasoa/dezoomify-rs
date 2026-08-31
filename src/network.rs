@@ -19,11 +19,10 @@ use crate::binary_display::display_bytes;
 use crate::errors::{TileDownloadError, ZoomError};
 use dezoomify_core::core::{ProcessingRecipe, Request, TileSpec};
 
-/// Bytes and portable response metadata acquired by the native application.
+/// Bytes acquired by the native application.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FetchedResource {
     pub(crate) bytes: Vec<u8>,
-    pub(crate) content_type: Option<String>,
 }
 
 /// Fetch a described resource with request-specific headers.
@@ -53,11 +52,6 @@ pub(crate) async fn fetch_resource<'a>(
             response.headers()
         );
         let response = response.error_for_status()?;
-        let content_type = response
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string);
         let mut contents = Vec::new();
         let bytes = response.bytes().await?;
         contents.extend(bytes);
@@ -67,10 +61,7 @@ pub(crate) async fn fetch_resource<'a>(
             contents.len(),
             display_bytes(&contents[..contents.len().min(256)])
         );
-        Ok(FetchedResource {
-            bytes: contents,
-            content_type,
-        })
+        Ok(FetchedResource { bytes: contents })
     } else {
         debug!("Loading file: '{uri}'");
         let result = fs::read(uri).await?;
@@ -80,10 +71,7 @@ pub(crate) async fn fetch_resource<'a>(
             result.len(),
             display_bytes(&result[..result.len().min(256)])
         );
-        Ok(FetchedResource {
-            bytes: result,
-            content_type: None,
-        })
+        Ok(FetchedResource { bytes: result })
     }
 }
 

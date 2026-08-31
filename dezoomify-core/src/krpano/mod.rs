@@ -12,9 +12,10 @@ use krpano_metadata::{KrpanoMetadata, XY, all_sides};
 use log::{debug, info, warn};
 
 use crate::Vec2d;
+use crate::core::discovery::ResourceFailure;
 use crate::core::resolve_relative;
 use crate::core::{
-    CatalogEntry, DezoomerSpec, DiscoveryContext, DiscoveryError, DiscoveryFailure, DiscoveryMatch,
+    CatalogEntry, DezoomerSpec, DiscoveryContext, DiscoveryError, DiscoveryMatch,
     DiscoveryResource, DiscoveryRoute, DiscoveryStep, Grid, GridRequests, GridTile, ImageCatalog,
     ImageDescriptor, LevelDescriptor, Request, StableId,
 };
@@ -24,10 +25,10 @@ use crate::template::Template;
 mod krpano_metadata;
 
 const ROUTES: &[DiscoveryRoute] = &[
-    DiscoveryMatch::content_matching(looks_like_xml_or_encrypted).then(handle_xml),
-    DiscoveryMatch::content_matching(looks_like_viewer_js).then(handle_viewer_js),
-    DiscoveryMatch::content_matching(looks_like_krpano_html).then(handle_html),
-    DiscoveryMatch::url_matching(is_javascript_uri).then(handle_viewer_js),
+    DiscoveryMatch::ContentPredicate(looks_like_xml_or_encrypted).then(handle_xml),
+    DiscoveryMatch::ContentPredicate(looks_like_viewer_js).then(handle_viewer_js),
+    DiscoveryMatch::ContentPredicate(looks_like_krpano_html).then(handle_html),
+    DiscoveryMatch::UrlPredicate(is_javascript_uri).then(handle_viewer_js),
 ];
 
 pub const SPEC: DezoomerSpec = DezoomerSpec::new("krpano", ROUTES)
@@ -47,7 +48,7 @@ fn handle_html(
         |reference| resolve_relative(resource.uri(), &reference),
     );
     debug!("krpano: resolved XML URI {xml_uri}");
-    Ok(need(&xml_uri))
+    Ok(DiscoveryStep::Follow(Request::new(xml_uri)))
 }
 
 fn handle_xml(
@@ -73,7 +74,7 @@ fn handle_xml(
                     "unable to decrypt krpano XML: {error}"
                 )))
             },
-            |uri| Ok(need(&uri)),
+            |uri| Ok(DiscoveryStep::Follow(Request::new(uri))),
         ),
     }
 }
@@ -88,7 +89,10 @@ fn handle_viewer_js(
                 "not krpano viewer JavaScript".into(),
             ));
         }
-        return Ok(need(&sibling_uri(resource.uri(), "tour.xml")));
+        return Ok(DiscoveryStep::Follow(Request::new(sibling_uri(
+            resource.uri(),
+            "tour.xml",
+        ))));
     };
     let viewer_js =
         extract_viewer_js(resource.bytes()).unwrap_or_else(|| resource.bytes().to_vec());
@@ -103,24 +107,25 @@ fn handle_viewer_js(
                     "unable to decrypt krpano XML: {error}"
                 )))
             },
-            |uri| Ok(need(&uri)),
+            |uri| Ok(DiscoveryStep::Follow(Request::new(uri))),
         ),
     }
 }
 
 fn handle_failure(
     context: &DiscoveryContext<'_>,
-    resource: DiscoveryFailure<'_>,
+    request: &Request,
+    failure: &ResourceFailure,
 ) -> Result<DiscoveryStep, DiscoveryError> {
-    let message = resource.failure().message.as_str();
+    let message = failure.message.as_str();
     debug!("krpano: resource failure: {message}");
     if let Some(xml) = find_xml(context) {
         warn!(
             "krpano: viewer JS fetch failed for {}: {message}",
             xml.uri()
         );
-        if let Some(uri) = next_viewer_after_failure(context, resource.uri(), xml.uri()) {
-            return Ok(need(&uri));
+        if let Some(uri) = next_viewer_after_failure(context, request.uri.as_str(), xml.uri()) {
+            return Ok(DiscoveryStep::Follow(Request::new(uri)));
         }
         return Err(DiscoveryError::Session(format!(
             "failed to download krpano viewer script: {message}"
@@ -170,7 +175,7 @@ fn next_viewer_from_initial(
         viewer_js_candidates_for_xml(xml_uri)
     };
     candidates.retain(|candidate| candidate != current_uri && !context.has_visited(candidate));
-    next_js_candidate(&mut candidates)
+    candidates.into_iter().next()
 }
 
 fn is_javascript_resource(resource: DiscoveryResource<'_>) -> bool {
@@ -191,10 +196,6 @@ fn looks_like_xml_or_encrypted(contents: &[u8]) -> bool {
 
 fn complete(uri: &str, bytes: &[u8]) -> Result<DiscoveryStep, DiscoveryError> {
     load_catalog(uri, bytes).map(DiscoveryStep::Complete)
-}
-
-fn need(uri: &str) -> DiscoveryStep {
-    DiscoveryStep::follow(uri)
 }
 
 /// True if the content looks like a krpano XML file rather than HTML.
@@ -409,10 +410,6 @@ fn is_common_non_viewer_script(value: &str) -> bool {
     ]
     .iter()
     .any(|needle| value.contains(needle))
-}
-
-fn next_js_candidate(candidates: &mut Vec<String>) -> Option<String> {
-    (!candidates.is_empty()).then(|| candidates.remove(0))
 }
 
 fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
@@ -973,45 +970,35 @@ mod tests {
     }
 
     #[test]
-    fn failed_viewer_decryption_advances_to_the_next_candidate() {
-        let (mut operation, first) = operation_waiting_for_first_viewer();
-        operation
-            .provide(ResourceResponse::new(
-                first.id,
-                b"invalid viewer JavaScript",
-            ))
-            .unwrap();
-        assert_eq!(
-            operation
-                .missing_resources()
-                .unwrap()
-                .pop()
-                .unwrap()
-                .request
-                .uri,
-            "https://example.com/pano/second.js"
-        );
-    }
-
-    #[test]
-    fn failed_viewer_acquisition_advances_to_the_next_candidate() {
-        let (mut operation, first) = operation_waiting_for_first_viewer();
-        operation
-            .provide_failure(ResourceFailure {
-                id: first.id,
-                message: "unavailable".into(),
-            })
-            .unwrap();
-        assert_eq!(
-            operation
-                .missing_resources()
-                .unwrap()
-                .pop()
-                .unwrap()
-                .request
-                .uri,
-            "https://example.com/pano/second.js"
-        );
+    fn failed_viewer_attempts_advance_to_the_next_candidate() {
+        for failure in [None, Some("unavailable")] {
+            let (mut operation, first) = operation_waiting_for_first_viewer();
+            if let Some(message) = failure {
+                operation
+                    .provide_failure(ResourceFailure {
+                        id: first.id,
+                        message: message.into(),
+                    })
+                    .unwrap();
+            } else {
+                operation
+                    .provide(ResourceResponse::new(
+                        first.id,
+                        b"invalid viewer JavaScript",
+                    ))
+                    .unwrap();
+            }
+            assert_eq!(
+                operation
+                    .missing_resources()
+                    .unwrap()
+                    .pop()
+                    .unwrap()
+                    .request
+                    .uri,
+                "https://example.com/pano/second.js"
+            );
+        }
     }
 
     #[test]

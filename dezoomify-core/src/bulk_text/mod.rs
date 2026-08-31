@@ -6,7 +6,7 @@ use crate::core::{
 };
 
 pub const SPEC: DezoomerSpec =
-    DezoomerSpec::new("bulk_text", &[DiscoveryMatch::any().extract(catalog)])
+    DezoomerSpec::new("bulk_text", &[DiscoveryMatch::Any.extract(catalog)])
         .recognizing(is_bulk_file, "not a bulk URL-list file");
 
 fn catalog(uri: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {

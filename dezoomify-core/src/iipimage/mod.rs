@@ -14,8 +14,8 @@ const META: &str = "&OBJ=Max-size&OBJ=Tile-size&OBJ=Resolution-number";
 pub const SPEC: DezoomerSpec = DezoomerSpec::new(
     "iipimage",
     &[
-        DiscoveryMatch::url_matching(needs_metadata).map_url(metadata_url),
-        DiscoveryMatch::any().extract(catalog),
+        DiscoveryMatch::UrlPredicate(needs_metadata).map_url(metadata_url),
+        DiscoveryMatch::Any.extract(catalog),
     ],
 )
 .recognizing(is_iip, "not an IIPImage URL")
@@ -29,6 +29,7 @@ fn needs_metadata(uri: &str) -> bool {
     !uri.ends_with(META)
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn metadata_url(input: &str) -> Result<Request, DiscoveryError> {
     Ok(Request::new(format!(
         "{}{}",

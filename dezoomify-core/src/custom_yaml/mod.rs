@@ -14,9 +14,8 @@ use crate::default_headers;
 mod tile_set;
 mod variable;
 
-pub const SPEC: DezoomerSpec =
-    DezoomerSpec::new("custom", &[DiscoveryMatch::any().extract(catalog)])
-        .recognizing(|uri| uri.ends_with("tiles.yaml"), "not a tiles.yaml file");
+pub const SPEC: DezoomerSpec = DezoomerSpec::new("custom", &[DiscoveryMatch::Any.extract(catalog)])
+    .recognizing(|uri| uri.ends_with("tiles.yaml"), "not a tiles.yaml file");
 
 fn catalog(_: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
     catalog_from_yaml(bytes)
