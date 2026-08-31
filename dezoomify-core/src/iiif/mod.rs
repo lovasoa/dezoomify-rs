@@ -18,7 +18,7 @@ pub mod tile_info;
 mod title_tests;
 
 /// IIIF dezoomer. See <https://iiif.io/>.
-pub const SPEC: DezoomerSpec = DezoomerSpec::new("iiif", &[DiscoveryMatch::any().extract(catalog)])
+pub const SPEC: DezoomerSpec = DezoomerSpec::new("iiif", &[DiscoveryMatch::Any.extract(catalog)])
     .preferring(|uri| {
         uri.contains("info.json") || uri.contains("iiif") || uri.contains("manifest.json")
     });
@@ -588,7 +588,6 @@ fn discovery_requests_metadata_then_returns_normalized_replayable_levels() {
           "tiles":[{"width":512,"height":512,"scaleFactors":[1,2,4]}]
         }"#
             .to_vec(),
-            content_type: None,
         })
         .unwrap();
     let catalog = operation.finish().unwrap();

@@ -98,11 +98,7 @@ impl NativeDiscoveryDriver {
         need: ResourceNeed,
     ) -> Result<(), DiscoveryError> {
         match self.resolve(&need.request).await {
-            Ok(resource) => operation.provide(ResourceResponse {
-                id: need.id,
-                bytes: resource.bytes,
-                content_type: resource.content_type,
-            }),
+            Ok(resource) => operation.provide(ResourceResponse::new(need.id, resource.bytes)),
             Err(error) => operation.provide_failure(ResourceFailure {
                 id: need.id,
                 message: error.to_string(),

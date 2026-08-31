@@ -13,8 +13,8 @@ mod tile_info;
 mod url;
 
 const ROUTES: &[DiscoveryRoute] = &[
-    DiscoveryMatch::url_suffix("=g").then(parse_tile_information),
-    DiscoveryMatch::any().then(parse_page),
+    DiscoveryMatch::UrlSuffix("=g").then(parse_tile_information),
+    DiscoveryMatch::Any.then(parse_page),
 ];
 
 pub const SPEC: DezoomerSpec = DezoomerSpec::new("google_arts_and_culture", ROUTES)
@@ -134,13 +134,10 @@ mod tests {
         let page = operation.missing_resources().unwrap().pop().unwrap();
         assert_eq!(page.request.uri, input);
         operation
-            .provide(
-                ResourceResponse::new(
-                    page.id,
-                    include_bytes!("../../testdata/google_arts_and_culture/page_source.html"),
-                )
-                .with_content_type("text/html; charset=utf-8"),
-            )
+            .provide(ResourceResponse::new(
+                page.id,
+                include_bytes!("../../testdata/google_arts_and_culture/page_source.html"),
+            ))
             .unwrap();
         let tile_info = operation.missing_resources().unwrap().pop().unwrap();
         assert!(tile_info.request.uri.ends_with("=g"));
