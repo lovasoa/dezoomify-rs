@@ -10,7 +10,7 @@ use dezoomify_core::core::discovery::{
 };
 use dezoomify_core::core::{
     CatalogEntry, DiscoverableGrid, DiscoverableStep, Grid, ImageCatalog, ImageDescriptor,
-    LevelDescriptor, ObservationResult, Registry, TileSource, default_registry, registry_for,
+    LevelDescriptor, ObservationResult, Registry, TileSource, default_registry,
 };
 
 type Resource<'a> = (&'a str, &'a [u8]);
@@ -352,10 +352,10 @@ fn dezoomer_paris_ark_page_case() {
     let input = "https://bibliotheques-specialisees.paris.fr/ark:/73873/pf0001115743/0017/v0001.simple.selectedTab=otherdocs";
     let reader = "https://bibliotheques-specialisees.paris.fr/in/imageReader.xhtml?id=ark:/73873/pf0001115743/0017&updateUrl=updateUrl1653&ark=/73873/pf0001115743/0017/v0001.simple.selectedTab=otherdocs&selectedTab=otherdocs";
     let image = ready_image(
-        discover_with(
-            registry_for("deepzoom").unwrap(),
+        discover(
             input,
             &[
+                (input, b""),
                 (reader, coverage_fixture!("deepzoom/paris-reader.html")),
                 (
                     "https://fixtures.test/deepzoom/sample.dzi",
