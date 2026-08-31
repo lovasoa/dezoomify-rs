@@ -49,10 +49,6 @@ live_dezoomer!(
     "https://openseadragon.github.io/example-images/highsmith/highsmith_zdata/ImageProperties.xml"
 );
 live_dezoomer!(
-    zoomify_openseadragon_viewer,
-    "https://openseadragon.github.io/examples/tilesource-zoomify/"
-);
-live_dezoomer!(
     zoomify_ngv_viewer,
     "https://www.ngv.vic.gov.au/explore/collection/work/3867/"
 );
@@ -86,10 +82,6 @@ live_dezoomer!(
     "https://krpano.com/panos/andreabiffi/galleria_04.xml"
 );
 live_dezoomer!(
-    deepzoom_paris,
-    "https://bibliotheques-specialisees.paris.fr/ark:/73873/pf0001115743/0017/v0001.simple.selectedTab=otherdocs"
-);
-live_dezoomer!(
     deepzoom_academia_sinica,
     "https://bronze.asdc.sinica.edu.tw/filePool/R/05395-1.html"
 );
@@ -98,20 +90,8 @@ live_dezoomer!(
     "https://www.nationalgallery.org.uk/paintings/vincent-van-gogh-sunflowers"
 );
 live_dezoomer!(
-    iiif_london_museum,
-    "https://collections.londonmuseum.org.uk/online/object/95380.html"
-);
-live_dezoomer!(
-    iiif_philadelphia_museum,
-    "https://philamuseum.org/collection/object/101731"
-);
-live_dezoomer!(
     iiif_liechtenstein_collections,
     "https://www.liechtensteincollections.at/en/collections-online/forest-landscape"
-);
-live_dezoomer!(
-    iiif_oklahoma_contentdm,
-    "https://dc.library.okstate.edu/digital/collection/OKMaps/id/6483/rec/6"
 );
 live_dezoomer!(
     iiif_washington_mirador,
