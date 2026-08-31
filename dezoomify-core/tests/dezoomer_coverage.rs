@@ -227,6 +227,27 @@ fn dezoomer_iiif_image_service_cases() {
             .any(|url| url == "https://fixtures.test/iiif-v3/0,0,256,256/256,256/0/default.jpg")
     );
 
+    let page_input = "https://fixtures.test/micrio/viewer.html";
+    let micrio_info_input = "https://i.micr.io/KEimL/info.json";
+    let image = ready_image(
+        discover(
+            page_input,
+            &[
+                (page_input, include_bytes!("../testdata/micrio/viewer.html")),
+                (
+                    micrio_info_input,
+                    include_bytes!("../testdata/micrio/info.json"),
+                ),
+            ],
+        )
+        .unwrap(),
+    );
+    assert!(
+        tile_urls(image.levels.last().unwrap())
+            .iter()
+            .any(|url| url == "https://i.micr.io/KEimL/256,256,256,256/256,256/0/default.jpg")
+    );
+
     let input = "https://fixtures.test/iiif-v3/non-divisible/info.json";
     let non_divisible = br#"{
       "@context": "http://iiif.io/api/image/3/context.json",
