@@ -55,6 +55,20 @@ pub async fn local_generic_tiles() {
     // Get absolute path to avoid working directory issues
     let workspace_root = get_workspace_root();
     let input_path = workspace_root.join("testdata/generic/map_{{X}}_{{Y}}.jpg");
+    let expected_path = workspace_root.join("testdata/deepzoom/expected_result.png");
+
+    test_image(
+        input_path.to_str().unwrap(),
+        expected_path.to_str().unwrap(),
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn legacy_seadragon_embed() {
+    let workspace_root = get_workspace_root();
+    let input_path = workspace_root.join("testdata/deepzoom/legacy-embed.html");
     let expected_path = workspace_root.join("testdata/generic/map_expected.png");
 
     test_image(
