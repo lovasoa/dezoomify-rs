@@ -17,6 +17,7 @@ mod image_properties;
 const ROUTES: &[DiscoveryRoute] = &[
     DiscoveryMatch::UrlPredicate(is_tile_url).map_url(tile_metadata),
     DiscoveryMatch::UrlSuffix("ImageProperties.xml").extract(load_catalog),
+    DiscoveryMatch::ContentPredicate(contains_ngv_image_path).then(follow_ngv_image_path),
     DiscoveryMatch::ContentPredicate(contains_zoomify_declaration)
         .then(extract_image_properties_url),
 ];
@@ -46,6 +47,10 @@ static HTML_BASE_RE: LazyLock<BytesRegex> = LazyLock::new(|| {
     BytesRegex::new(r#"(?is)<base\s+[^>]*\bhref\s*=\s*["'](?P<base>[^"']*)"#)
         .expect("constant HTML base pattern")
 });
+static NGV_IMAGE_PATH_RE: LazyLock<BytesRegex> = LazyLock::new(|| {
+    BytesRegex::new(r#"(?is)\bvar\s+url\s*=\s*['"](?P<image>[^'"]+)['"]"#)
+        .expect("constant NGV Zoomify path pattern")
+});
 
 static TILE_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:^|/)TileGroup\d+/\d+-\d+-\d+\.jpe?g(?:[?#].*)?$")
@@ -57,7 +62,30 @@ fn is_tile_url(uri: &str) -> bool {
 }
 
 fn is_zoomify_url(uri: &str) -> bool {
-    uri.contains("/ImageProperties.xml") || is_tile_url(uri)
+    uri.contains("/ImageProperties.xml")
+        || uri.contains("ngv.vic.gov.au/explore/collection/work")
+        || is_tile_url(uri)
+}
+
+fn contains_ngv_image_path(contents: &[u8]) -> bool {
+    NGV_IMAGE_PATH_RE.is_match(contents)
+}
+
+fn follow_ngv_image_path(
+    _: &DiscoveryContext<'_>,
+    resource: crate::core::DiscoveryResource<'_>,
+) -> Result<DiscoveryStep, DiscoveryError> {
+    let path = NGV_IMAGE_PATH_RE
+        .captures(resource.bytes())
+        .and_then(|captures| capture_text(&captures, "image"))
+        .ok_or_else(|| {
+            DiscoveryError::Session("NGV page does not declare a Zoomify path".into())
+        })?;
+    let image_uri = resolve_relative(resource.final_uri(), &path);
+    Ok(DiscoveryStep::Follow(Request::new(append_path_component(
+        &image_uri,
+        "ImageProperties.xml",
+    ))))
 }
 
 fn extract_image_properties_url(

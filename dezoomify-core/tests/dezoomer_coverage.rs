@@ -10,7 +10,7 @@ use dezoomify_core::core::discovery::{
 };
 use dezoomify_core::core::{
     CatalogEntry, DiscoverableGrid, DiscoverableStep, Grid, ImageCatalog, ImageDescriptor,
-    LevelDescriptor, ObservationResult, TileSource, default_registry,
+    LevelDescriptor, ObservationResult, Registry, TileSource, default_registry, registry_for,
 };
 
 type Resource<'a> = (&'a str, &'a [u8]);
@@ -22,7 +22,14 @@ macro_rules! coverage_fixture {
 }
 
 fn discover(input: &str, resources: &[Resource<'_>]) -> Result<ImageCatalog, DiscoveryError> {
-    let registry = default_registry(input);
+    discover_with(default_registry(input), input, resources)
+}
+
+fn discover_with(
+    registry: Registry,
+    input: &str,
+    resources: &[Resource<'_>],
+) -> Result<ImageCatalog, DiscoveryError> {
     let mut operation = registry.start(input);
     loop {
         let Some(need) = operation.next_priority_need()? else {
@@ -230,6 +237,30 @@ fn dezoomer_zoomify_tile_group_and_full_resolution_cases() {
 }
 
 #[test]
+fn dezoomer_ngv_viewer_page_case() {
+    let input = "https://www.ngv.vic.gov.au/explore/collection/work/3867/";
+    let image = ready_image(
+        discover(
+            input,
+            &[
+                (input, coverage_fixture!("zoomify/ngv.html")),
+                (
+                    "https://www.ngv.vic.gov.au/zoomify/ImageProperties.xml",
+                    coverage_fixture!("zoomify/ngv-ImageProperties.xml"),
+                ),
+            ],
+        )
+        .unwrap(),
+    );
+    assert_eq!(image.format.as_str(), "zoomify");
+    assert!(
+        tile_urls(image.levels.last().unwrap())
+            .iter()
+            .any(|url| url == "https://www.ngv.vic.gov.au/zoomify/TileGroup0/1-1-1.jpg")
+    );
+}
+
+#[test]
 fn dezoomer_deepzoom_metadata_and_tile_cases() {
     let cases = [
         (
@@ -298,6 +329,47 @@ fn dezoomer_deepzoom_overlap_case() {
             })
             .collect::<Vec<_>>(),
         [(0, 0), (255, 0), (0, 255), (255, 255)]
+    );
+}
+
+#[test]
+fn dezoomer_prado_pyramid_page_case() {
+    let input = "https://www.museodelprado.es/en/the-collection/art-work/las-meninas/example";
+    let image =
+        ready_image(discover(input, &[(input, coverage_fixture!("deepzoom/prado.html"))]).unwrap());
+    let level = image.levels.last().unwrap();
+    assert_eq!(level.source.image_size(), Some(Vec2d { x: 2362, y: 2697 }));
+    assert_eq!(level.source.tile_size(), Some(Vec2d::square(256)));
+    assert_eq!(grid(level).overlap(), Vec2d::square(1));
+    assert_eq!(
+        tile_urls(level)[0],
+        "https://content3.cdnprado.net/imagenes/Documentos/imgsem/9f/9fdc/9fdc7800-9ade-48b0-ab8b-edee94ea877f/41866afd-6396-45e7-bd26-944263cf92f7/12/0_0.jpg"
+    );
+}
+
+#[test]
+fn dezoomer_paris_ark_page_case() {
+    let input = "https://bibliotheques-specialisees.paris.fr/ark:/73873/pf0001115743/0017/v0001.simple.selectedTab=otherdocs";
+    let reader = "https://bibliotheques-specialisees.paris.fr/in/imageReader.xhtml?id=ark:/73873/pf0001115743/0017&updateUrl=updateUrl1653&ark=/73873/pf0001115743/0017/v0001.simple.selectedTab=otherdocs&selectedTab=otherdocs";
+    let image = ready_image(
+        discover_with(
+            registry_for("deepzoom").unwrap(),
+            input,
+            &[
+                (reader, coverage_fixture!("deepzoom/paris-reader.html")),
+                (
+                    "https://fixtures.test/deepzoom/sample.dzi",
+                    br#"<Image TileSize="256" Overlap="0" Format="jpg"><Size Width="512" Height="512" /></Image>"#,
+                ),
+            ],
+        )
+        .unwrap(),
+    );
+    assert_eq!(image.format.as_str(), "deepzoom");
+    assert!(
+        tile_urls(image.levels.last().unwrap())
+            .iter()
+            .any(|url| url == "https://fixtures.test/deepzoom/sample_files/9/1_1.jpg")
     );
 }
 

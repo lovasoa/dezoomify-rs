@@ -24,15 +24,31 @@ static SEADRAGON_EMBED: LazyLock<BytesRegex> = LazyLock::new(|| {
     )
     .expect("constant Seadragon embed pattern")
 });
+static PRADO_PYRAMID: LazyLock<BytesRegex> = LazyLock::new(|| {
+    BytesRegex::new(
+        r#"(?is)\bdata-pyr\s*=\s*["'](?P<origin>[^"']+)["'][^>]*\bdata-width\s*=\s*["'](?P<width>\d+)["'][^>]*\bdata-height\s*=\s*["'](?P<height>\d+)["']"#,
+    )
+    .expect("constant Prado pyramid pattern")
+});
+static DEEPZOOM_MANIFEST: LazyLock<BytesRegex> = LazyLock::new(|| {
+    BytesRegex::new(r#"(?is)\bdeepZoomManifest\b["']?\s*[:=]\s*["'](?P<metadata>[^"']+\.dzi)["']"#)
+        .expect("constant Deep Zoom manifest pattern")
+});
 
 const ROUTES: &[DiscoveryRoute] = &[
     DiscoveryMatch::UrlPredicate(is_tile_url).map_url(tile_metadata),
+    DiscoveryMatch::UrlPredicate(is_paris_ark).map_url(paris_reader),
+    DiscoveryMatch::ContentPredicate(contains_prado_pyramid).then(load_prado_pyramid),
+    DiscoveryMatch::ContentPredicate(contains_deepzoom_manifest).then(follow_deepzoom_manifest),
     DiscoveryMatch::ContentPredicate(contains_seadragon_embed).then(follow_seadragon_embed),
     DiscoveryMatch::Any.extract(load_catalog),
 ];
 
-pub const SPEC: DezoomerSpec = DezoomerSpec::new("deepzoom", ROUTES)
-    .preferring(|uri| uri.contains(".dzi") || uri.contains("_files/"));
+pub const SPEC: DezoomerSpec = DezoomerSpec::new("deepzoom", ROUTES).preferring(|uri| {
+    uri.contains(".dzi")
+        || uri.contains("_files/")
+        || uri.contains("bibliotheques-specialisees.paris.fr/ark:/")
+});
 
 fn is_tile_url(input: &str) -> bool {
     TILE_URL.is_match(input)
@@ -43,6 +59,27 @@ fn tile_metadata(input: &str) -> Result<Request, DiscoveryError> {
         .find(input)
         .ok_or_else(|| DiscoveryError::Session("not a DZI tile URL".into()))?;
     Ok(Request::new(format!("{}.dzi", &input[..matched.start()])))
+}
+
+fn is_paris_ark(uri: &str) -> bool {
+    uri.starts_with("https://bibliotheques-specialisees.paris.fr/ark:/")
+}
+
+fn paris_reader(uri: &str) -> Result<Request, DiscoveryError> {
+    let ark = uri
+        .strip_prefix("https://bibliotheques-specialisees.paris.fr/ark:")
+        .filter(|ark| ark.split('/').filter(|part| !part.is_empty()).count() >= 3)
+        .ok_or_else(|| DiscoveryError::Session("invalid Paris ARK URL".into()))?;
+    let mut parts = ark.split('/').filter(|part| !part.is_empty());
+    let prefix = format!(
+        "/{}/{}/{}",
+        parts.next().unwrap_or_default(),
+        parts.next().unwrap_or_default(),
+        parts.next().unwrap_or_default()
+    );
+    Ok(Request::new(format!(
+        "https://bibliotheques-specialisees.paris.fr/in/imageReader.xhtml?id=ark:{prefix}&updateUrl=updateUrl1653&ark={ark}&selectedTab=otherdocs"
+    )))
 }
 
 fn contains_seadragon_embed(contents: &[u8]) -> bool {
@@ -66,6 +103,66 @@ fn follow_seadragon_embed(
     ))))
 }
 
+fn contains_prado_pyramid(contents: &[u8]) -> bool {
+    PRADO_PYRAMID.is_match(contents)
+}
+
+fn contains_deepzoom_manifest(contents: &[u8]) -> bool {
+    DEEPZOOM_MANIFEST.is_match(contents)
+}
+
+fn follow_deepzoom_manifest(
+    _: &DiscoveryContext<'_>,
+    resource: DiscoveryResource<'_>,
+) -> Result<DiscoveryStep, DiscoveryError> {
+    let metadata = DEEPZOOM_MANIFEST
+        .captures(resource.bytes())
+        .and_then(|captures| captures.name("metadata"))
+        .map(|capture| std::str::from_utf8(capture.as_bytes()))
+        .transpose()
+        .map_err(|_| DiscoveryError::Session("Deep Zoom manifest URL is not UTF-8".into()))?
+        .ok_or_else(|| DiscoveryError::Session("page lacks Deep Zoom manifest URL".into()))?;
+    Ok(DiscoveryStep::Follow(Request::new(resolve_relative(
+        resource.final_uri(),
+        metadata,
+    ))))
+}
+
+fn load_prado_pyramid(
+    _: &DiscoveryContext<'_>,
+    resource: DiscoveryResource<'_>,
+) -> Result<DiscoveryStep, DiscoveryError> {
+    let captures = PRADO_PYRAMID
+        .captures(resource.bytes())
+        .ok_or_else(|| DiscoveryError::Session("Prado page lacks pyramid metadata".into()))?;
+    let capture = |name| {
+        captures
+            .name(name)
+            .ok_or_else(|| DiscoveryError::Session(format!("Prado page lacks {name}")))
+    };
+    let origin = std::str::from_utf8(capture("origin")?.as_bytes())
+        .map_err(|_| DiscoveryError::Session("Prado tile origin is not UTF-8".into()))?;
+    let width = std::str::from_utf8(capture("width")?.as_bytes())
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| DiscoveryError::Session("invalid Prado image width".into()))?;
+    let height = std::str::from_utf8(capture("height")?.as_bytes())
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| DiscoveryError::Session("invalid Prado image height".into()))?;
+    let image = DziFile {
+        overlap: 1,
+        tile_size: 256,
+        format: "jpg".into(),
+        size: dzi_file::Size { width, height },
+        base_url: Some(resolve_relative(resource.final_uri(), origin)),
+    };
+    Ok(DiscoveryStep::Complete(catalog_from_dzi(
+        resource.final_uri(),
+        [image],
+    )?))
+}
+
 fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
     let xml_result = serde_xml_rs::from_reader::<'_, DziFile, _>(contents);
     let xml_err = xml_result.as_ref().err().map(ToString::to_string);
@@ -80,8 +177,15 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
             "unable to parse DZI metadata{detail}"
         )));
     }
+    catalog_from_dzi(url, parsed)
+}
+
+fn catalog_from_dzi(
+    url: &str,
+    images: impl IntoIterator<Item = DziFile>,
+) -> Result<ImageCatalog, DiscoveryError> {
     let mut entries = Vec::new();
-    for (image_index, image) in parsed.into_iter().enumerate() {
+    for (image_index, image) in images.into_iter().enumerate() {
         if image.tile_size == 0 {
             return Err(DiscoveryError::Session("invalid DZI zero tile size".into()));
         }
