@@ -3,12 +3,13 @@
 use std::sync::{Arc, LazyLock};
 
 use dzi_file::DziFile;
-use regex::Regex;
+use regex::{Regex, bytes::Regex as BytesRegex};
 
 use crate::Vec2d;
 use crate::core::{
-    CatalogEntry, DezoomerSpec, DiscoveryError, DiscoveryMatch, Grid, ImageCatalog,
-    ImageDescriptor, LevelDescriptor, Request, StableId,
+    CatalogEntry, DezoomerSpec, DiscoveryContext, DiscoveryError, DiscoveryMatch,
+    DiscoveryResource, DiscoveryRoute, DiscoveryStep, Grid, ImageCatalog, ImageDescriptor,
+    LevelDescriptor, Request, StableId, resolve_relative,
 };
 use crate::json_utils::all_json;
 
@@ -17,15 +18,21 @@ mod dzi_file;
 static TILE_URL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new("_files/\\d+/\\d+_\\d+\\.(jpe?g|png)$").expect("constant DZI tile pattern")
 });
+static SEADRAGON_EMBED: LazyLock<BytesRegex> = LazyLock::new(|| {
+    BytesRegex::new(
+        r#"(?is)\bseadragon\s*\.\s*embed\s*\([^,]*,[^,]*,\s*["'](?P<metadata>[^"']+)["']"#,
+    )
+    .expect("constant Seadragon embed pattern")
+});
 
-pub const SPEC: DezoomerSpec = DezoomerSpec::new(
-    "deepzoom",
-    &[
-        DiscoveryMatch::UrlPredicate(is_tile_url).map_url(tile_metadata),
-        DiscoveryMatch::Any.extract(load_catalog),
-    ],
-)
-.preferring(|uri| uri.contains(".dzi") || uri.contains("_files/"));
+const ROUTES: &[DiscoveryRoute] = &[
+    DiscoveryMatch::UrlPredicate(is_tile_url).map_url(tile_metadata),
+    DiscoveryMatch::ContentPredicate(contains_seadragon_embed).then(follow_seadragon_embed),
+    DiscoveryMatch::Any.extract(load_catalog),
+];
+
+pub const SPEC: DezoomerSpec = DezoomerSpec::new("deepzoom", ROUTES)
+    .preferring(|uri| uri.contains(".dzi") || uri.contains("_files/"));
 
 fn is_tile_url(input: &str) -> bool {
     TILE_URL.is_match(input)
@@ -36,6 +43,27 @@ fn tile_metadata(input: &str) -> Result<Request, DiscoveryError> {
         .find(input)
         .ok_or_else(|| DiscoveryError::Session("not a DZI tile URL".into()))?;
     Ok(Request::new(format!("{}.dzi", &input[..matched.start()])))
+}
+
+fn contains_seadragon_embed(contents: &[u8]) -> bool {
+    SEADRAGON_EMBED.is_match(contents)
+}
+
+fn follow_seadragon_embed(
+    _: &DiscoveryContext<'_>,
+    resource: DiscoveryResource<'_>,
+) -> Result<DiscoveryStep, DiscoveryError> {
+    let metadata = SEADRAGON_EMBED
+        .captures(resource.bytes())
+        .and_then(|captures| captures.name("metadata"))
+        .map(|capture| std::str::from_utf8(capture.as_bytes()))
+        .transpose()
+        .map_err(|_| DiscoveryError::Session("Seadragon metadata URL is not UTF-8".into()))?
+        .ok_or_else(|| DiscoveryError::Session("Seadragon embed lacks a metadata URL".into()))?;
+    Ok(DiscoveryStep::Follow(Request::new(resolve_relative(
+        resource.final_uri(),
+        metadata,
+    ))))
 }
 
 fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
