@@ -216,7 +216,7 @@ fn dezoomer_iiif_image_service_cases() {
     assert!(
         tile_urls(image.levels.last().unwrap())
             .iter()
-            .any(|url| url == "http://127.0.0.1:9877/iiif/v2/0,0,256,256/256,256/0/native.png")
+            .any(|url| url == "http://127.0.0.1:9877/iiif/v2/256,256,256,256/256,256/0/native.png")
     );
 
     let input = "https://fixtures.test/iiif-v3/info.json";
@@ -307,6 +307,18 @@ fn dezoomer_iiif_image_service_cases() {
         tile_urls(image.levels.last().unwrap()),
         ["https://fixtures.test/iiif-malformed-tile/0,0,512,512/512,512/0/default.jpg"]
     );
+
+    let input = "https://fixtures.test/iiif-v2/edge-dimensions/info.json";
+    let edge_dimensions = br#"{
+      "@context": "http://iiif.io/api/image/2/context.json",
+      "@id": "https://fixtures.test/iiif-v2/edge-dimensions",
+      "width": 600, "height": 384,
+      "tiles": [{ "width": 256, "height": 256, "scaleFactors": [1] }],
+      "qualities": ["default"], "formats": ["jpg"]
+    }"#;
+    let image = ready_image(discover(input, &[(input, edge_dimensions)]).unwrap());
+    assert!(tile_urls(image.levels.last().unwrap()).iter().any(|url| url
+        == "https://fixtures.test/iiif-v2/edge-dimensions/256,256,256,128/256,128/0/default.jpg"));
 }
 
 #[test]
@@ -377,7 +389,25 @@ fn dezoomer_iipimage_query_case() {
     assert_eq!(image.format.as_str(), "iipimage");
     let urls = tile_urls(image.levels.last().unwrap());
     assert_eq!(urls[0], "https://fixtures.test/iip?FIF=/image.tif&JTL=1,0");
-    assert_eq!(urls[2], "https://fixtures.test/iip?FIF=/image.tif&JTL=1,2");
+    assert_eq!(urls[3], "https://fixtures.test/iip?FIF=/image.tif&JTL=1,3");
+}
+
+#[test]
+fn dezoomer_krpano_explicit_level_case() {
+    let input = "https://fixtures.test/krpano/pano.xml";
+    let metadata = br#"<krpano>
+      <image tilesize="256">
+        <level tiledimagewidth="512" tiledimageheight="512">
+          <front url="tiles/l%l/%v_%h.jpg" />
+        </level>
+      </image>
+    </krpano>"#;
+    let image = ready_image(discover(input, &[(input, metadata)]).unwrap());
+    assert_eq!(image.format.as_str(), "krpano");
+    assert_eq!(
+        tile_urls(image.levels.last().unwrap()).last(),
+        Some(&"https://fixtures.test/krpano/tiles/l1/2_2.jpg".to_owned())
+    );
 }
 
 fn resolve_generic(template: &str, available: &[(u32, u32, Vec2d)]) -> (Grid, Vec<Vec2d>) {
