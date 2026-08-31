@@ -1,0 +1,9 @@
+{
+  "@context": "http://iiif.io/api/image/2/context.json",
+  "@id": "https://fixtures.test/iiif-v2/edge-dimensions",
+  "width": 600,
+  "height": 384,
+  "tiles": [{ "width": 256, "height": 256, "scaleFactors": [1] }],
+  "qualities": ["default"],
+  "formats": ["jpg"]
+}
