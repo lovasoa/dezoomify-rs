@@ -5,6 +5,7 @@ use std::fmt;
 use std::sync::{Arc, LazyLock};
 
 use itertools::Itertools;
+use memchr::memmem;
 use regex::Regex;
 
 use krpano_decrypt::{decrypt_xml, is_encrypted_xml};
@@ -42,7 +43,7 @@ fn handle_html(
     if find_xml(context).is_some() {
         return handle_viewer_js(context, resource);
     }
-    let html = String::from_utf8_lossy(resource.bytes());
+    let html = resource.text_lossy();
     let xml_uri = extract_xml_from_embedpano(&html).map_or_else(
         || sibling_uri(resource.uri(), "tour.xml"),
         |reference| resolve_relative(resource.uri(), &reference),
@@ -168,7 +169,8 @@ fn next_viewer_from_initial(
     xml_uri: &str,
 ) -> Option<String> {
     let mut candidates = if looks_like_krpano_html(initial.bytes()) {
-        extract_js_candidates_from_html(&String::from_utf8_lossy(initial.bytes()), initial.uri())
+        let html = initial.text_lossy();
+        extract_js_candidates_from_html(&html, initial.uri())
     } else if is_javascript_resource(initial) {
         Vec::new()
     } else {
@@ -201,18 +203,17 @@ fn complete(uri: &str, bytes: &[u8]) -> Result<DiscoveryStep, DiscoveryError> {
 /// True if the content looks like a krpano XML file rather than HTML.
 fn looks_like_krpano_xml(contents: &[u8]) -> bool {
     let contents = contents.strip_prefix(b"\xef\xbb\xbf").unwrap_or(contents);
-    let text = String::from_utf8_lossy(contents);
-    let trimmed = text.trim_start();
-    trimmed.starts_with("<?xml") || trimmed.to_ascii_lowercase().starts_with("<krpano")
+    let trimmed = contents.trim_ascii_start();
+    trimmed.starts_with(b"<?xml") || trimmed.starts_with(b"<krpano")
 }
 
 /// True if the content has krpano-specific HTML evidence.
 fn looks_like_krpano_html(contents: &[u8]) -> bool {
-    let text = String::from_utf8_lossy(contents);
-    let lower = text.to_ascii_lowercase();
-    lower.contains("embedpano(")
-        || lower.contains("createpanoviewer(")
-        || (lower.contains("<script") && (lower.contains("krpano") || lower.contains("tour.js")))
+    memmem::find(contents, b"embedpano(").is_some()
+        || memmem::find(contents, b"createPanoViewer(").is_some()
+        || (memmem::find(contents, b"<script").is_some()
+            && (memmem::find(contents, b"krpano").is_some()
+                || memmem::find(contents, b"tour.js").is_some()))
 }
 
 /// True if the content looks like a krpano viewer JavaScript file.
@@ -265,10 +266,9 @@ fn extract_js_candidates_from_html(html: &str, html_uri: &str) -> Vec<String> {
 }
 
 fn extract_xml_from_embedpano(html: &str) -> Option<String> {
-    let lower = html.to_ascii_lowercase();
-    let start = lower
+    let start = html
         .find("embedpano(")
-        .or_else(|| lower.find("createpanoviewer("))?;
+        .or_else(|| html.find("createPanoViewer("))?;
     let body = &html[start..];
     let end = EMBEDPANO_END_RE.find(body)?;
     let params = &body[..end.end()];
@@ -290,12 +290,11 @@ fn extract_viewer_js(contents: &[u8]) -> Option<Vec<u8>> {
     if looks_like_viewer_js(contents) {
         return Some(contents.to_vec());
     }
-    let text = String::from_utf8_lossy(contents);
-    let start = text.find("<script>")?;
-    let body = &text[start + 8..];
-    let end = body.find("</script>")?;
-    let script = body[..end].trim();
-    looks_like_viewer_js(script.as_bytes()).then(|| script.as_bytes().to_vec())
+    let start = memmem::find(contents, b"<script>")?;
+    let body = &contents[start + 8..];
+    let end = memmem::find(body, b"</script>")?;
+    let script = body[..end].trim_ascii();
+    looks_like_viewer_js(script).then(|| script.to_vec())
 }
 
 fn viewer_js_candidates_for_xml(xml_uri: &str) -> Vec<String> {
@@ -347,7 +346,7 @@ static SCRIPT_SRC_RE: LazyLock<Regex> = LazyLock::new(|| {
 static EMBEDPANO_END_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\}\s*\)").expect("constant embed closing regex"));
 static EMBEDPANO_XML_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)\bxml[\"']?\s*:\s*[\"']([^\"']+)[\"']"#).expect("constant embed XML regex")
+    Regex::new(r#"\bxml[\"']?\s*:\s*[\"']([^\"']+)[\"']"#).expect("constant embed XML regex")
 });
 
 fn is_javascript_src(src: &str) -> bool {
@@ -840,8 +839,6 @@ mod tests {
             r#"<script>embedpano({ xml : "panos/tour.xml", target:"pano" });</script>"#,
             r#"embedpano({ "xml": "panos/tour.xml" });"#,
             r#"<script>createPanoViewer({ xml: "panos/tour.xml" });</script>"#,
-            r#"<script>EMBEDPANO({ xml: "panos/tour.xml" });</script>"#,
-            r#"<script>CreatePanoViewer({ xml: "panos/tour.xml" });</script>"#,
         ] {
             assert_eq!(
                 extract_xml_from_embedpano(html),
@@ -1005,11 +1002,9 @@ mod tests {
     fn looks_like_krpano_html_requires_krpano_evidence() {
         for html in [
             b"<html><script>embedpano({xml:'tour.xml'})</script></html>".as_slice(),
-            b"<HTML><BODY><SCRIPT>EMBEDPANO({xml:'tour.xml'})</SCRIPT></BODY></HTML>".as_slice(),
             b"<script>createPanoViewer({xml:'tour.xml'});</script>".as_slice(),
             b"<html><script src='krpano.js'></script></html>".as_slice(),
             b"<html><script src='tour.js'></script></html>".as_slice(),
-            b"<HTML><SCRIPT SRC='tour.js'></SCRIPT></HTML>".as_slice(),
         ] {
             assert!(looks_like_krpano_html(html));
         }

@@ -4,6 +4,7 @@
 //! resource to follow next. The application owns acquisition and feeds each
 //! outcome to [`DiscoveryOperation`].
 
+use std::borrow::Cow;
 use std::fmt;
 
 use super::model::{ImageCatalog, Request};
@@ -90,6 +91,12 @@ impl<'a> DiscoveryResource<'a> {
     #[must_use]
     pub fn bytes(self) -> &'a [u8] {
         self.bytes
+    }
+
+    /// Decode resource bytes as UTF-8, replacing malformed sequences.
+    #[must_use]
+    pub fn text_lossy(self) -> Cow<'a, str> {
+        String::from_utf8_lossy(self.bytes)
     }
 }
 pub struct DiscoveryContext<'a> {
@@ -648,6 +655,25 @@ mod tests {
         operation
             .provide(ResourceResponse::new(need.id, b"metadata"))
             .unwrap();
+        assert!(operation.finish().unwrap().is_empty());
+    }
+
+    fn text_catalog(
+        _: &DiscoveryContext<'_>,
+        resource: DiscoveryResource<'_>,
+    ) -> Result<DiscoveryStep, DiscoveryError> {
+        assert_eq!(resource.text_lossy(), "metadata\u{fffd}");
+        Ok(DiscoveryStep::Complete(ImageCatalog::default()))
+    }
+
+    const TEXT: &[DiscoveryRoute] = &[DiscoveryMatch::Any.then(text_catalog)];
+
+    #[test]
+    fn resources_expose_lossy_text() {
+        let mut registry = Registry::new();
+        registry.register(DezoomerSpec::new("text", TEXT));
+        let mut operation = registry.start("memory://metadata");
+        provide(&mut operation, b"metadata\xff");
         assert!(operation.finish().unwrap().is_empty());
     }
 
