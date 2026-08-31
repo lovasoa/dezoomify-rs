@@ -3,7 +3,7 @@
 use std::sync::{Arc, LazyLock};
 
 use image_properties::ImageProperties;
-use regex::Regex;
+use regex::{Regex, bytes::Regex as BytesRegex};
 
 use crate::Vec2d;
 use crate::core::{
@@ -23,25 +23,27 @@ const ROUTES: &[DiscoveryRoute] = &[
 
 pub const SPEC: DezoomerSpec = DezoomerSpec::new("zoomify", ROUTES).preferring(is_zoomify_url);
 
-static SHOW_IMAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)(?:\bZ\s*\.\s*)?\bshowImage\s*\([^,]*,\s*(?:"([^"]+)"|'([^']+)')"#)
+static SHOW_IMAGE_RE: LazyLock<BytesRegex> = LazyLock::new(|| {
+    BytesRegex::new(r#"(?i)(?:\bZ\s*\.\s*)?\bshowImage\s*\([^,]*,\s*["'](?P<image>[^"']+)["']"#)
         .expect("constant Zoomify showImage pattern")
 });
 
-static FLASH_IMAGE_PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)\bzoomifyImagePath\s*=\s*(?:"([^"]*)"|'([^']*)'|([^'"&\s]+))"#)
-        .expect("constant Zoomify FlashVars pattern")
+static FLASH_IMAGE_PATH_RE: LazyLock<BytesRegex> = LazyLock::new(|| {
+    BytesRegex::new(
+        r#"(?i)\bzoomifyImagePath\s*=\s*(?:["'](?P<image>[^"']*)["']|(?P<bare>[^'"&\s]+))"#,
+    )
+    .expect("constant Zoomify FlashVars pattern")
 });
 
-static TILE_SERVICE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r#"(?is)\btype["']?\s*:\s*["']zoomifytileservice["'].*?\btilesUrl["']?\s*:\s*["']([^"']+)"#,
+static TILE_SERVICE_RE: LazyLock<BytesRegex> = LazyLock::new(|| {
+    BytesRegex::new(
+        r#"(?is)\btype["']?\s*:\s*["']zoomifytileservice["'].*?\btilesUrl["']?\s*:\s*["'](?P<image>[^"']+)"#,
     )
     .expect("constant Zoomify tile service pattern")
 });
 
-static HTML_BASE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?is)<base\s+[^>]*\bhref\s*=\s*["']([^"']*)"#)
+static HTML_BASE_RE: LazyLock<BytesRegex> = LazyLock::new(|| {
+    BytesRegex::new(r#"(?is)<base\s+[^>]*\bhref\s*=\s*["'](?P<base>[^"']*)"#)
         .expect("constant HTML base pattern")
 });
 
@@ -62,11 +64,10 @@ fn extract_image_properties_url(
     _: &DiscoveryContext<'_>,
     resource: crate::core::DiscoveryResource<'_>,
 ) -> Result<DiscoveryStep, DiscoveryError> {
-    let html = String::from_utf8_lossy(resource.bytes());
-    let image_path = extract_image_path(&html).ok_or_else(|| {
+    let image_path = extract_image_path(resource.bytes()).ok_or_else(|| {
         DiscoveryError::Session("Zoomify viewer page does not declare an image path".into())
     })?;
-    let page_base_uri = extract_html_base(&html).map_or_else(
+    let page_base_uri = extract_html_base(resource.bytes()).map_or_else(
         || resource.final_uri().to_owned(),
         |base| resolve_relative(resource.final_uri(), &base),
     );
@@ -78,10 +79,9 @@ fn extract_image_properties_url(
 }
 
 fn contains_zoomify_declaration(contents: &[u8]) -> bool {
-    let text = String::from_utf8_lossy(contents);
-    SHOW_IMAGE_RE.is_match(&text)
-        || FLASH_IMAGE_PATH_RE.is_match(&text)
-        || TILE_SERVICE_RE.is_match(&text)
+    SHOW_IMAGE_RE.is_match(contents)
+        || FLASH_IMAGE_PATH_RE.is_match(contents)
+        || TILE_SERVICE_RE.is_match(contents)
 }
 
 fn append_path_component(uri: &str, component: &str) -> String {
@@ -90,38 +90,21 @@ fn append_path_component(uri: &str, component: &str) -> String {
     format!("{}/{component}{suffix}", path.trim_end_matches('/'))
 }
 
-fn extract_image_path(html: &str) -> Option<String> {
-    let show_image = SHOW_IMAGE_RE.captures_iter(html).find_map(|captures| {
-        Some((
-            captures.get(0)?.start(),
-            captures
-                .get(1)
-                .or_else(|| captures.get(2))?
-                .as_str()
-                .replace("&amp;", "&"),
-        ))
-    });
+fn extract_image_path(html: &[u8]) -> Option<String> {
+    let show_image = SHOW_IMAGE_RE
+        .captures_iter(html)
+        .find_map(|captures| Some((captures.get(0)?.start(), capture_text(&captures, "image")?)));
     let flash = FLASH_IMAGE_PATH_RE
         .captures_iter(html)
         .find_map(|captures| {
             Some((
                 captures.get(0)?.start(),
-                captures
-                    .get(1)
-                    .or_else(|| captures.get(2))
-                    .or_else(|| captures.get(3))?
-                    .as_str()
-                    .replace("&amp;", "&"),
+                capture_text(&captures, "image").or_else(|| capture_text(&captures, "bare"))?,
             ))
         });
     let tile_service = TILE_SERVICE_RE
         .captures_iter(html)
-        .filter_map(|captures| {
-            Some((
-                captures.get(0)?.start(),
-                captures.get(1)?.as_str().replace("&amp;", "&"),
-            ))
-        })
+        .filter_map(|captures| Some((captures.get(0)?.start(), capture_text(&captures, "image")?)))
         .min_by_key(|(offset, _)| *offset);
     [show_image, flash, tile_service]
         .into_iter()
@@ -130,11 +113,16 @@ fn extract_image_path(html: &str) -> Option<String> {
         .map(|(_, path)| path)
 }
 
-fn extract_html_base(html: &str) -> Option<String> {
+fn capture_text(captures: &regex::bytes::Captures<'_>, name: &str) -> Option<String> {
+    captures
+        .name(name)
+        .map(|capture| String::from_utf8_lossy(capture.as_bytes()).replace("&amp;", "&"))
+}
+
+fn extract_html_base(html: &[u8]) -> Option<String> {
     HTML_BASE_RE
         .captures(html)
-        .and_then(|captures| captures.get(1))
-        .map(|base| base.as_str().replace("&amp;", "&"))
+        .and_then(|captures| capture_text(&captures, "base"))
 }
 
 #[allow(clippy::unnecessary_wraps)]
@@ -371,7 +359,10 @@ mod tests {
                 "/zoomify",
             ),
         ] {
-            assert_eq!(extract_image_path(page).as_deref(), Some(expected));
+            assert_eq!(
+                extract_image_path(page.as_bytes()).as_deref(),
+                Some(expected)
+            );
         }
     }
 

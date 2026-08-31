@@ -42,7 +42,7 @@ fn handle_html(
     if find_xml(context).is_some() {
         return handle_viewer_js(context, resource);
     }
-    let html = String::from_utf8_lossy(resource.bytes());
+    let html = resource.text_lossy();
     let xml_uri = extract_xml_from_embedpano(&html).map_or_else(
         || sibling_uri(resource.uri(), "tour.xml"),
         |reference| resolve_relative(resource.uri(), &reference),
@@ -168,7 +168,8 @@ fn next_viewer_from_initial(
     xml_uri: &str,
 ) -> Option<String> {
     let mut candidates = if looks_like_krpano_html(initial.bytes()) {
-        extract_js_candidates_from_html(&String::from_utf8_lossy(initial.bytes()), initial.uri())
+        let html = initial.text_lossy();
+        extract_js_candidates_from_html(&html, initial.uri())
     } else if is_javascript_resource(initial) {
         Vec::new()
     } else {
@@ -201,18 +202,26 @@ fn complete(uri: &str, bytes: &[u8]) -> Result<DiscoveryStep, DiscoveryError> {
 /// True if the content looks like a krpano XML file rather than HTML.
 fn looks_like_krpano_xml(contents: &[u8]) -> bool {
     let contents = contents.strip_prefix(b"\xef\xbb\xbf").unwrap_or(contents);
-    let text = String::from_utf8_lossy(contents);
-    let trimmed = text.trim_start();
-    trimmed.starts_with("<?xml") || trimmed.to_ascii_lowercase().starts_with("<krpano")
+    let trimmed = contents.trim_ascii_start();
+    trimmed.starts_with(b"<?xml")
+        || trimmed
+            .get(..7)
+            .is_some_and(|start| start.eq_ignore_ascii_case(b"<krpano"))
 }
 
 /// True if the content has krpano-specific HTML evidence.
 fn looks_like_krpano_html(contents: &[u8]) -> bool {
-    let text = String::from_utf8_lossy(contents);
-    let lower = text.to_ascii_lowercase();
-    lower.contains("embedpano(")
-        || lower.contains("createpanoviewer(")
-        || (lower.contains("<script") && (lower.contains("krpano") || lower.contains("tour.js")))
+    contains_ascii_case_insensitive(contents, b"embedpano(")
+        || contains_ascii_case_insensitive(contents, b"createpanoviewer(")
+        || (contains_ascii_case_insensitive(contents, b"<script")
+            && (contains_ascii_case_insensitive(contents, b"krpano")
+                || contains_ascii_case_insensitive(contents, b"tour.js")))
+}
+
+fn contains_ascii_case_insensitive(contents: &[u8], needle: &[u8]) -> bool {
+    contents
+        .windows(needle.len())
+        .any(|candidate| candidate.eq_ignore_ascii_case(needle))
 }
 
 /// True if the content looks like a krpano viewer JavaScript file.
@@ -290,12 +299,11 @@ fn extract_viewer_js(contents: &[u8]) -> Option<Vec<u8>> {
     if looks_like_viewer_js(contents) {
         return Some(contents.to_vec());
     }
-    let text = String::from_utf8_lossy(contents);
-    let start = text.find("<script>")?;
-    let body = &text[start + 8..];
-    let end = body.find("</script>")?;
-    let script = body[..end].trim();
-    looks_like_viewer_js(script.as_bytes()).then(|| script.as_bytes().to_vec())
+    let start = contents.windows(8).position(|part| part == b"<script>")?;
+    let body = &contents[start + 8..];
+    let end = body.windows(9).position(|part| part == b"</script>")?;
+    let script = body[..end].trim_ascii();
+    looks_like_viewer_js(script).then(|| script.to_vec())
 }
 
 fn viewer_js_candidates_for_xml(xml_uri: &str) -> Vec<String> {
