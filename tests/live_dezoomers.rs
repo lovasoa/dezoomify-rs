@@ -1,4 +1,4 @@
-fn run_live_dezoomer(name: &str, url: &str) {
+fn run_live_dezoomer(name: &str, url: &str, extra_args: &[&str]) {
     if std::env::var_os("DEZOOMIFY_LIVE_TESTS").is_none() {
         return;
     }
@@ -6,7 +6,7 @@ fn run_live_dezoomer(name: &str, url: &str) {
     let temp_dir = tempfile::tempdir().unwrap();
     let output = temp_dir.path().join(format!("{name}.png"));
     let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_dezoomify-rs"));
-    command.args([url, output.to_str().unwrap(), "--max-width", "1000"]);
+    command.args([url, output.to_str().unwrap(), "--max-width", "1200"]);
     let result = command
         .args([
             "--retries",
@@ -20,6 +20,7 @@ fn run_live_dezoomer(name: &str, url: &str) {
             "--timeout",
             "30s",
         ])
+        .args(extra_args)
         .output()
         .unwrap();
     assert!(
@@ -32,10 +33,10 @@ fn run_live_dezoomer(name: &str, url: &str) {
 }
 
 macro_rules! live_dezoomer {
-    ($name:ident, $url:literal) => {
+    ($name:ident, $url:literal $(, $arg:literal)*) => {
         #[test]
         fn $name() {
-            run_live_dezoomer(stringify!($name), $url);
+            run_live_dezoomer(stringify!($name), $url, &[$($arg),*]);
         }
     };
 }
@@ -91,6 +92,15 @@ live_dezoomer!(
     "https://www.nationalgallery.org.uk/paintings/vincent-van-gogh-sunflowers"
 );
 live_dezoomer!(
+    iiif_philadelphia_museum,
+    "https://www.philamuseum.org/objects/101731"
+);
+live_dezoomer!(
+    iiif_oklahoma_contentdm,
+    "https://dc.library.okstate.edu/digital/collection/OKMaps/id/6483/rec/6",
+    "--accept-invalid-certs"
+);
+live_dezoomer!(
     iiif_liechtenstein_collections,
     "https://www.liechtensteincollections.at/en/collections-online/forest-landscape"
 );
@@ -101,10 +111,6 @@ live_dezoomer!(
 live_dezoomer!(
     iipimage,
     "https://image.hng-data.org/iipsrv/iipsrv.fcgi?FIF=/HNG/016/card/0178.tif&OBJ=Max-size&OBJ=Tile-size&OBJ=Resolution-number"
-);
-live_dezoomer!(
-    nypl,
-    "https://digitalcollections.nypl.org/items/ad4ea2ed-52c0-cfb1-e040-e00a1806797e"
 );
 live_dezoomer!(
     custom_yaml,

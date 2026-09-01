@@ -58,6 +58,8 @@ cargo fmt
 
 - Keep `dezoomify-core` pure: no runtime crates (`reqwest`, `tokio`, `image`,
   filesystem). The `log` facade is allowed.
+- Put site-specific discovery code in a separate file and add a passing,
+  manually checked `tests/live_dezoomers.rs` case with it.
 - CLI `-H` headers must win over format-generated per-request headers
   ([`effective_request_headers`](src/network.rs)).
 - Fixtures: `dezoomify-core/testdata/` for core tests, `testdata/` for app
