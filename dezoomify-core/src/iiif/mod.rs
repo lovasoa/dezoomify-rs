@@ -1,37 +1,44 @@
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use custom_error::custom_error;
-use regex::bytes::Regex as BytesRegex;
 use tile_info::ImageInfo;
+use url::Url;
 
 use crate::Vec2d;
 use crate::core::{
-    CatalogEntry, DeferredImage, DezoomerSpec, DiscoveryContext, DiscoveryError, DiscoveryMatch,
-    DiscoveryResource, DiscoveryRoute, DiscoveryStep, Grid, GridRequests, GridTile, ImageCatalog,
-    ImageDescriptor, LevelDescriptor, Request, StableId,
+    CatalogEntry, DeferredImage, DezoomerSpec, DiscoveryError, DiscoveryMatch, DiscoveryRoute,
+    Grid, GridRequests, GridTile, ImageCatalog, ImageDescriptor, LevelDescriptor, Request,
+    StableId,
 };
 use crate::iiif::tile_info::TileSizeFormat;
 use crate::json_utils::all_json;
 
+mod contentdm;
 pub mod manifest_types;
+mod micrio;
+mod onb;
 pub mod tile_info;
 
 #[cfg(test)]
 mod title_tests;
 
-static MICRIO_CUSTOM_ELEMENT: LazyLock<BytesRegex> = LazyLock::new(|| {
-    BytesRegex::new(r#"(?is)<micr-io\b[^>]*\bid\s*=\s*["'](?P<id>[A-Za-z0-9]{5})["']"#)
-        .expect("constant Micrio custom element pattern")
-});
-
 const ROUTES: &[DiscoveryRoute] = &[
-    DiscoveryMatch::ContentPredicate(contains_micrio_element).then(follow_micrio_element),
+    DiscoveryMatch::UrlPredicate(has_manifest_parameter).map_url(manifest_parameter),
+    onb::ROUTE,
+    contentdm::RECORD_ROUTE,
+    contentdm::METADATA_ROUTE,
+    micrio::ROUTE,
     DiscoveryMatch::Any.extract(catalog),
 ];
 
 /// IIIF dezoomer. See <https://iiif.io/>.
 pub const SPEC: DezoomerSpec = DezoomerSpec::new("iiif", ROUTES).preferring(|uri| {
-    uri.contains("info.json") || uri.contains("iiif") || uri.contains("manifest.json")
+    uri.contains("info.json")
+        || uri.contains("iiif")
+        || uri.contains("manifest.json")
+        || has_manifest_parameter(uri)
+        || onb::prefers(uri)
+        || contentdm::prefers(uri)
 });
 
 /// Determines the best title for an image from IIIF manifest metadata
@@ -74,24 +81,27 @@ impl From<IIIFError> for DiscoveryError {
     }
 }
 
-fn contains_micrio_element(contents: &[u8]) -> bool {
-    MICRIO_CUSTOM_ELEMENT.is_match(contents)
+fn has_manifest_parameter(uri: &str) -> bool {
+    manifest_parameter_value(uri).is_some()
 }
 
-fn follow_micrio_element(
-    _: &DiscoveryContext<'_>,
-    resource: DiscoveryResource<'_>,
-) -> Result<DiscoveryStep, DiscoveryError> {
-    let id = MICRIO_CUSTOM_ELEMENT
-        .captures(resource.bytes())
-        .and_then(|captures| captures.name("id"))
-        .map(|capture| std::str::from_utf8(capture.as_bytes()))
-        .transpose()
-        .map_err(|_| DiscoveryError::Session("Micrio custom element ID is not UTF-8".into()))?
-        .ok_or_else(|| DiscoveryError::Session("Micrio custom element lacks an ID".into()))?;
-    Ok(DiscoveryStep::Follow(Request::new(format!(
-        "https://i.micr.io/{id}/info.json"
-    ))))
+fn manifest_parameter(uri: &str) -> Result<Request, DiscoveryError> {
+    manifest_parameter_value(uri)
+        .map(Request::new)
+        .ok_or_else(|| DiscoveryError::Session("missing IIIF manifest parameter".into()))
+}
+
+fn manifest_parameter_value(uri: &str) -> Option<String> {
+    let url = Url::parse(uri).ok()?;
+    url.query_pairs()
+        .find_map(|(name, value)| (name == "manifest").then(|| value.into_owned()))
+        .or_else(|| {
+            url.fragment().and_then(|fragment| {
+                url::form_urlencoded::parse(fragment.trim_start_matches('?').as_bytes())
+                    .find_map(|(name, value)| (name == "manifest").then(|| value.into_owned()))
+            })
+        })
+        .filter(|value| !value.is_empty())
 }
 
 fn catalog(uri: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryError> {

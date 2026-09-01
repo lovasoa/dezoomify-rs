@@ -1,0 +1,28 @@
+{
+  "@context": "http://iiif.io/api/presentation/3/context.json",
+  "id": "https://api.onb.ac.at/iiif/presentation/v3/manifest/10048A37",
+  "type": "Manifest",
+  "items": [{
+    "id": "https://api.onb.ac.at/iiif/presentation/v3/manifest/10048A37/canvas/1",
+    "type": "Canvas",
+    "items": [{
+      "id": "https://api.onb.ac.at/iiif/presentation/v3/manifest/10048A37/page/1",
+      "type": "AnnotationPage",
+      "items": [{
+        "id": "https://api.onb.ac.at/iiif/presentation/v3/manifest/10048A37/annotation/1",
+        "type": "Annotation",
+        "motivation": "painting",
+        "body": {
+          "id": "https://api.onb.ac.at/iiif/image/v3/10048A37/uk4nGb4kQHe3msbC/full/300,/0/default.jpg",
+          "type": "Image",
+          "format": "image/jpeg",
+          "service": [{
+            "id": "https://api.onb.ac.at/iiif/image/v3/10048A37/uk4nGb4kQHe3msbC",
+            "type": "ImageService3",
+            "profile": "level2"
+          }]
+        }
+      }]
+    }]
+  }]
+}

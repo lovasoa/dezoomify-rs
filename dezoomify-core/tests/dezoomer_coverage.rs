@@ -478,6 +478,75 @@ fn dezoomer_iiif_plain_image_manifest_remains_deferred() {
 }
 
 #[test]
+fn dezoomer_iiif_url_adapters_follow_metadata() {
+    let manifest = coverage_fixture!("iiif/presentation-manifest.json");
+    for input in [
+        "https://fixtures.test/mirador?manifest=https%3A%2F%2Ffixtures.test%2Fiiif-presentation%2Fmanifest.json",
+        "https://fixtures.test/uv/#?manifest=https%3A%2F%2Ffixtures.test%2Fiiif-presentation%2Fmanifest.json",
+    ] {
+        let catalog = discover(
+            input,
+            &[(
+                "https://fixtures.test/iiif-presentation/manifest.json",
+                manifest,
+            )],
+        )
+        .unwrap();
+        let [CatalogEntry::Deferred(image)] = catalog.entries() else {
+            panic!("manifest adapter must produce one deferred image");
+        };
+        assert_eq!(
+            image.uri,
+            "https://fixtures.test/iiif-presentation/image/info.json"
+        );
+    }
+
+    for input in [
+        "https://viewer.onb.ac.at/10048A37/",
+        "https://viewer.onb.ac.at/10048A37/137",
+        "https://api.onb.ac.at/iiif/presentation/v3/manifest/10048A37",
+        "https://digital.onb.ac.at/RepViewer/viewer.faces?doc=10048A37&order=1",
+    ] {
+        let catalog = discover(
+            input,
+            &[(
+                "https://api.onb.ac.at/iiif/presentation/v3/manifest/10048A37",
+                coverage_fixture!("iiif/onb-manifest.json"),
+            )],
+        )
+        .unwrap();
+        let [CatalogEntry::Deferred(image)] = catalog.entries() else {
+            panic!("ONB adapter must produce one deferred image");
+        };
+        assert_eq!(
+            image.uri,
+            "https://api.onb.ac.at/iiif/image/v3/10048A37/uk4nGb4kQHe3msbC/info.json"
+        );
+    }
+
+    let input = "https://fixtures.test/digital/collection/OKMaps/id/6483/rec/6";
+    let image = ready_image(
+        discover(
+            input,
+            &[
+                (
+                    "https://fixtures.test/digital/api/singleitem/collection/OKMaps/id/6483",
+                    coverage_fixture!("iiif/contentdm-metadata.json"),
+                ),
+                (
+                    "https://fixtures.test/digital/iiif/OKMaps/6483/info.json",
+                    coverage_fixture!("iiif/contentdm-info.json"),
+                ),
+            ],
+        )
+        .unwrap(),
+    );
+    assert_eq!(image.format.as_str(), "iiif");
+    assert!(tile_urls(image.levels.last().unwrap()).iter().any(|url| url
+        == "https://fixtures.test/digital/iiif/OKMaps/6483/256,256,256,256/256,256/0/native.jpg"));
+}
+
+#[test]
 fn dezoomer_iipimage_query_case() {
     let input = "https://fixtures.test/iip?FIF=/image.tif";
     let metadata_input =
