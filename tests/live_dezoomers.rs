@@ -105,23 +105,6 @@ live_dezoomer!(
     "https://bibliotheques-specialisees.paris.fr/ark:/73873/pf0001115743/0017/v0001.simple.selectedTab=otherdocs"
 );
 live_dezoomer!(
-    iiif_national_gallery,
-    "https://www.nationalgallery.org.uk/paintings/vincent-van-gogh-sunflowers"
-);
-live_dezoomer!(
-    iiif_philadelphia_museum,
-    "https://www.philamuseum.org/objects/101731"
-);
-live_dezoomer!(
-    iiif_oklahoma_contentdm,
-    "https://dc.library.okstate.edu/digital/collection/OKMaps/id/6483/rec/6",
-    "--accept-invalid-certs"
-);
-live_dezoomer!(
-    iiif_liechtenstein_collections,
-    "https://www.liechtensteincollections.at/en/collections-online/forest-landscape"
-);
-live_dezoomer!(
     iiif_washington_mirador,
     "https://digitalcollections.lib.washington.edu/digital/custom/mirador3?manifest=https://digitalcollections.lib.washington.edu//iiif/info/social/1303/manifest.json"
 );

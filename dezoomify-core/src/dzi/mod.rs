@@ -27,7 +27,6 @@ static SEADRAGON_EMBED: LazyLock<BytesRegex> = LazyLock::new(|| {
 const ROUTES: &[DiscoveryRoute] = &[
     DiscoveryMatch::UrlPredicate(is_tile_url).map_url(tile_metadata),
     DiscoveryMatch::UrlPredicate(paris::is_ark).map_url(paris::reader),
-    DiscoveryMatch::ContentPredicate(prado::contains_pyramid).then(prado::load_pyramid),
     DiscoveryMatch::ContentPredicate(paris::contains_manifest).then(paris::follow_manifest),
     DiscoveryMatch::ContentPredicate(contains_seadragon_embed).then(follow_seadragon_embed),
     DiscoveryMatch::Any.extract(load_catalog),
@@ -69,7 +68,6 @@ fn follow_seadragon_embed(
 }
 
 mod paris;
-mod prado;
 
 fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
     let xml_result = serde_xml_rs::from_reader::<'_, DziFile, _>(contents);

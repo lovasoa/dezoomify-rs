@@ -333,21 +333,6 @@ fn dezoomer_deepzoom_overlap_case() {
 }
 
 #[test]
-fn dezoomer_prado_pyramid_page_case() {
-    let input = "https://www.museodelprado.es/en/the-collection/art-work/las-meninas/example";
-    let image =
-        ready_image(discover(input, &[(input, coverage_fixture!("deepzoom/prado.html"))]).unwrap());
-    let level = image.levels.last().unwrap();
-    assert_eq!(level.source.image_size(), Some(Vec2d { x: 2362, y: 2697 }));
-    assert_eq!(level.source.tile_size(), Some(Vec2d::square(256)));
-    assert_eq!(grid(level).overlap(), Vec2d::square(1));
-    assert_eq!(
-        tile_urls(level)[0],
-        "https://content3.cdnprado.net/imagenes/Documentos/imgsem/9f/9fdc/9fdc7800-9ade-48b0-ab8b-edee94ea877f/41866afd-6396-45e7-bd26-944263cf92f7/12/0_0.jpg"
-    );
-}
-
-#[test]
 fn dezoomer_paris_ark_page_case() {
     let input = "https://bibliotheques-specialisees.paris.fr/ark:/73873/pf0001115743/0017/v0001.simple.selectedTab=otherdocs";
     let reader = "https://bibliotheques-specialisees.paris.fr/in/imageReader.xhtml?id=ark:/73873/pf0001115743/0017&updateUrl=updateUrl1653&ark=/73873/pf0001115743/0017/v0001.simple.selectedTab=otherdocs&selectedTab=otherdocs";
