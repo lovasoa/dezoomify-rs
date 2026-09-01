@@ -2,7 +2,13 @@ use std::sync::LazyLock;
 
 use regex::bytes::Regex as BytesRegex;
 
-use crate::core::{DiscoveryContext, DiscoveryError, DiscoveryResource, DiscoveryStep, Request};
+use crate::core::{
+    DiscoveryContext, DiscoveryError, DiscoveryMatch, DiscoveryResource, DiscoveryRoute,
+    DiscoveryStep, Request,
+};
+
+pub(super) const ROUTE: DiscoveryRoute =
+    DiscoveryMatch::ContentPredicate(contains_element).then(follow_element);
 
 static ELEMENT: LazyLock<BytesRegex> = LazyLock::new(|| {
     BytesRegex::new(r#"(?is)<micr-io\b[^>]*\bid\s*=\s*["'](?P<id>[A-Za-z0-9]{5})["']"#)

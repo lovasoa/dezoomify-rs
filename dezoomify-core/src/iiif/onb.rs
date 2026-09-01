@@ -1,6 +1,12 @@
 use url::Url;
 
-use crate::core::{DiscoveryError, Request};
+use crate::core::{DiscoveryError, DiscoveryMatch, DiscoveryRoute, Request};
+
+pub(super) const ROUTE: DiscoveryRoute = DiscoveryMatch::UrlPredicate(is_entry).map_url(manifest);
+
+pub(super) fn prefers(uri: &str) -> bool {
+    is_entry(uri)
+}
 
 pub(super) fn is_entry(uri: &str) -> bool {
     let Ok(url) = Url::parse(uri) else {

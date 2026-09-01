@@ -24,10 +24,10 @@ mod title_tests;
 
 const ROUTES: &[DiscoveryRoute] = &[
     DiscoveryMatch::UrlPredicate(has_manifest_parameter).map_url(manifest_parameter),
-    DiscoveryMatch::UrlPredicate(onb::is_entry).map_url(onb::manifest),
-    DiscoveryMatch::UrlPredicate(contentdm::is_record).map_url(contentdm::metadata),
-    DiscoveryMatch::UrlPredicate(contentdm::is_metadata).then(contentdm::follow_info),
-    DiscoveryMatch::ContentPredicate(micrio::contains_element).then(micrio::follow_element),
+    onb::ROUTE,
+    contentdm::RECORD_ROUTE,
+    contentdm::METADATA_ROUTE,
+    micrio::ROUTE,
     DiscoveryMatch::Any.extract(catalog),
 ];
 
@@ -37,8 +37,8 @@ pub const SPEC: DezoomerSpec = DezoomerSpec::new("iiif", ROUTES).preferring(|uri
         || uri.contains("iiif")
         || uri.contains("manifest.json")
         || has_manifest_parameter(uri)
-        || onb::is_entry(uri)
-        || contentdm::is_record(uri)
+        || onb::prefers(uri)
+        || contentdm::prefers(uri)
 });
 
 /// Determines the best title for an image from IIIF manifest metadata
