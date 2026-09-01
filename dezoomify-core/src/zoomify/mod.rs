@@ -17,7 +17,7 @@ mod image_properties;
 const ROUTES: &[DiscoveryRoute] = &[
     DiscoveryMatch::UrlPredicate(is_tile_url).map_url(tile_metadata),
     DiscoveryMatch::UrlSuffix("ImageProperties.xml").extract(load_catalog),
-    DiscoveryMatch::ContentPredicate(ngv::contains_image_path).then(ngv::follow_image_path),
+    ngv::ROUTE,
     DiscoveryMatch::ContentPredicate(contains_zoomify_declaration)
         .then(extract_image_properties_url),
 ];
@@ -57,7 +57,7 @@ fn is_tile_url(uri: &str) -> bool {
 }
 
 fn is_zoomify_url(uri: &str) -> bool {
-    uri.contains("/ImageProperties.xml") || ngv::is_work_page(uri) || is_tile_url(uri)
+    uri.contains("/ImageProperties.xml") || ngv::prefers(uri) || is_tile_url(uri)
 }
 
 fn extract_image_properties_url(

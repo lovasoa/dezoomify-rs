@@ -3,7 +3,8 @@ use std::sync::LazyLock;
 use regex::bytes::Regex as BytesRegex;
 
 use crate::core::{
-    DiscoveryContext, DiscoveryError, DiscoveryResource, DiscoveryStep, Request, resolve_relative,
+    DiscoveryContext, DiscoveryError, DiscoveryMatch, DiscoveryResource, DiscoveryRoute,
+    DiscoveryStep, Request, resolve_relative,
 };
 
 static DEEPZOOM_MANIFEST: LazyLock<BytesRegex> = LazyLock::new(|| {
@@ -12,6 +13,14 @@ static DEEPZOOM_MANIFEST: LazyLock<BytesRegex> = LazyLock::new(|| {
     )
     .expect("constant Paris Deep Zoom manifest pattern")
 });
+
+pub(super) const ARK_ROUTE: DiscoveryRoute = DiscoveryMatch::UrlPredicate(is_ark).map_url(reader);
+pub(super) const MANIFEST_ROUTE: DiscoveryRoute =
+    DiscoveryMatch::ContentPredicate(contains_manifest).then(follow_manifest);
+
+pub(super) fn prefers(uri: &str) -> bool {
+    is_ark(uri)
+}
 
 pub(super) fn is_ark(uri: &str) -> bool {
     uri.starts_with("https://bibliotheques-specialisees.paris.fr/ark:/")

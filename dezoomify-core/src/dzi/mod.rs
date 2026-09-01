@@ -26,14 +26,14 @@ static SEADRAGON_EMBED: LazyLock<BytesRegex> = LazyLock::new(|| {
 });
 const ROUTES: &[DiscoveryRoute] = &[
     DiscoveryMatch::UrlPredicate(is_tile_url).map_url(tile_metadata),
-    DiscoveryMatch::UrlPredicate(paris::is_ark).map_url(paris::reader),
-    DiscoveryMatch::ContentPredicate(paris::contains_manifest).then(paris::follow_manifest),
+    paris::ARK_ROUTE,
+    paris::MANIFEST_ROUTE,
     DiscoveryMatch::ContentPredicate(contains_seadragon_embed).then(follow_seadragon_embed),
     DiscoveryMatch::Any.extract(load_catalog),
 ];
 
 pub const SPEC: DezoomerSpec = DezoomerSpec::new("deepzoom", ROUTES)
-    .preferring(|uri| uri.contains(".dzi") || uri.contains("_files/") || paris::is_ark(uri));
+    .preferring(|uri| uri.contains(".dzi") || uri.contains("_files/") || paris::prefers(uri));
 
 fn is_tile_url(input: &str) -> bool {
     TILE_URL.is_match(input)
