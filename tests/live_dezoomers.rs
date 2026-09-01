@@ -59,10 +59,27 @@ live_dezoomer!(
 );
 live_dezoomer!(iiif, "https://i.micr.io/fhXoU/info.json");
 live_dezoomer!(
+    iiif_national_gallery,
+    "https://www.nationalgallery.org.uk/paintings/vincent-van-gogh-sunflowers"
+);
+live_dezoomer!(
+    iiif_philadelphia_museum,
+    "https://www.philamuseum.org/objects/101731"
+);
+live_dezoomer!(
     iiif_csntm,
     "https://collections.csntm.org/image-service/iiif/MNTGRCGA01/default/M_NT_GRC_GA01_20250609_203r/M_NT_GRC_GA01_20250609_203r/info.json"
 );
 live_dezoomer!(iiif_onb_viewer, "https://viewer.onb.ac.at/10048A37/");
+live_dezoomer!(
+    iiif_oklahoma_contentdm,
+    "https://dc.library.okstate.edu/digital/collection/OKMaps/id/6483/rec/6",
+    "--accept-invalid-certs"
+);
+live_dezoomer!(
+    iiif_liechtenstein_collections,
+    "https://www.liechtensteincollections.at/en/collections-online/forest-landscape"
+);
 live_dezoomer!(
     iiif_nls_auchinleck,
     "https://auchinleck.nls.uk/imageserver/iipsrv.fcgi?iiif=/auchinleck/105v.jp2/info.json"

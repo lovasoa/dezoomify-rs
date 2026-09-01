@@ -636,22 +636,6 @@ fn dezoomer_iiif_page_adapters_follow_metadata() {
     );
     assert_eq!(image.format.as_str(), "iiif");
 
-    let page = "https://fixtures.test/londonmuseum-object.html";
-    let image = ready_image(
-        discover(
-            page,
-            &[
-                (page, coverage_fixture!("iiif/londonmuseum-object.html")),
-                (
-                    "https://collections.londonmuseum.net/iiif/3/object-95380.ptif/info.json",
-                    coverage_fixture!("iiif/londonmuseum-info.json"),
-                ),
-            ],
-        )
-        .unwrap(),
-    );
-    assert_eq!(image.format.as_str(), "iiif");
-
     for (page, page_fixture, info_fixture, id) in [
         (
             "https://fixtures.test/philamuseum-escaped.html",

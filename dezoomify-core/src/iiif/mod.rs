@@ -12,8 +12,12 @@ use crate::core::{
 use crate::iiif::tile_info::TileSizeFormat;
 use crate::json_utils::all_json;
 
+mod contentdm;
 pub mod manifest_types;
-mod site_adapters;
+mod micrio;
+mod national_gallery;
+mod onb;
+mod philadelphia;
 pub mod tile_info;
 
 #[cfg(test)]
@@ -21,19 +25,14 @@ mod title_tests;
 
 const ROUTES: &[DiscoveryRoute] = &[
     DiscoveryMatch::UrlPredicate(has_manifest_parameter).map_url(manifest_parameter),
-    DiscoveryMatch::UrlPredicate(site_adapters::is_onb_entry).map_url(site_adapters::onb_manifest),
-    DiscoveryMatch::UrlPredicate(site_adapters::is_contentdm_record)
-        .map_url(site_adapters::contentdm_metadata),
-    DiscoveryMatch::UrlPredicate(site_adapters::is_contentdm_metadata)
-        .then(site_adapters::follow_contentdm_info),
-    DiscoveryMatch::ContentPredicate(site_adapters::contains_national_gallery_image)
-        .then(site_adapters::follow_national_gallery_image),
-    DiscoveryMatch::ContentPredicate(site_adapters::contains_london_museum_service)
-        .then(site_adapters::follow_london_museum_service),
-    DiscoveryMatch::ContentPredicate(site_adapters::contains_philadelphia_micrio)
-        .then(site_adapters::follow_philadelphia_micrio),
-    DiscoveryMatch::ContentPredicate(site_adapters::contains_micrio_element)
-        .then(site_adapters::follow_micrio_element),
+    DiscoveryMatch::UrlPredicate(onb::is_entry).map_url(onb::manifest),
+    DiscoveryMatch::UrlPredicate(contentdm::is_record).map_url(contentdm::metadata),
+    DiscoveryMatch::UrlPredicate(contentdm::is_metadata).then(contentdm::follow_info),
+    DiscoveryMatch::ContentPredicate(micrio::contains_element).then(micrio::follow_element),
+    DiscoveryMatch::ContentPredicate(national_gallery::contains_image)
+        .then(national_gallery::follow_image),
+    DiscoveryMatch::ContentPredicate(philadelphia::contains_micrio)
+        .then(philadelphia::follow_micrio),
     DiscoveryMatch::Any.extract(catalog),
 ];
 
@@ -43,8 +42,8 @@ pub const SPEC: DezoomerSpec = DezoomerSpec::new("iiif", ROUTES).preferring(|uri
         || uri.contains("iiif")
         || uri.contains("manifest.json")
         || has_manifest_parameter(uri)
-        || site_adapters::is_onb_entry(uri)
-        || site_adapters::is_contentdm_record(uri)
+        || onb::is_entry(uri)
+        || contentdm::is_record(uri)
 });
 
 /// Determines the best title for an image from IIIF manifest metadata
