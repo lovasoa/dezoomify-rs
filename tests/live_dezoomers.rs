@@ -50,6 +50,10 @@ live_dezoomer!(
     "https://openseadragon.github.io/example-images/highsmith/highsmith_zdata/ImageProperties.xml"
 );
 live_dezoomer!(
+    zoomify_ngv_viewer,
+    "https://www.ngv.vic.gov.au/explore/collection/work/3867/"
+);
+live_dezoomer!(
     deep_zoom,
     "https://openseadragon.github.io/example-images/highsmith/highsmith.dzi"
 );
@@ -93,12 +97,20 @@ live_dezoomer!(
     "https://krpano.com/panos/andreabiffi/galleria_04.xml"
 );
 live_dezoomer!(
-    iipimage,
-    "https://image.hng-data.org/iipsrv/iipsrv.fcgi?FIF=/HNG/016/card/0178.tif&OBJ=Max-size&OBJ=Tile-size&OBJ=Resolution-number"
+    deepzoom_academia_sinica,
+    "https://bronze.asdc.sinica.edu.tw/filePool/R/05395-1.html"
 );
 live_dezoomer!(
-    nypl,
-    "https://digitalcollections.nypl.org/items/ad4ea2ed-52c0-cfb1-e040-e00a1806797e"
+    deepzoom_paris,
+    "https://bibliotheques-specialisees.paris.fr/ark:/73873/pf0001115743/0017/v0001.simple.selectedTab=otherdocs"
+);
+live_dezoomer!(
+    iiif_washington_mirador,
+    "https://digitalcollections.lib.washington.edu/digital/custom/mirador3?manifest=https://digitalcollections.lib.washington.edu//iiif/info/social/1303/manifest.json"
+);
+live_dezoomer!(
+    iipimage,
+    "https://image.hng-data.org/iipsrv/iipsrv.fcgi?FIF=/HNG/016/card/0178.tif&OBJ=Max-size&OBJ=Tile-size&OBJ=Resolution-number"
 );
 live_dezoomer!(
     custom_yaml,

@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use custom_error::custom_error;
 use tile_info::ImageInfo;
-use url::Url;
 
 use crate::Vec2d;
 use crate::core::{
@@ -98,7 +97,7 @@ fn manifest_parameter(uri: &str) -> Result<Request, DiscoveryError> {
 }
 
 fn manifest_parameter_value(uri: &str) -> Option<String> {
-    let url = Url::parse(uri).ok()?;
+    let url = url::Url::parse(uri).ok()?;
     url.query_pairs()
         .find_map(|(name, value)| (name == "manifest").then(|| value.into_owned()))
         .or_else(|| {

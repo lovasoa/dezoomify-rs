@@ -24,15 +24,16 @@ static SEADRAGON_EMBED: LazyLock<BytesRegex> = LazyLock::new(|| {
     )
     .expect("constant Seadragon embed pattern")
 });
-
 const ROUTES: &[DiscoveryRoute] = &[
     DiscoveryMatch::UrlPredicate(is_tile_url).map_url(tile_metadata),
+    paris::ARK_ROUTE,
+    paris::MANIFEST_ROUTE,
     DiscoveryMatch::ContentPredicate(contains_seadragon_embed).then(follow_seadragon_embed),
     DiscoveryMatch::Any.extract(load_catalog),
 ];
 
 pub const SPEC: DezoomerSpec = DezoomerSpec::new("deepzoom", ROUTES)
-    .preferring(|uri| uri.contains(".dzi") || uri.contains("_files/"));
+    .preferring(|uri| uri.contains(".dzi") || uri.contains("_files/") || paris::prefers(uri));
 
 fn is_tile_url(input: &str) -> bool {
     TILE_URL.is_match(input)
@@ -66,6 +67,8 @@ fn follow_seadragon_embed(
     ))))
 }
 
+mod paris;
+
 fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
     let xml_result = serde_xml_rs::from_reader::<'_, DziFile, _>(contents);
     let xml_err = xml_result.as_ref().err().map(ToString::to_string);
@@ -80,8 +83,15 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
             "unable to parse DZI metadata{detail}"
         )));
     }
+    catalog_from_dzi(url, parsed)
+}
+
+fn catalog_from_dzi(
+    url: &str,
+    images: impl IntoIterator<Item = DziFile>,
+) -> Result<ImageCatalog, DiscoveryError> {
     let mut entries = Vec::new();
-    for (image_index, image) in parsed.into_iter().enumerate() {
+    for (image_index, image) in images.into_iter().enumerate() {
         if image.tile_size == 0 {
             return Err(DiscoveryError::Session("invalid DZI zero tile size".into()));
         }
