@@ -16,7 +16,9 @@ use crate::json_utils::all_json;
 mod contentdm;
 pub mod manifest_types;
 mod micrio;
+mod national_gallery;
 mod onb;
+mod philadelphia;
 pub mod tile_info;
 
 #[cfg(test)]
@@ -28,6 +30,10 @@ const ROUTES: &[DiscoveryRoute] = &[
     DiscoveryMatch::UrlPredicate(contentdm::is_record).map_url(contentdm::metadata),
     DiscoveryMatch::UrlPredicate(contentdm::is_metadata).then(contentdm::follow_info),
     DiscoveryMatch::ContentPredicate(micrio::contains_element).then(micrio::follow_element),
+    DiscoveryMatch::ContentPredicate(national_gallery::contains_image)
+        .then(national_gallery::follow_image),
+    DiscoveryMatch::ContentPredicate(philadelphia::contains_micrio)
+        .then(philadelphia::follow_micrio),
     DiscoveryMatch::Any.extract(catalog),
 ];
 

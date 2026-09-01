@@ -55,6 +55,14 @@ live_dezoomer!(
 );
 live_dezoomer!(iiif, "https://i.micr.io/fhXoU/info.json");
 live_dezoomer!(
+    iiif_national_gallery,
+    "https://www.nationalgallery.org.uk/paintings/vincent-van-gogh-sunflowers"
+);
+live_dezoomer!(
+    iiif_philadelphia_museum,
+    "https://www.philamuseum.org/objects/101731"
+);
+live_dezoomer!(
     iiif_csntm,
     "https://collections.csntm.org/image-service/iiif/MNTGRCGA01/default/M_NT_GRC_GA01_20250609_203r/M_NT_GRC_GA01_20250609_203r/info.json"
 );
