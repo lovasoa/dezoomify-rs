@@ -1,6 +1,18 @@
 use url::Url;
 
-use crate::core::{DiscoveryContext, DiscoveryError, DiscoveryResource, DiscoveryStep, Request};
+use crate::core::{
+    DiscoveryContext, DiscoveryError, DiscoveryMatch, DiscoveryResource, DiscoveryRoute,
+    DiscoveryStep, Request,
+};
+
+pub(super) const RECORD_ROUTE: DiscoveryRoute =
+    DiscoveryMatch::UrlPredicate(is_record).map_url(metadata);
+pub(super) const METADATA_ROUTE: DiscoveryRoute =
+    DiscoveryMatch::UrlPredicate(is_metadata).then(follow_info);
+
+pub(super) fn prefers(uri: &str) -> bool {
+    is_record(uri)
+}
 
 pub(super) fn is_record(uri: &str) -> bool {
     let Ok(url) = Url::parse(uri) else {
