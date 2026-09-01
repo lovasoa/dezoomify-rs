@@ -61,10 +61,7 @@ live_dezoomer!(
     iiif_csntm,
     "https://collections.csntm.org/image-service/iiif/MNTGRCGA01/default/M_NT_GRC_GA01_20250609_203r/M_NT_GRC_GA01_20250609_203r/info.json"
 );
-live_dezoomer!(
-    iiif_onb_manifest,
-    "https://api.onb.ac.at/iiif/presentation/v3/manifest/10048A37"
-);
+live_dezoomer!(iiif_onb_viewer, "https://viewer.onb.ac.at/10048A37/");
 live_dezoomer!(
     iiif_nls_auchinleck,
     "https://auchinleck.nls.uk/imageserver/iipsrv.fcgi?iiif=/auchinleck/105v.jp2/info.json"
@@ -84,6 +81,10 @@ live_dezoomer!(
 live_dezoomer!(
     deepzoom_academia_sinica,
     "https://bronze.asdc.sinica.edu.tw/filePool/R/05395-1.html"
+);
+live_dezoomer!(
+    deepzoom_paris,
+    "https://bibliotheques-specialisees.paris.fr/ark:/73873/pf0001115743/0017/v0001.simple.selectedTab=otherdocs"
 );
 live_dezoomer!(
     iiif_national_gallery,

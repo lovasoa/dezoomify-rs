@@ -358,7 +358,7 @@ fn dezoomer_paris_ark_page_case() {
                 (input, b""),
                 (reader, coverage_fixture!("deepzoom/paris-reader.html")),
                 (
-                    "https://fixtures.test/deepzoom/sample.dzi",
+                    "https://fixtures.test/deepzoom/sample.xml",
                     br#"<Image TileSize="256" Overlap="0" Format="jpg"><Size Width="512" Height="512" /></Image>"#,
                 ),
             ],
