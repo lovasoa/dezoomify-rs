@@ -163,7 +163,7 @@ fn build_levels(
             )
             .map_err(|error| DiscoveryError::Session(format!("invalid LizardTech grid: {error}")))?;
             Ok(LevelDescriptor::new(source).with_title(Some(format!(
-                "LizardTech level {ordinal} ({width}×{height} pixels)"
+                "LizardTech level {ordinal}"
             ))))
         })
         .collect()

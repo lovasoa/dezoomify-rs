@@ -322,12 +322,8 @@ fn levels_from_info(
                     .map_err(|error| IIIFError::GeometryError {
                         description: error.to_string(),
                     })?;
-                    let level_size = source.image_size();
                     Ok(LevelDescriptor::new(source)
-                        .with_title(Some(format!(
-                            "IIIF level {} (scale 1:{} {: >5}×{: >5} pixels)",
-                            tile_ordinal, scale_factor, level_size.x, level_size.y,
-                        )))
+                        .with_title(Some(format!("IIIF level {tile_ordinal}")))
                         .with_scale_factor(Some(scale_factor))
                         .with_warnings(warnings.clone()))
                 })

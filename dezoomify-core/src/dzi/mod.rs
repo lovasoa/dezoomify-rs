@@ -123,10 +123,7 @@ fn catalog_from_dzi(
                 },
             )
             .map_err(|error| DiscoveryError::Session(format!("invalid DZI grid: {error}")))?;
-            Ok(LevelDescriptor::new(source).with_title(Some(format!(
-                "DZI level {ordinal} ({: >5}×{: >5} pixels)",
-                size.x, size.y,
-            ))))
+            Ok(LevelDescriptor::new(source).with_title(Some(format!("DZI level {ordinal}",))))
         })
         .collect::<Result<Vec<_>, DiscoveryError>>()?;
         levels.reverse();

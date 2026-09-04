@@ -306,8 +306,7 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
         .trim_end_matches('/')
         .rsplit('/')
         .next()
-        .filter(|name| !name.is_empty())
-        .unwrap_or("Zoomify");
+        .filter(|name| !name.is_empty());
     let full_resolution_only = properties.is_full_resolution_only();
     let (level_info, warnings) = properties.levels_with_warnings();
     let levels = level_info
@@ -338,10 +337,12 @@ fn load_catalog(url: &str, contents: &[u8]) -> Result<ImageCatalog, DiscoveryErr
                 },
             )
             .map_err(|error| DiscoveryError::Session(format!("invalid Zoomify grid: {error}")))?;
-            Ok(LevelDescriptor::new(source).with_title(Some(format!(
-                "{base_name} Zoomify level {index} ({: >5}×{: >5} pixels)",
-                size.x, size.y,
-            ))))
+            Ok(
+                LevelDescriptor::new(source).with_title(Some(match base_name {
+                    Some(base_name) => format!("{base_name} Zoomify level {index}"),
+                    None => format!("Zoomify level {index}"),
+                })),
+            )
         })
         .collect::<Result<Vec<_>, DiscoveryError>>()?;
     let title = base_url

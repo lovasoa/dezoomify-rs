@@ -220,9 +220,7 @@ fn build_levels(
                 },
             )
             .map_err(|error| DiscoveryError::Session(format!("invalid ArcGIS grid: {error}")))?;
-            Ok(LevelDescriptor::new(source).with_title(Some(format!(
-                "ArcGIS level {level} ({width}×{height} pixels)"
-            ))))
+            Ok(LevelDescriptor::new(source).with_title(Some(format!("ArcGIS level {level}"))))
         })
         .collect()
 }

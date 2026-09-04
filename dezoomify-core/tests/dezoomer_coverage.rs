@@ -1343,7 +1343,7 @@ fn pnav_probe_resolves_scaled_crop_grid_without_repeating_the_probe() {
         .unwrap(),
     );
     assert_eq!(image.format.as_str(), "pnav");
-    assert_eq!(image.title.as_deref(), Some("image"));
+    assert_eq!(image.title.as_deref(), Some("Fixture Object"));
 }
 
 #[test]

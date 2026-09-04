@@ -57,10 +57,7 @@ fn catalog(uri: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
                 move |tile| Request::new(format!("{base}&JTL={index},{}", tile.row_major_ordinal)),
             )
             .map_err(|error| DiscoveryError::Session(format!("invalid IIP grid: {error}")))?;
-            Ok(LevelDescriptor::new(source).with_title(Some(format!(
-                "IIP level {index} ({: >5}×{: >5} pixels)",
-                size.x, size.y,
-            ))))
+            Ok(LevelDescriptor::new(source).with_title(Some(format!("IIP level {index}"))))
         })
         .collect::<Result<Vec<_>, DiscoveryError>>()?;
     levels.sort_by_key(|level| level.source.image_size().map_or(0, Vec2d::area));
