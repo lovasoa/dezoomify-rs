@@ -1,0 +1,19 @@
+{
+  "type": "MapServer",
+  "singleFusedMapCache": true,
+  "tileInfo": {
+    "rows": 256,
+    "cols": 256,
+    "format": "JPEG",
+    "origin": { "x": -1000, "y": 1000 },
+    "spatialReference": { "wkid": 3857 },
+    "lods": [{ "level": 7, "resolution": 1 }]
+  },
+  "fullExtent": {
+    "xmin": -300,
+    "ymin": 100,
+    "xmax": 200,
+    "ymax": 600,
+    "spatialReference": { "wkid": 3857 }
+  }
+}

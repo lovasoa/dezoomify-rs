@@ -112,6 +112,21 @@ where
         .collect()
 }
 
+/// Headers supplied by the client itself which can vary the tile response.
+/// Stable browser defaults do not need to be part of the cache identity.
+pub(crate) fn client_cache_headers(args: &Arguments) -> Vec<(String, String)> {
+    let mut headers = Vec::new();
+    if let Some(referer) = args.request_referer() {
+        headers.push(("Referer".to_owned(), referer.to_owned()));
+    }
+    headers.extend(
+        args.headers()
+            .map(|(name, value)| (name.clone(), value.clone())),
+    );
+    headers.sort_unstable();
+    headers
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DownloadedTile {
     pub spec: TileSpec,
@@ -124,6 +139,7 @@ pub struct TileDownloader {
     pub retry_delay: Duration,
     pub tile_storage_folder: Option<PathBuf>,
     pub(crate) user_header_names: HashSet<String>,
+    pub(crate) client_cache_headers: Vec<(String, String)>,
 }
 
 impl TileDownloader {
@@ -162,11 +178,15 @@ impl TileDownloader {
     }
 
     async fn load_tile_bytes(&self, tile_spec: &TileSpec) -> Result<DownloadedTile, ZoomError> {
-        let bytes = if let Some(bytes) = self.read_from_tile_cache(&tile_spec.request).await {
+        let bytes = if let Some(bytes) = self
+            .read_from_tile_cache(&tile_spec.request, &tile_spec.processing)
+            .await
+        {
             bytes
         } else {
             let bytes = self.download_image_bytes(tile_spec).await?;
-            self.write_to_tile_cache(&tile_spec.request, &bytes).await;
+            self.write_to_tile_cache(&tile_spec.request, &tile_spec.processing, &bytes)
+                .await;
             bytes
         };
 
@@ -198,9 +218,19 @@ impl TileDownloader {
         Ok(bytes)
     }
 
-    async fn write_to_tile_cache(&self, request: &Request, contents: &[u8]) {
+    async fn write_to_tile_cache(
+        &self,
+        request: &Request,
+        processing: &ProcessingRecipe,
+        contents: &[u8],
+    ) {
         if let Some(root) = &self.tile_storage_folder {
-            match tokio::fs::write(tile_cache_path(root, request), contents).await {
+            match tokio::fs::write(
+                tile_cache_path_with_context(root, request, &self.client_cache_headers, processing),
+                contents,
+            )
+            .await
+            {
                 Ok(()) => debug!(
                     "Wrote {} to tile cache ({} bytes)",
                     request.uri,
@@ -215,9 +245,19 @@ impl TileDownloader {
         }
     }
 
-    async fn read_from_tile_cache(&self, request: &Request) -> Option<Vec<u8>> {
+    async fn read_from_tile_cache(
+        &self,
+        request: &Request,
+        processing: &ProcessingRecipe,
+    ) -> Option<Vec<u8>> {
         if let Some(root) = &self.tile_storage_folder {
-            let paths = tile_cache_paths(root, request);
+            let paths = tile_cache_paths(
+                root,
+                request,
+                &self.client_cache_headers,
+                processing,
+                self.user_header_names.is_empty(),
+            );
             for (index, path) in paths.iter().enumerate() {
                 match tokio::fs::read(path).await {
                     Ok(d) => {
@@ -240,7 +280,12 @@ impl TileDownloader {
     }
 }
 
-fn tile_cache_path(root: &std::path::Path, request: &Request) -> PathBuf {
+fn tile_cache_path_with_context(
+    root: &std::path::Path,
+    request: &Request,
+    client_headers: &[(String, String)],
+    processing: &ProcessingRecipe,
+) -> PathBuf {
     let mut digest = Sha1::new();
     digest.update(request.uri.as_bytes());
     for (name, value) in &request.headers {
@@ -248,6 +293,20 @@ fn tile_cache_path(root: &std::path::Path, request: &Request) -> PathBuf {
         digest.update([0]);
         digest.update(value.as_bytes());
         digest.update([0]);
+    }
+    if !client_headers.is_empty() || !matches!(processing, ProcessingRecipe::None) {
+        digest.update([0xff]);
+        for (name, value) in client_headers {
+            digest.update(name.to_ascii_lowercase().as_bytes());
+            digest.update([0]);
+            digest.update(value.as_bytes());
+            digest.update([0]);
+        }
+        digest.update([0xfe]);
+        digest.update(match processing {
+            ProcessingRecipe::None => b"none" as &[u8],
+            ProcessingRecipe::GoogleArtsDecrypt => b"google-arts-decrypt",
+        });
     }
     let digest = digest
         .finalize()
@@ -263,11 +322,29 @@ fn legacy_tile_cache_path(root: &std::path::Path, request: &Request) -> PathBuf 
     root.join(sanitize(&request.uri))
 }
 
-fn tile_cache_paths(root: &std::path::Path, request: &Request) -> [PathBuf; 2] {
-    [
-        tile_cache_path(root, request),
-        legacy_tile_cache_path(root, request),
-    ]
+fn tile_cache_paths(
+    root: &std::path::Path,
+    request: &Request,
+    client_headers: &[(String, String)],
+    processing: &ProcessingRecipe,
+    allow_legacy_cache: bool,
+) -> Vec<PathBuf> {
+    let mut paths = vec![tile_cache_path_with_context(
+        root,
+        request,
+        client_headers,
+        processing,
+    )];
+    // Automatic page Referer headers were not part of the old cache key. Keep
+    // those legacy entries readable, but never reuse them with user or format
+    // headers that may change the response.
+    if allow_legacy_cache
+        && request.headers.is_empty()
+        && matches!(processing, ProcessingRecipe::None)
+    {
+        paths.push(legacy_tile_cache_path(root, request));
+    }
+    paths
 }
 
 pub fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
@@ -300,9 +377,11 @@ pub fn client<'a, I: Iterator<Item = (&'a String, &'a String)>>(
 #[cfg(test)]
 mod tests {
     use super::{
-        Request, TileDownloader, effective_request_headers, tile_cache_path, tile_cache_paths,
-        user_header_names,
+        Request, TileDownloader, client_cache_headers, effective_request_headers,
+        tile_cache_path_with_context, tile_cache_paths, user_header_names,
     };
+    use crate::arguments::Arguments;
+    use dezoomify_core::core::ProcessingRecipe;
     use std::collections::HashSet;
     use std::path::Path;
     use tokio::time::Duration;
@@ -312,16 +391,65 @@ mod tests {
         let first = Request::new("https://example.test/tile").with_header("X-Key", "one");
         let second = Request::new("https://example.test/tile").with_header("X-Key", "two");
         assert_ne!(
-            tile_cache_path(Path::new("/tmp/cache"), &first),
-            tile_cache_path(Path::new("/tmp/cache"), &second)
+            tile_cache_path_with_context(
+                Path::new("/tmp/cache"),
+                &first,
+                &[],
+                &ProcessingRecipe::None,
+            ),
+            tile_cache_path_with_context(
+                Path::new("/tmp/cache"),
+                &second,
+                &[],
+                &ProcessingRecipe::None,
+            )
         );
+    }
+
+    #[test]
+    fn tile_cache_identity_includes_client_headers_and_processing() {
+        let request = Request::new("https://example.test/tile");
+        let first = tile_cache_path_with_context(
+            Path::new("/tmp/cache"),
+            &request,
+            &[("X-Key".to_owned(), "one".to_owned())],
+            &ProcessingRecipe::None,
+        );
+        let second = tile_cache_path_with_context(
+            Path::new("/tmp/cache"),
+            &request,
+            &[("X-Key".to_owned(), "two".to_owned())],
+            &ProcessingRecipe::None,
+        );
+        let decrypted = tile_cache_path_with_context(
+            Path::new("/tmp/cache"),
+            &request,
+            &[("X-Key".to_owned(), "one".to_owned())],
+            &ProcessingRecipe::GoogleArtsDecrypt,
+        );
+        assert_ne!(first, second);
+        assert_ne!(first, decrypted);
     }
 
     #[test]
     fn tile_cache_paths_try_hashed_path_before_legacy_path() {
         let request = Request::new("https://example.test/tile");
-        let paths = tile_cache_paths(Path::new("/tmp/cache"), &request);
-        assert_eq!(paths[0], tile_cache_path(Path::new("/tmp/cache"), &request));
+        let paths = tile_cache_paths(
+            Path::new("/tmp/cache"),
+            &request,
+            &[],
+            &ProcessingRecipe::None,
+            true,
+        );
+        assert_eq!(
+            paths[0],
+            tile_cache_path_with_context(
+                Path::new("/tmp/cache"),
+                &request,
+                &[],
+                &ProcessingRecipe::None,
+            )
+        );
         assert_eq!(
             paths[1],
             Path::new("/tmp/cache").join("https_example.test_tile")
@@ -333,7 +461,16 @@ mod tests {
     async fn tile_cache_reads_legacy_entries_and_prefers_hashed_entries() {
         let directory = tempfile::tempdir().unwrap();
         let request = Request::new("https://example.test/tile");
-        let paths = tile_cache_paths(directory.path(), &request);
+        let mut args = Arguments::default();
+        args.input_uri = Some("https://example.test/viewer".to_owned());
+        let cache_headers = client_cache_headers(&args);
+        let paths = tile_cache_paths(
+            directory.path(),
+            &request,
+            &cache_headers,
+            &ProcessingRecipe::None,
+            true,
+        );
         tokio::fs::write(&paths[1], b"legacy").await.unwrap();
 
         let downloader = TileDownloader {
@@ -342,17 +479,38 @@ mod tests {
             retry_delay: Duration::ZERO,
             tile_storage_folder: Some(directory.path().to_path_buf()),
             user_header_names: HashSet::new(),
+            client_cache_headers: cache_headers,
         };
         assert_eq!(
-            downloader.read_from_tile_cache(&request).await,
+            downloader
+                .read_from_tile_cache(&request, &ProcessingRecipe::None)
+                .await,
             Some(b"legacy".to_vec())
         );
 
         tokio::fs::write(&paths[0], b"hashed").await.unwrap();
         assert_eq!(
-            downloader.read_from_tile_cache(&request).await,
+            downloader
+                .read_from_tile_cache(&request, &ProcessingRecipe::None)
+                .await,
             Some(b"hashed".to_vec())
         );
+    }
+
+    #[test]
+    fn user_headers_disable_legacy_cache_fallback() {
+        let request = Request::new("https://example.test/tile");
+        let paths = tile_cache_paths(
+            Path::new("/tmp/cache"),
+            &request,
+            &[(
+                "Referer".to_owned(),
+                "https://example.test/viewer".to_owned(),
+            )],
+            &ProcessingRecipe::None,
+            false,
+        );
+        assert_eq!(paths.len(), 1);
     }
 
     #[test]
@@ -435,5 +593,18 @@ mod tests {
         let set2 = user_header_names([(&d, &"v".to_owned()), (&c, &"v".to_owned())]);
         assert!(set2.contains("referer"));
         assert!(set2.contains("user-agent"));
+    }
+
+    #[test]
+    fn client_cache_headers_include_the_request_referer() {
+        let mut args = Arguments::default();
+        args.input_uri = Some("https://example.test/viewer".to_owned());
+        assert_eq!(
+            client_cache_headers(&args),
+            vec![(
+                "Referer".to_owned(),
+                "https://example.test/viewer".to_owned()
+            )]
+        );
     }
 }

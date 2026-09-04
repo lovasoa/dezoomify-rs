@@ -11,7 +11,10 @@ pub mod registry;
 pub mod tile_plan;
 pub mod uri;
 
-pub use adaptive::{DiscoverableGrid, DiscoverableStep, ObservationResult, ProbeContinuation};
+pub use adaptive::{
+    AdaptiveProgram, AdaptiveSource, DiscoverableGrid, DiscoverableStep, ObservationResult,
+    ProbeContinuation,
+};
 pub use discovery::{
     DezoomerSpec, DiscoveryContext, DiscoveryError, DiscoveryMatch, DiscoveryResource,
     DiscoveryRoute, DiscoveryStep,

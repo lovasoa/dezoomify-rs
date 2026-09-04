@@ -45,8 +45,8 @@ fn handle_html(
     }
     let html = resource.text_lossy();
     let xml_uri = extract_xml_from_embedpano(&html).map_or_else(
-        || sibling_uri(resource.uri(), "tour.xml"),
-        |reference| resolve_relative(resource.uri(), &reference),
+        || sibling_uri(resource.final_uri(), "tour.xml"),
+        |reference| resolve_relative(resource.final_uri(), &reference),
     );
     debug!("krpano: resolved XML URI {xml_uri}");
     Ok(DiscoveryStep::Follow(Request::new(xml_uri)))
@@ -58,7 +58,7 @@ fn handle_xml(
 ) -> Result<DiscoveryStep, DiscoveryError> {
     let contents = resource.bytes();
     if !is_encrypted_xml(contents) {
-        return complete(resource.uri(), contents);
+        return complete(resource.final_uri(), contents);
     }
 
     let viewer_js = context
@@ -68,8 +68,8 @@ fn handle_xml(
         .filter_map(|candidate| extract_viewer_js(candidate.bytes()))
         .next_back();
     match decrypt_xml(contents, viewer_js.as_deref()) {
-        Ok(decrypted) => complete(resource.uri(), &decrypted),
-        Err(error) => next_viewer(context, resource, resource.uri()).map_or_else(
+        Ok(decrypted) => complete(resource.final_uri(), &decrypted),
+        Err(error) => next_viewer(context, resource, resource.final_uri()).map_or_else(
             || {
                 Err(DiscoveryError::Session(format!(
                     "unable to decrypt krpano XML: {error}"
@@ -91,7 +91,7 @@ fn handle_viewer_js(
             ));
         }
         return Ok(DiscoveryStep::Follow(Request::new(sibling_uri(
-            resource.uri(),
+            resource.final_uri(),
             "tour.xml",
         ))));
     };
@@ -100,9 +100,9 @@ fn handle_viewer_js(
     match decrypt_xml(xml.bytes(), Some(&viewer_js)) {
         Ok(decrypted) => {
             info!("krpano: successfully decrypted XML using viewer JS");
-            complete(xml.uri(), &decrypted)
+            complete(xml.final_uri(), &decrypted)
         }
-        Err(error) => next_viewer(context, resource, xml.uri()).map_or_else(
+        Err(error) => next_viewer(context, resource, xml.final_uri()).map_or_else(
             || {
                 Err(DiscoveryError::Session(format!(
                     "unable to decrypt krpano XML: {error}"
@@ -123,9 +123,10 @@ fn handle_failure(
     if let Some(xml) = find_xml(context) {
         warn!(
             "krpano: viewer JS fetch failed for {}: {message}",
-            xml.uri()
+            xml.final_uri()
         );
-        if let Some(uri) = next_viewer_after_failure(context, request.uri.as_str(), xml.uri()) {
+        if let Some(uri) = next_viewer_after_failure(context, request.uri.as_str(), xml.final_uri())
+        {
             return Ok(DiscoveryStep::Follow(Request::new(uri)));
         }
         return Err(DiscoveryError::Session(format!(
@@ -170,7 +171,7 @@ fn next_viewer_from_initial(
 ) -> Option<String> {
     let mut candidates = if looks_like_krpano_html(initial.bytes()) {
         let html = initial.text_lossy();
-        extract_js_candidates_from_html(&html, initial.uri())
+        extract_js_candidates_from_html(&html, initial.final_uri())
     } else if is_javascript_resource(initial) {
         Vec::new()
     } else {
@@ -181,7 +182,7 @@ fn next_viewer_from_initial(
 }
 
 fn is_javascript_resource(resource: DiscoveryResource<'_>) -> bool {
-    is_javascript_uri(resource.uri()) || contains_viewer_js(resource.bytes())
+    is_javascript_uri(resource.final_uri()) || contains_viewer_js(resource.bytes())
 }
 
 fn is_javascript_uri(uri: &str) -> bool {

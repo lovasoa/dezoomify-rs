@@ -695,6 +695,7 @@ fn resolve_generic(template: &str, available: &[(u32, u32, Vec2d)]) -> (Grid, Ve
                 previously_output,
             } => return (grid, previously_output),
             DiscoverableStep::Empty => panic!("generic fixture unexpectedly had no tiles"),
+            DiscoverableStep::Error(error) => panic!("unexpected adaptive error: {error}"),
         };
     }
 }
@@ -756,7 +757,7 @@ fn dezoomer_generic_probe_cases() {
         assert_eq!(grid.tile_size(), expected_tile_size, "{template}");
     }
 
-    let (grid, _) = resolve_generic(
+    let (grid, previously_output) = resolve_generic(
         "missing-origin.svg?x={{X}}&y={{Y}}",
         &[
             (1, 0, Vec2d::square(256)),
@@ -766,6 +767,7 @@ fn dezoomer_generic_probe_cases() {
     );
     assert_eq!(grid.image_size(), Vec2d::square(512));
     assert_eq!(grid.tile_size(), Vec2d::square(256));
+    assert!(!previously_output.contains(&Vec2d { x: 256, y: 256 }));
 }
 
 #[test]
@@ -833,6 +835,7 @@ fn dezoomer_generic_one_by_one_placeholders_are_missing_tiles() {
                 return;
             }
             DiscoverableStep::Empty => panic!("placeholder fixture unexpectedly had no tiles"),
+            DiscoverableStep::Error(error) => panic!("unexpected adaptive error: {error}"),
         };
     }
 }
@@ -846,4 +849,542 @@ fn dezoomer_google_short_url_is_a_supported_input() {
     assert_eq!(needs.len(), 1);
     assert_eq!(needs[0].id, RequestId(0));
     assert_eq!(needs[0].request.uri, input);
+}
+
+#[test]
+fn automatic_discovery_selects_part_three_formats() {
+    let cases: &[(&str, &[Resource<'_>], &str)] = &[
+        (
+            "https://fixtures.test/xl/sample.imgi?cmd=info",
+            &[(
+                "https://fixtures.test/xl/sample.imgi?cmd=info",
+                coverage_fixture!("xlimage/sample.imgi.xml"),
+            )],
+            "xlimage",
+        ),
+        (
+            "https://fixtures.test/topviewer/data.json",
+            &[(
+                "https://fixtures.test/topviewer/data.json",
+                coverage_fixture!("topviewer/data.json"),
+            )],
+            "topviewer",
+        ),
+        (
+            "https://fixtures.test/fsi/server?type=info&source=image",
+            &[(
+                "https://fixtures.test/fsi/server?type=info&source=image",
+                coverage_fixture!("fsi/info.txt"),
+            )],
+            "fsi",
+        ),
+        (
+            "https://fixtures.test/lizardtech/iserv/calcrgn?item=image",
+            &[(
+                "https://fixtures.test/lizardtech/iserv/calcrgn?item=image",
+                coverage_fixture!("lizardtech/calcrgn.xml"),
+            )],
+            "lizardtech",
+        ),
+        (
+            "https://fixtures.test/vls/zoom/1",
+            &[(
+                "https://fixtures.test/vls/zoom/1",
+                coverage_fixture!("vls/zoom.html"),
+            )],
+            "vls",
+        ),
+        (
+            "https://fixtures.test/hungaricana/imagesize/sample.ecw",
+            &[(
+                "https://fixtures.test/hungaricana/imagesize/sample.ecw",
+                coverage_fixture!("hungaricana/sample.ecw.json"),
+            )],
+            "hungaricana",
+        ),
+        (
+            "https://fixtures.test/wmts/WMTSCapabilities.xml",
+            &[(
+                "https://fixtures.test/wmts/WMTSCapabilities.xml",
+                coverage_fixture!("wmts/WMTSCapabilities.xml"),
+            )],
+            "wmts",
+        ),
+        (
+            "https://fixtures.test/arcgis/MapServer",
+            &[(
+                "https://fixtures.test/arcgis/MapServer?f=json",
+                coverage_fixture!("arcgis/MapServer.json"),
+            )],
+            "arcgis",
+        ),
+        (
+            "https://fixtures.test/arcgis/viewer?basemapUrl=https%3A%2F%2Ffixtures.test%2Farcgis%2FMapServer%3Ftoken%3Dfixture",
+            &[(
+                "https://fixtures.test/arcgis/MapServer?token=fixture&f=json",
+                coverage_fixture!("arcgis/MapServer.json"),
+            )],
+            "arcgis",
+        ),
+        (
+            "https://fixtures.test/entity/OBJECT/1",
+            &[
+                (
+                    "https://fixtures.test/entity/OBJECT/1",
+                    coverage_fixture!("pnav/page.html"),
+                ),
+                (
+                    "https://fixtures.test/fixtures/pnav/image.json",
+                    coverage_fixture!("pnav/image.json"),
+                ),
+            ],
+            "pnav",
+        ),
+    ];
+
+    for (input, resources, format) in cases {
+        assert_eq!(
+            ready_image(discover(input, resources).unwrap())
+                .format
+                .as_str(),
+            *format
+        );
+    }
+}
+
+#[test]
+fn part_three_direct_protocols_generate_expected_tiles() {
+    let image = ready_image(
+        discover(
+            "https://fixtures.test/xl/sample.imgi?cmd=info",
+            &[(
+                "https://fixtures.test/xl/sample.imgi?cmd=info",
+                coverage_fixture!("xlimage/sample.imgi.xml"),
+            )],
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        tile_urls(image.levels.last().unwrap()).last().unwrap(),
+        "https://fixtures.test/xl/sample.imgi?cmd=tile&x=1&y=1&z=1"
+    );
+
+    let image = ready_image(
+        discover(
+            "https://fixtures.test/topviewer/data.json",
+            &[(
+                "https://fixtures.test/topviewer/data.json",
+                coverage_fixture!("topviewer/data.json"),
+            )],
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        tile_urls(image.levels.last().unwrap()).last().unwrap(),
+        "https://fixtures.test/topviewer/sample-file/13.jpg"
+    );
+
+    let image = ready_image(
+        discover(
+            "https://fixtures.test/fsi/server?type=info&source=image",
+            &[(
+                "https://fixtures.test/fsi/server?type=info&source=image",
+                coverage_fixture!("fsi/info.txt"),
+            )],
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        tile_urls(image.levels.last().unwrap())[0],
+        "https://fixtures.test/fsi/server?type=image&source=image&width=512&height=512&rect=0,0,1,1"
+    );
+
+    let image = ready_image(
+        discover(
+            "https://fixtures.test/lizardtech/iserv/calcrgn?item=image",
+            &[(
+                "https://fixtures.test/lizardtech/iserv/calcrgn?item=image",
+                coverage_fixture!("lizardtech/calcrgn.xml"),
+            )],
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        tile_urls(image.levels.last().unwrap()).last().unwrap(),
+        "https://fixtures.test/lizardtech/iserv/getimage?cat=North%20America%20and%20United%20States&item=NorthAmerica%2FUS1566a.sid&wid=512&hei=512&oif=jpeg&lev=0&cp=0.75,0.75"
+    );
+
+    let image = ready_image(
+        discover(
+            "https://fixtures.test/vls/zoom/1",
+            &[(
+                "https://fixtures.test/vls/zoom/1",
+                coverage_fixture!("vls/zoom.html"),
+            )],
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        tile_urls(image.levels.last().unwrap())[0],
+        "https://fixtures.test/image/tiler/square/fixture/0/0/0"
+    );
+
+    let image = ready_image(
+        discover(
+            "https://fixtures.test/hungaricana/imagesize/sample.ecw",
+            &[(
+                "https://fixtures.test/hungaricana/imagesize/sample.ecw",
+                coverage_fixture!("hungaricana/sample.ecw.json"),
+            )],
+        )
+        .unwrap(),
+    );
+    assert!(
+        tile_urls(image.levels.last().unwrap())[0]
+            .starts_with("https://fixtures.test/hungaricana/image/sample.ecw/")
+    );
+
+    let image = ready_image(
+        discover(
+            "https://fixtures.test/wmts/WMTSCapabilities.xml",
+            &[(
+                "https://fixtures.test/wmts/WMTSCapabilities.xml",
+                coverage_fixture!("wmts/WMTSCapabilities.xml"),
+            )],
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        tile_urls(image.levels.last().unwrap()).last().unwrap(),
+        "https://fixtures.test/wmts/EPSG3857/0/10/10.jpg"
+    );
+
+    let image = ready_image(
+        discover(
+            "https://fixtures.test/arcgis/MapServer?token=fixture&f=html",
+            &[(
+                "https://fixtures.test/arcgis/MapServer?token=fixture&f=json",
+                coverage_fixture!("arcgis/MapServer.json"),
+            )],
+        )
+        .unwrap(),
+    );
+    let level = image.levels.last().unwrap();
+    assert_eq!(level.source.image_size(), Some(Vec2d { x: 768, y: 768 }));
+    assert_eq!(
+        tile_urls(level).last().unwrap(),
+        "https://fixtures.test/arcgis/MapServer/tile/7/3/4?token=fixture"
+    );
+}
+
+#[test]
+fn xlimage_exposes_server_zoom_levels() {
+    let input = "https://fixtures.test/xl/pyramid.imgf?cmd=info";
+    let image = ready_image(
+        discover(
+            input,
+            &[(input, coverage_fixture!("xlimage/pyramid.imgf.xml"))],
+        )
+        .unwrap(),
+    );
+    assert_eq!(image.levels.len(), 3);
+    assert_eq!(
+        image.levels[0].source.image_size(),
+        Some(Vec2d { x: 250, y: 175 })
+    );
+    assert_eq!(
+        image.levels[1].source.image_size(),
+        Some(Vec2d { x: 500, y: 350 })
+    );
+    assert_eq!(
+        image.levels[2].source.image_size(),
+        Some(Vec2d { x: 1000, y: 700 })
+    );
+    assert_eq!(
+        tile_urls(&image.levels[0])[0],
+        "https://fixtures.test/xl/pyramid.imgf?cmd=tile&x=0&y=0&z=4"
+    );
+}
+
+#[test]
+fn xlimage_kbr_viewer_uses_the_selected_page_and_broker() {
+    let input = "https://kbr.be/multi/abc_defViewer/index.html#dezoomify-page=2";
+    let metadata = "https://kbr.be/multi/abc_defViewer/xml.php?/multi/abc_def/003.imgi?cmd=info";
+    let image = ready_image(
+        discover(
+            input,
+            &[
+                (input, b""),
+                (metadata, coverage_fixture!("xlimage/sample.imgi.xml")),
+            ],
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        tile_urls(&image.levels[0])[0],
+        "https://kbr.be/multi/abc_defViewer/xml.php?/multi/abc_def/003.imgi?cmd=tile&x=0&y=0&z=1"
+    );
+}
+
+#[test]
+fn part_three_page_adapters_follow_their_metadata_resources() {
+    let image = ready_image(
+        discover(
+            "https://fixtures.test/archive/thumbnail.html",
+            &[
+                (
+                    "https://fixtures.test/archive/thumbnail.html",
+                    coverage_fixture!("topviewer/thumbnail.html"),
+                ),
+                (
+                    "https://images.memorix.nl/demo/topviewjson/memorix/sample-file",
+                    coverage_fixture!("topviewer/data.json"),
+                ),
+            ],
+        )
+        .unwrap(),
+    );
+    assert_eq!(image.format.as_str(), "topviewer");
+
+    let image = ready_image(
+        discover(
+            "https://fixtures.test/archive/server.html",
+            &[
+                (
+                    "https://fixtures.test/archive/server.html",
+                    coverage_fixture!("topviewer/server.html"),
+                ),
+                (
+                    "https://fixtures.test/topviewer/data.json",
+                    coverage_fixture!("topviewer/data.json"),
+                ),
+            ],
+        )
+        .unwrap(),
+    );
+    assert_eq!(image.format.as_str(), "topviewer");
+
+    let image = ready_image(discover(
+        "https://fixtures.test/topviewer/mediabank.html",
+        &[
+            (
+                "https://fixtures.test/topviewer/mediabank.html",
+                coverage_fixture!("topviewer/mediabank.html"),
+            ),
+            (
+                "https://fixtures.test/mediabank/media?label=fixture&mode=full&rows=1&apiKey=fixture-key&entities%5B0%5D=fixture-entity",
+                coverage_fixture!("topviewer/media.json"),
+            ),
+            (
+                "https://fixtures.test/topviewer/data.json",
+                coverage_fixture!("topviewer/data.json"),
+            ),
+        ],
+    )
+    .unwrap());
+    assert_eq!(image.format.as_str(), "topviewer");
+
+    let detail = "https://fixtures.test/archive/detail/record-id/media/asset-id";
+    let media = "https://fixtures.test/mediabank/media/record-id?apiKey=fixture-key";
+    let image = ready_image(
+        discover(
+            detail,
+            &[
+                (
+                    detail,
+                    br#"<pic-mediabank data-api-key="fixture-key" data-api-url="/mediabank/"></pic-mediabank>"#,
+                ),
+                (
+                    media,
+                    br#"{"media":[{"asset":[{"uuid":"other-id","topview":"https://fixtures.test/topviewer/wrong.json"},{"uuid":"asset-id","topview":"https://fixtures.test/topviewer/data.json"}]}]}"#,
+                ),
+                (
+                    "https://fixtures.test/topviewer/data.json",
+                    coverage_fixture!("topviewer/data.json"),
+                ),
+            ],
+        )
+        .unwrap(),
+    );
+    assert_eq!(image.format.as_str(), "topviewer");
+
+    let image = ready_image(
+        discover(
+            "https://fixtures.test/archive/fsi.html",
+            &[
+                (
+                    "https://fixtures.test/archive/fsi.html",
+                    coverage_fixture!("fsi/page.html"),
+                ),
+                (
+                    "https://fixtures.test/fsi/server?type=info&source=image",
+                    coverage_fixture!("fsi/info.txt"),
+                ),
+            ],
+        )
+        .unwrap(),
+    );
+    assert_eq!(image.format.as_str(), "fsi");
+
+    let image = ready_image(
+        discover(
+            "https://fixtures.test/hungaricana/page.html",
+            &[
+                (
+                    "https://fixtures.test/hungaricana/page.html",
+                    coverage_fixture!("hungaricana/files-url.html"),
+                ),
+                (
+                    "https://fixtures.test/hungaricana/api/list",
+                    coverage_fixture!("hungaricana/files.json"),
+                ),
+                (
+                    "https://fixtures.test/hungaricana/image/page/first.ecw",
+                    coverage_fixture!("hungaricana/sample.ecw.json"),
+                ),
+            ],
+        )
+        .unwrap(),
+    );
+    assert_eq!(image.format.as_str(), "hungaricana");
+
+    let image = ready_image(
+        discover(
+            "https://fixtures.test/hungaricana/imagepath.html",
+            &[
+                (
+                    "https://fixtures.test/hungaricana/imagepath.html",
+                    coverage_fixture!("hungaricana/imagepath.html"),
+                ),
+                (
+                    "https://fixtures.test/hungaricana/image/page/imagepath.ecw",
+                    coverage_fixture!("hungaricana/sample.ecw.json"),
+                ),
+            ],
+        )
+        .unwrap(),
+    );
+    assert_eq!(image.format.as_str(), "hungaricana");
+}
+
+#[test]
+fn pnav_probe_resolves_scaled_crop_grid_without_repeating_the_probe() {
+    let catalog = discover(
+        "https://fixtures.test/entity/OBJECT/1",
+        &[
+            (
+                "https://fixtures.test/entity/OBJECT/1",
+                coverage_fixture!("pnav/page.html"),
+            ),
+            (
+                "https://fixtures.test/fixtures/pnav/image.json",
+                coverage_fixture!("pnav/image.json"),
+            ),
+        ],
+    )
+    .unwrap();
+    let image = ready_image(catalog);
+    let TileSource::Adaptive(source) = &image.levels[0].source else {
+        panic!("pnav must expose a probe-driven source")
+    };
+    let DiscoverableStep::Probe { tile, continuation } = source.start() else {
+        panic!("pnav must begin with a probe")
+    };
+    assert_eq!(
+        tile.request.uri,
+        "https://fixtures.test/fixtures/pnav/image.jpg?w=2000&h=2000&cl=0&ct=0&cw=512&ch=512"
+    );
+    let DiscoverableStep::Resolved {
+        grid,
+        previously_output,
+    } = continuation
+        .submit(ObservationResult::Available {
+            size: Vec2d::square(2000),
+        })
+        .unwrap()
+    else {
+        panic!("pnav probe must resolve")
+    };
+    assert_eq!(grid.image_size(), Vec2d::square(2000));
+    assert_eq!(grid.count(), 1);
+    assert_eq!(previously_output, [Vec2d::default()]);
+    assert_eq!(
+        grid.tiles_row_major().next().unwrap().unwrap().request.uri,
+        tile.request.uri
+    );
+
+    let image = ready_image(
+        discover(
+            "https://fixtures.test/entity/OBJECT/1/",
+            &[
+                (
+                    "https://fixtures.test/entity/OBJECT/1/",
+                    coverage_fixture!("pnav/page.html"),
+                ),
+                (
+                    "https://fixtures.test/fixtures/pnav/image.json",
+                    coverage_fixture!("pnav/image.json"),
+                ),
+            ],
+        )
+        .unwrap(),
+    );
+    assert_eq!(image.format.as_str(), "pnav");
+}
+
+#[test]
+fn part_three_malformed_metadata_is_rejected() {
+    let cases: &[(&str, &[Resource<'_>], &str)] = &[
+        (
+            "https://fixtures.test/xl/sample.imgi?cmd=info",
+            &[(
+                "https://fixtures.test/xl/sample.imgi?cmd=info",
+                b"<image><width>0</width></image>",
+            )],
+            "XLimage",
+        ),
+        (
+            "https://fixtures.test/topviewer/data.json",
+            &[("https://fixtures.test/topviewer/data.json", b"{}")],
+            "TopViewer",
+        ),
+        (
+            "https://fixtures.test/fsi/server?type=info&source=image",
+            &[(
+                "https://fixtures.test/fsi/server?type=info&source=image",
+                b"<property width value=\"512\" />",
+            )],
+            "FSI",
+        ),
+        (
+            "https://fixtures.test/lizardtech/iserv/calcrgn?item=image",
+            &[(
+                "https://fixtures.test/lizardtech/iserv/calcrgn?item=image",
+                b"<ImageServer />",
+            )],
+            "LizardTech",
+        ),
+        (
+            "https://fixtures.test/wmts/WMTSCapabilities.xml",
+            &[(
+                "https://fixtures.test/wmts/WMTSCapabilities.xml",
+                b"<Capabilities />",
+            )],
+            "WMTS",
+        ),
+        (
+            "https://fixtures.test/arcgis/MapServer",
+            &[(
+                "https://fixtures.test/arcgis/MapServer?f=json",
+                coverage_fixture!("arcgis/uncached.json"),
+            )],
+            "ArcGIS",
+        ),
+    ];
+    for (input, resources, label) in cases {
+        assert!(
+            discover(input, resources).is_err(),
+            "{label} accepted malformed metadata"
+        );
+    }
 }

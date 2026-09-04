@@ -122,9 +122,14 @@ impl<'a> DiscoveryContext<'a> {
     #[must_use]
     pub fn has_visited(&self, uri: &str) -> bool {
         self.history_ids.iter().any(|id| {
-            self.requests
-                .get(id.0)
-                .is_some_and(|r| r.request.uri == uri)
+            self.requests.get(id.0).is_some_and(|record| {
+                record.request.uri == uri
+                    || matches!(
+                        record.outcome.as_ref(),
+                        Some(ResourceOutcome::Response(response))
+                            if response.final_uri.as_deref() == Some(uri)
+                    )
+            })
         })
     }
 }
@@ -204,16 +209,19 @@ fn dispatch_resource(
     unmatched: &str,
 ) -> Result<DiscoveryStep, DiscoveryError> {
     for route in routes {
-        if !route
+        let matches_final = route
             .matcher
-            .matches(resource.uri(), Some(resource.bytes()))
-        {
+            .matches(resource.final_uri(), Some(resource.bytes()));
+        let matches_requested = route
+            .matcher
+            .matches(resource.uri(), Some(resource.bytes()));
+        if !matches_final && !matches_requested {
             continue;
         }
         return match route.handler {
             RouteAction::Then(handler) => handler(context, resource),
             RouteAction::Extract(extractor) => {
-                extractor(resource.uri(), resource.bytes()).map(DiscoveryStep::Complete)
+                extractor(resource.final_uri(), resource.bytes()).map(DiscoveryStep::Complete)
             }
             RouteAction::MapUrl(_) => continue,
         };
@@ -622,11 +630,22 @@ impl DiscoveryOperation {
 #[allow(clippy::unnecessary_wraps)]
 mod tests {
     use super::*;
+    use crate::core::model::{CatalogEntry, ImageDescriptor};
     use crate::core::registry::Registry;
 
     fn catalog(_: &str, _: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
         Ok(ImageCatalog::default())
     }
+
+    fn final_uri_catalog(uri: &str, _: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
+        Ok(ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
+            title: Some(uri.into()),
+            ..Default::default()
+        })]))
+    }
+
+    const FINAL_URI: &[DiscoveryRoute] =
+        &[DiscoveryMatch::UrlSuffix("/redirect").extract(final_uri_catalog)];
 
     fn reject(
         _: &DiscoveryContext<'_>,
@@ -656,6 +675,28 @@ mod tests {
             .provide(ResourceResponse::new(need.id, b"metadata"))
             .unwrap();
         assert!(operation.finish().unwrap().is_empty());
+    }
+
+    #[test]
+    fn extractors_receive_the_redirect_target_uri() {
+        let mut registry = Registry::new();
+        registry.register(DezoomerSpec::new("final-uri", FINAL_URI));
+        let mut operation = registry.start("https://example.test/redirect");
+        let need = operation.missing_resources().unwrap().pop().unwrap();
+        operation
+            .provide(
+                ResourceResponse::new(need.id, b"metadata")
+                    .with_final_uri("https://cdn.example.test/info.xml"),
+            )
+            .unwrap();
+        let catalog = operation.finish().unwrap();
+        let [CatalogEntry::Ready(image)] = catalog.entries() else {
+            panic!("expected one ready image")
+        };
+        assert_eq!(
+            image.title.as_deref(),
+            Some("https://cdn.example.test/info.xml")
+        );
     }
 
     fn text_catalog(

@@ -1,0 +1,1 @@
+<property width value="512" /><property height value="512" />

@@ -30,9 +30,18 @@ The following dezoomers are currently available:
  that is often used with the seadragon viewer.
  - [**IIIF**](#IIIF) supports the widely used International Image Interoperability Framework format.
  - [**Krpano**](#krpano) supports the [krpano](https://krpano.com/home/) panorama viewer
- - [**IIPImage**](#iipimage) supports the [iipimage](https://iipimage.sourceforge.io/) image format
- - [**NYPLImage**](#nyplimage) supports the [nypl](https://digitalcollections.nypl.org) image format
- - [**generic**](#Generic) For when the tile URLs follow a simple pattern.
+  - [**IIPImage**](#iipimage) supports the [iipimage](https://iipimage.sourceforge.io/) image format
+  - [**NYPLImage**](#nyplimage) supports the [nypl](https://digitalcollections.nypl.org) image format
+  - [**XLimage**](#xlimage) supports XLimage image servers and KBR viewer URLs;
+  - [**TopViewer**](#topviewer) supports Picturae Memorix image services;
+  - [**FSI**](#fsi) supports Neptune Labs FSI Server images;
+  - [**LizardTech**](#lizardtech) supports LizardTech ImageServer services;
+  - [**VLS**](#vls) supports Semantics Visual Library Server viewers;
+  - [**Hungaricana**](#hungaricana) supports Hungaricana ECW image services;
+  - [**WMTS**](#wmts) supports Web Map Tile Service capabilities documents;
+  - [**ArcGIS**](#arcgis) supports cached ArcGIS MapServer services;
+  - [**pnav**](#pnav) supports crop-based pnav image services;
+  - [**generic**](#Generic) For when the tile URLs follow a simple pattern.
  - [**custom**](#Custom-yaml) for advanced users.
    It allows you to specify a custom tile URL format that can contain multiple variables. This gives you the most flexibity, but requires some manual work.
 
@@ -165,6 +174,50 @@ the [Internet Imaging Protocol](https://iipimage.sourceforge.io/IIPv105.pdf).
 Such images are easily recognizable by their tile URLs, which contain `FIF=`.
 You can pass an URL containing `FIF=` to dezoomify-rs to let it download the image. 
 
+### XLimage
+
+The XLimage dezoomer accepts `*.imgf`, `*.imgi`, and `*.imgg` metadata URLs.
+It also understands KBR viewer URLs and follows them to their XLimage metadata.
+
+### TopViewer
+
+TopViewer supports Picturae Memorix metadata, thumbnail URLs, media API
+responses, and the supported legacy detail-page hosts.
+
+### FSI
+
+FSI supports Neptune Labs FSI Server metadata URLs and viewer pages containing
+an FSI server URL.
+
+### LizardTech
+
+LizardTech supports `ImageServer` `calcrgn` metadata and generates the
+corresponding `getimage` tile requests.
+
+### VLS
+
+VLS supports Visual Library Server `zoom`, `pageview`, and `thumbview` URLs.
+
+### Hungaricana
+
+Hungaricana support accepts ECW image metadata and follows the image metadata
+resources exposed by supported gallery pages.
+
+### WMTS
+
+WMTS support accepts a capabilities document URL and uses its linked Web
+Mercator tile matrix set, layer limits, and tile URL template.
+
+### ArcGIS
+
+ArcGIS support accepts cached `MapServer` URLs and follows the service's JSON
+metadata to its cached tiles.
+
+### pnav
+
+pnav support accepts entity URLs, discovers the image JSON metadata, and uses
+the service's crop requests to assemble the image.
+
 ### Generic
 
 You can use this dezoomer if you know the format of tile URLs.
@@ -232,9 +285,11 @@ Options:
           If several zoom levels are available, select the one with the largest height that does not exceed this value (in pixels)
       --zoom-level <ZOOM_LEVEL>
           Select a specific zoom level by its index (0-based). Use 0 for the smallest, 1 for the next level up, etc. If the specified level doesn't exist, falls back to the highest available level
-      --image-index <IMAGE_INDEX>
-          Select a specific image by its index (0-based) when multiple images are found. If not specified, the program will ask interactively when multiple images are available. If the specified index doesn't exist, falls back to the last one
-  -n, --parallelism <PARALLELISM>
+       --image-index <IMAGE_INDEX>
+           Select a specific image by its index (0-based) when multiple images are found. If not specified, the program will ask interactively when multiple images are available. If the specified index doesn't exist, falls back to the last one
+       --page <PAGE>
+           Select a zero-based page for multi-page XLimage viewers such as KBR
+   -n, --parallelism <PARALLELISM>
           Degree of parallelism to use. At most this number of tiles will be downloaded at the same time [default: 16]
   -r, --retries <RETRIES>
           Number of new attempts to make when a tile load fails before giving up. Setting this to 0 is useful to speed up the generic dezoomer, which relies on failed tile loads to detect the dimensions of the image. On the contrary, if a server is not reliable, set this value to a higher number [default: 1]

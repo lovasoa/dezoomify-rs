@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::Vec2d;
 
-use super::adaptive::DiscoverableGrid;
+use super::adaptive::{AdaptiveSource, DiscoverableGrid};
 use super::model::{ProcessingRecipe, Request, StableId, TileId, TileRole, TileSpec};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -429,6 +429,7 @@ pub enum TileSource {
     Grid(Grid),
     Positioned(Positioned),
     DiscoverableGrid(DiscoverableGrid),
+    Adaptive(AdaptiveSource),
 }
 
 impl TileSource {
@@ -438,6 +439,7 @@ impl TileSource {
             Self::Grid(grid) => grid.id(),
             Self::Positioned(positioned) => positioned.id(),
             Self::DiscoverableGrid(discoverable) => discoverable.id(),
+            Self::Adaptive(adaptive) => adaptive.id(),
         }
     }
 
@@ -446,7 +448,7 @@ impl TileSource {
         match self {
             Self::Grid(grid) => Some(grid.image_size()),
             Self::Positioned(positioned) => positioned.image_size(),
-            Self::DiscoverableGrid(_) => None,
+            Self::DiscoverableGrid(_) | Self::Adaptive(_) => None,
         }
     }
 
@@ -454,7 +456,7 @@ impl TileSource {
     pub fn tile_size(&self) -> Option<Vec2d> {
         match self {
             Self::Grid(grid) => Some(grid.tile_size()),
-            Self::Positioned(_) | Self::DiscoverableGrid(_) => None,
+            Self::Positioned(_) | Self::DiscoverableGrid(_) | Self::Adaptive(_) => None,
         }
     }
 
@@ -462,7 +464,7 @@ impl TileSource {
     pub fn overlap(&self) -> Option<Vec2d> {
         match self {
             Self::Grid(grid) => Some(grid.overlap()),
-            Self::Positioned(_) | Self::DiscoverableGrid(_) => None,
+            Self::Positioned(_) | Self::DiscoverableGrid(_) | Self::Adaptive(_) => None,
         }
     }
 
@@ -471,7 +473,7 @@ impl TileSource {
         match self {
             Self::Grid(grid) => Some(grid.count()),
             Self::Positioned(positioned) => Some(positioned.count()),
-            Self::DiscoverableGrid(_) => None,
+            Self::DiscoverableGrid(_) | Self::Adaptive(_) => None,
         }
     }
 }
@@ -491,6 +493,12 @@ impl From<Positioned> for TileSource {
 impl From<DiscoverableGrid> for TileSource {
     fn from(value: DiscoverableGrid) -> Self {
         Self::DiscoverableGrid(value)
+    }
+}
+
+impl From<AdaptiveSource> for TileSource {
+    fn from(value: AdaptiveSource) -> Self {
+        Self::Adaptive(value)
     }
 }
 

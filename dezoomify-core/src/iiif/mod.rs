@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use custom_error::custom_error;
 use tile_info::ImageInfo;
+use url::Url;
 
 use crate::Vec2d;
 use crate::core::{
@@ -254,60 +255,84 @@ fn levels_from_info(
         warnings.push("Removed probably invalid IIIF image identifier".into());
     }
     let img = Arc::new(image_info);
+    let image_size = img.size();
     let tiles = img.tiles();
-    let base_url = &Arc::from(url.replace("/info.json", ""));
+    let base_url: Arc<str> = service_base_url(url).into();
 
-    let mut levels: Vec<_> =
-        tiles
-            .iter()
-            .enumerate()
-            .flat_map(|(tile_ordinal, tile_info)| {
-                let tile_size = tile_info.size();
-                let quality = Arc::from(img.best_quality());
-                let format = Arc::from(img.best_format());
-                let size_format = img.preferred_size_format();
-                let page_info = &img; // Required to allow the move
-                let warnings = warnings.clone();
-                tile_info.scale_factors.iter().enumerate().map(
-                    move |(scale_ordinal, &scale_factor)| {
-                        if scale_factor == 0 {
-                            return Err(IIIFError::GeometryError {
-                                description: "scale factor must be greater than zero".into(),
-                            });
-                        }
-                        let id = StableId::new(format!(
-                            "iiif:level:{tile_ordinal}:{scale_factor}:{scale_ordinal}"
-                        ));
-                        let source = IIIFLevel {
-                            scale_factor,
-                            page_info: Arc::clone(page_info),
-                            base_url: Arc::clone(base_url),
-                            quality: Arc::clone(&quality),
-                            format: Arc::clone(&format),
-                            size_format,
-                        };
-                        let source = Grid::new(
-                            id.clone(),
-                            source.image_size(),
-                            tile_size,
-                            Vec2d::default(),
-                            source,
-                        )
-                        .map_err(|error| IIIFError::GeometryError {
-                            description: error.to_string(),
+    let mut levels: Vec<_> = tiles
+        .iter()
+        .enumerate()
+        .flat_map(|(tile_ordinal, tile_info)| {
+            let tile_size = tile_info.size();
+            let base_url = Arc::clone(&base_url);
+            let quality = Arc::from(img.best_quality());
+            let format = Arc::from(img.best_format());
+            let size_format = img.preferred_size_format();
+            let page_info = Arc::clone(&img);
+            let warnings = warnings.clone();
+            tile_info
+                .scale_factors
+                .iter()
+                .enumerate()
+                .map(move |(scale_ordinal, &scale_factor)| {
+                    if scale_factor == 0 {
+                        return Err(IIIFError::GeometryError {
+                            description: "scale factor must be greater than zero".into(),
+                        });
+                    }
+                    if tile_size.x == 0 || tile_size.y == 0 {
+                        return Err(IIIFError::GeometryError {
+                            description: "IIIF tile dimensions must be greater than zero".into(),
+                        });
+                    }
+                    let scaled_tile_size = tile_size
+                        .checked_mul(Vec2d::square(scale_factor))
+                        .ok_or_else(|| IIIFError::GeometryError {
+                            description: "scaled IIIF tile dimensions overflow u32".into(),
                         })?;
-                        let level_size = source.image_size();
-                        Ok(LevelDescriptor::new(source)
-                            .with_title(Some(format!(
-                                "IIIF level {} (scale 1:{} {: >5}×{: >5} pixels)",
-                                tile_ordinal, scale_factor, level_size.x, level_size.y,
-                            )))
-                            .with_scale_factor(Some(scale_factor))
-                            .with_warnings(warnings.clone()))
-                    },
-                )
-            })
-            .collect::<Result<Vec<_>, IIIFError>>()?;
+                    let level_size = image_size.ceil_div(scale_factor);
+                    let shape = level_size.ceil_div(tile_size);
+                    let last_coord = Vec2d {
+                        x: shape.x.saturating_sub(1),
+                        y: shape.y.saturating_sub(1),
+                    };
+                    if last_coord.checked_mul(scaled_tile_size).is_none() {
+                        return Err(IIIFError::GeometryError {
+                            description: "scaled IIIF tile positions overflow u32".into(),
+                        });
+                    }
+                    let id = StableId::new(format!(
+                        "iiif:level:{tile_ordinal}:{scale_factor}:{scale_ordinal}"
+                    ));
+                    let source = IIIFLevel {
+                        scale_factor,
+                        page_info: Arc::clone(&page_info),
+                        base_url: Arc::clone(&base_url),
+                        quality: Arc::clone(&quality),
+                        format: Arc::clone(&format),
+                        size_format,
+                    };
+                    let source = Grid::new(
+                        id.clone(),
+                        source.image_size(),
+                        tile_size,
+                        Vec2d::default(),
+                        source,
+                    )
+                    .map_err(|error| IIIFError::GeometryError {
+                        description: error.to_string(),
+                    })?;
+                    let level_size = source.image_size();
+                    Ok(LevelDescriptor::new(source)
+                        .with_title(Some(format!(
+                            "IIIF level {} (scale 1:{} {: >5}×{: >5} pixels)",
+                            tile_ordinal, scale_factor, level_size.x, level_size.y,
+                        )))
+                        .with_scale_factor(Some(scale_factor))
+                        .with_warnings(warnings.clone()))
+                })
+        })
+        .collect::<Result<Vec<_>, IIIFError>>()?;
     levels.sort_by_key(|level| level.source.image_size().map_or(0, Vec2d::area));
     Ok(levels)
 }
@@ -330,17 +355,22 @@ impl IIIFLevel {
 impl GridRequests for IIIFLevel {
     fn request(&self, tile: GridTile) -> Request {
         let col_and_row_pos: Vec2d = tile.coord.into();
-        let scaled_tile_size = tile.cell_size * self.scale_factor;
-        let xy_pos = col_and_row_pos * scaled_tile_size;
-        let scaled_tile_size = (xy_pos + scaled_tile_size).min(self.page_info.size()) - xy_pos;
+        let scaled_tile_size = tile
+            .cell_size
+            .checked_mul(Vec2d::square(self.scale_factor))
+            .expect("IIIF scaled tile dimensions were validated");
+        let xy_pos = col_and_row_pos
+            .checked_mul(scaled_tile_size)
+            .expect("IIIF scaled tile positions were validated");
+        let scaled_tile_size = scaled_tile_size.min(self.page_info.size() - xy_pos);
         let tile_size = scaled_tile_size.ceil_div(self.scale_factor);
-        Request::new(format!(
-            "{base}/{x},{y},{img_w},{img_h}/{tile_size}/{rotation}/{quality}.{format}",
-            base = self
-                .page_info
-                .id
-                .as_deref()
-                .unwrap_or_else(|| self.base_url.as_ref()),
+        let base = self
+            .page_info
+            .id
+            .as_deref()
+            .unwrap_or_else(|| self.base_url.as_ref());
+        let path = format!(
+            "{x},{y},{img_w},{img_h}/{tile_size}/{rotation}/{quality}.{format}",
             x = xy_pos.x,
             y = xy_pos.y,
             img_w = scaled_tile_size.x,
@@ -353,8 +383,68 @@ impl GridRequests for IIIFLevel {
             rotation = 0,
             quality = self.quality,
             format = self.format,
-        ))
+        );
+        Request::new(append_tile_path(base, &path))
     }
+}
+
+fn service_base_url(uri: &str) -> String {
+    let Ok(mut parsed) = Url::parse(uri) else {
+        return uri.replace("/info.json", "");
+    };
+    let path = parsed
+        .path()
+        .strip_suffix("/info.json")
+        .unwrap_or(parsed.path())
+        .to_owned();
+    parsed.set_path(&path);
+    parsed.to_string()
+}
+
+fn append_tile_path(uri: &str, suffix: &str) -> String {
+    if let Some(uri) = append_to_iiif_query(uri, suffix) {
+        return uri;
+    }
+    let Ok(mut parsed) = Url::parse(uri) else {
+        return format!("{}/{}", uri.trim_end_matches('/'), suffix);
+    };
+    let path = parsed.path().trim_end_matches('/');
+    parsed.set_path(&format!("{path}/{suffix}"));
+    parsed.to_string()
+}
+
+fn append_to_iiif_query(uri: &str, suffix: &str) -> Option<String> {
+    let query_start = uri.find('?')?;
+    let fragment_start = uri[query_start..]
+        .find('#')
+        .map(|offset| query_start + offset);
+    let query_end = fragment_start.unwrap_or(uri.len());
+    let query = &uri[query_start + 1..query_end];
+    let mut found = false;
+    let query = query
+        .split('&')
+        .map(|part| {
+            let Some((name, value)) = part.split_once('=') else {
+                return Some(part.to_owned());
+            };
+            let decoded_name = url::form_urlencoded::parse(name.as_bytes())
+                .next()
+                .map(|(name, _)| name.into_owned())?;
+            if !decoded_name.eq_ignore_ascii_case("IIIF") {
+                return Some(part.to_owned());
+            }
+            found = true;
+            let value = value
+                .strip_suffix("/info.json")
+                .unwrap_or(value)
+                .trim_end_matches('/');
+            Some(format!("{name}={value}/{suffix}"))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    found.then(|| {
+        let fragment = fragment_start.map_or("", |start| &uri[start..]);
+        format!("{}?{}{}", &uri[..query_start], query.join("&"), fragment)
+    })
 }
 
 struct TileSizeFormatter {
@@ -554,6 +644,77 @@ fn test_missing_id() {
             "http://test.com/512,0,88,350/88,350/0/default.jpg"
         ]
     );
+}
+
+#[test]
+fn ordinary_query_parameters_follow_the_iiif_tile_path() {
+    let data = br#"{
+      "type": "ImageService3",
+      "width": 512,
+      "height": 512,
+      "tiles": [{ "width": 512, "scaleFactors": [1] }]
+    }"#;
+    let levels = levels("https://example.com/image/info.json?token=secret", data).unwrap();
+    assert_eq!(
+        tile_urls(level_with_scale(&levels, 1)),
+        vec!["https://example.com/image/0,0,512,512/512,512/0/default.jpg?token=secret"]
+    );
+}
+
+#[test]
+fn iiif_query_parameters_keep_the_image_path_inside_the_iiif_value() {
+    let data = br#"{
+      "type": "ImageService3",
+      "id": "https://images.example.test/iipsrv.fcgi?IIIF=/images/item.tif&download",
+      "width": 512,
+      "height": 512,
+      "tiles": [{ "width": 512, "scaleFactors": [1] }]
+    }"#;
+    let levels = levels("https://example.com/info.json", data).unwrap();
+    assert_eq!(
+        tile_urls(level_with_scale(&levels, 1)),
+        vec![
+            "https://images.example.test/iipsrv.fcgi?IIIF=/images/item.tif/0,0,512,512/512,512/0/default.jpg&download"
+        ]
+    );
+}
+
+#[test]
+fn nested_info_urls_do_not_repeat_info_json_in_tile_paths() {
+    let data = br#"{
+      "type": "ImageService3",
+      "width": 512,
+      "height": 512,
+      "tiles": [{ "width": 512, "scaleFactors": [1] }]
+    }"#;
+    let levels = levels(
+        "https://auchinleck.nls.uk/imageserver/iipsrv.fcgi?iiif=/auchinleck/105v.jp2/info.json",
+        data,
+    )
+    .unwrap();
+    assert_eq!(
+        tile_urls(level_with_scale(&levels, 1)),
+        vec![
+            "https://auchinleck.nls.uk/imageserver/iipsrv.fcgi?iiif=/auchinleck/105v.jp2/0,0,512,512/512,512/0/default.jpg"
+        ]
+    );
+}
+
+#[test]
+fn overflowing_scaled_tile_geometry_is_rejected() {
+    let data = format!(
+        r#"{{
+          "type": "ImageService3",
+          "width": {},
+          "height": {},
+          "tiles": [{{ "width": {}, "scaleFactors": [{}] }}]
+        }}"#,
+        u32::MAX,
+        u32::MAX,
+        u32::MAX,
+        u32::MAX
+    );
+    assert!(levels("https://example.com/info.json", data.as_bytes()).is_err());
 }
 
 #[test]

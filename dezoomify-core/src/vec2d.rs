@@ -41,6 +41,22 @@ impl Vec2d {
     }
 
     #[must_use]
+    pub fn checked_add(self, other: Vec2d) -> Option<Vec2d> {
+        Some(Vec2d {
+            x: self.x.checked_add(other.x)?,
+            y: self.y.checked_add(other.y)?,
+        })
+    }
+
+    #[must_use]
+    pub fn checked_mul(self, other: Vec2d) -> Option<Vec2d> {
+        Some(Vec2d {
+            x: self.x.checked_mul(other.x)?,
+            y: self.y.checked_mul(other.y)?,
+        })
+    }
+
+    #[must_use]
     pub fn fits_inside(self, other: Vec2d) -> bool {
         self.x <= other.x && self.y <= other.y
     }

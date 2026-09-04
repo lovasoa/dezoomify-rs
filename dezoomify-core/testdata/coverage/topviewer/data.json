@@ -1,0 +1,14 @@
+{
+  "topviews": [
+    {
+      "filepath": "sample-file",
+      "width": 512,
+      "height": 512,
+      "tileWidth": 256,
+      "layers": [{ "no": 1, "width": 512, "starttile": 10, "cols": 2 }]
+    }
+  ],
+  "config": {
+    "tileurl_v2": "https://fixtures.test/topviewer/{file}/{tile}.{extension}"
+  }
+}
