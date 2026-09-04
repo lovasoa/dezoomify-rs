@@ -110,14 +110,6 @@ fn automatic_discovery_selects_every_ready_format() {
             ) ],
             "iipimage",
         ),
-        (
-            "https://digitalcollections.nypl.org/items/a14f3200-fac1-012f-f7a4-58d385a7bbd0",
-            &[ (
-                "https://access.nypl.org/image.php/a14f3200-fac1-012f-f7a4-58d385a7bbd0/tiles/config.js",
-                br#"{"configs":{"0":{"size":{"width":"512","height":"512"},"tilesize":"256","overlap":"0","format":"jpg"}}}"#,
-            ) ],
-            "nypl",
-        ),
     ];
     for (input, resources, format) in cases {
         assert_eq!(
@@ -1120,26 +1112,6 @@ fn xlimage_exposes_server_zoom_levels() {
 }
 
 #[test]
-fn xlimage_kbr_viewer_uses_the_selected_page_and_broker() {
-    let input = "https://kbr.be/multi/abc_defViewer/index.html#dezoomify-page=2";
-    let metadata = "https://kbr.be/multi/abc_defViewer/xml.php?/multi/abc_def/003.imgi?cmd=info";
-    let image = ready_image(
-        discover(
-            input,
-            &[
-                (input, b""),
-                (metadata, coverage_fixture!("xlimage/sample.imgi.xml")),
-            ],
-        )
-        .unwrap(),
-    );
-    assert_eq!(
-        tile_urls(&image.levels[0])[0],
-        "https://kbr.be/multi/abc_defViewer/xml.php?/multi/abc_def/003.imgi?cmd=tile&x=0&y=0&z=1"
-    );
-}
-
-#[test]
 fn part_three_page_adapters_follow_their_metadata_resources() {
     let image = ready_image(
         discover(
@@ -1151,24 +1123,6 @@ fn part_three_page_adapters_follow_their_metadata_resources() {
                 ),
                 (
                     "https://images.memorix.nl/demo/topviewjson/memorix/sample-file",
-                    coverage_fixture!("topviewer/data.json"),
-                ),
-            ],
-        )
-        .unwrap(),
-    );
-    assert_eq!(image.format.as_str(), "topviewer");
-
-    let image = ready_image(
-        discover(
-            "https://fixtures.test/archive/server.html",
-            &[
-                (
-                    "https://fixtures.test/archive/server.html",
-                    coverage_fixture!("topviewer/server.html"),
-                ),
-                (
-                    "https://fixtures.test/topviewer/data.json",
                     coverage_fixture!("topviewer/data.json"),
                 ),
             ],
@@ -1245,32 +1199,10 @@ fn part_three_page_adapters_follow_their_metadata_resources() {
             &[
                 (
                     "https://fixtures.test/hungaricana/page.html",
-                    coverage_fixture!("hungaricana/files-url.html"),
-                ),
-                (
-                    "https://fixtures.test/hungaricana/api/list",
-                    coverage_fixture!("hungaricana/files.json"),
+                    coverage_fixture!("hungaricana/inline-images.html"),
                 ),
                 (
                     "https://fixtures.test/hungaricana/image/page/first.ecw",
-                    coverage_fixture!("hungaricana/sample.ecw.json"),
-                ),
-            ],
-        )
-        .unwrap(),
-    );
-    assert_eq!(image.format.as_str(), "hungaricana");
-
-    let image = ready_image(
-        discover(
-            "https://fixtures.test/hungaricana/imagepath.html",
-            &[
-                (
-                    "https://fixtures.test/hungaricana/imagepath.html",
-                    coverage_fixture!("hungaricana/imagepath.html"),
-                ),
-                (
-                    "https://fixtures.test/hungaricana/image/page/imagepath.ecw",
                     coverage_fixture!("hungaricana/sample.ecw.json"),
                 ),
             ],

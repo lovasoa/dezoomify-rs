@@ -15,21 +15,11 @@ use crate::core::{
 use crate::web_page::decode_html_entities;
 
 static THUMBNAIL_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?i)(?:images\.memorix|afbeeldingen\.gahetna|images\.rkd)\.nl/([^/]+)/thumb/[^/]+/(.*?)\.jpg",
-    )
-    .expect("constant TopViewer thumbnail pattern")
+    Regex::new(r"(?i)images\.memorix\.nl/([^/]+)/thumb/[^/]+/(.*?)\.jpg")
+        .expect("constant TopViewer thumbnail pattern")
 });
 static MEDIABANK_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?is)<pic-mediabank\b[^>]*>").expect("constant TopViewer mediabank pattern")
-});
-static SERVER_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)[\"']?server[\"']?\s*:\s*[\"']([^\"']+)[\"']"#)
-        .expect("constant TopViewer server pattern")
-});
-static DETAIL_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)/detail/([a-z0-9-]+)/media/([a-z0-9-]+)")
-        .expect("constant TopViewer detail pattern")
 });
 static API_KEY_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)\bdata-api-key\s*=\s*[\"']([^\"']+)[\"']"#)
@@ -43,53 +33,20 @@ static ENTITIES_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)\bdata-entities\s*=\s*[\"']([^\"']+)[\"']"#)
         .expect("constant TopViewer entities pattern")
 });
+static DETAIL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)/detail/([a-z0-9-]+)/media/([a-z0-9-]+)")
+        .expect("constant TopViewer detail pattern")
+});
 
 const ROUTES: &[DiscoveryRoute] = &[
-    DiscoveryMatch::UrlPredicate(is_known_detail).map_url(known_detail_url),
     DiscoveryMatch::ContentPredicate(contains_mediabank).then(follow_mediabank),
     DiscoveryMatch::ContentPredicate(contains_thumbnail).then(follow_thumbnail),
-    DiscoveryMatch::ContentPredicate(contains_server).then(follow_server),
     DiscoveryMatch::UrlPredicate(is_media_api).then(follow_media),
     DiscoveryMatch::ContentPredicate(contains_topviews).extract(catalog),
 ];
 
 pub const SPEC: DezoomerSpec = DezoomerSpec::new("topviewer", ROUTES)
     .preferring(|uri| uri.contains("topviewjson") || uri.contains("memorix"));
-
-fn is_known_detail(uri: &str) -> bool {
-    known_detail_server(uri).is_some() && DETAIL_RE.is_match(uri)
-}
-
-fn known_detail_server(uri: &str) -> Option<&'static str> {
-    let host = Url::parse(uri).ok()?.host_str()?.to_ascii_lowercase();
-    if host.contains("beeldbankgroningen.nl") {
-        Some("gra")
-    } else if host.contains("salha.nl") {
-        Some("sha")
-    } else if host.contains("archief.zaanstad.nl") {
-        Some("zaa")
-    } else if host.contains("erfgoedcentrumzutphen.nl") {
-        Some("szu")
-    } else if host.contains("noord-hollandsarchief.nl") {
-        Some("ranh")
-    } else {
-        None
-    }
-}
-
-fn known_detail_url(uri: &str) -> Result<Request, DiscoveryError> {
-    let server = known_detail_server(uri).ok_or_else(|| {
-        DiscoveryError::Session("unable to identify the Memorix image server".into())
-    })?;
-    let image = DETAIL_RE
-        .captures(uri)
-        .and_then(|captures| captures.get(2))
-        .ok_or_else(|| DiscoveryError::Session("unable to extract the Memorix image ID".into()))?;
-    Ok(Request::new(format!(
-        "https://images.memorix.nl/{server}/topviewjson/memorix/{}",
-        image.as_str()
-    )))
-}
 
 fn contains_topviews(bytes: &[u8]) -> bool {
     String::from_utf8_lossy(bytes).contains("\"topviews\"")
@@ -101,10 +58,6 @@ fn contains_thumbnail(bytes: &[u8]) -> bool {
 
 fn contains_mediabank(bytes: &[u8]) -> bool {
     MEDIABANK_TAG_RE.is_match(&String::from_utf8_lossy(bytes))
-}
-
-fn contains_server(bytes: &[u8]) -> bool {
-    SERVER_RE.is_match(&String::from_utf8_lossy(bytes))
 }
 
 fn follow_thumbnail(
@@ -123,32 +76,8 @@ fn follow_thumbnail(
         .get(2)
         .map(|value| value.as_str().to_owned())
         .ok_or_else(|| DiscoveryError::Session("thumbnail has no image ID".into()))?;
-    let base = if server.eq_ignore_ascii_case("rkd") {
-        "https://images.rkd.nl/rkd"
-    } else {
-        "https://images.memorix.nl/"
-    };
-    let uri = if server.eq_ignore_ascii_case("rkd") {
-        format!("{base}/topviewjson/memorix/{image}")
-    } else {
-        format!("{base}{server}/topviewjson/memorix/{image}")
-    };
-    Ok(DiscoveryStep::Follow(Request::new(uri)))
-}
-
-fn follow_server(
-    _: &DiscoveryContext<'_>,
-    resource: DiscoveryResource<'_>,
-) -> Result<DiscoveryStep, DiscoveryError> {
-    let page = resource.text_lossy();
-    let server = SERVER_RE
-        .captures(&page)
-        .and_then(|captures| captures.get(1))
-        .map(|value| decode_javascript_string(value.as_str()))
-        .ok_or_else(|| DiscoveryError::Session("TopViewer page has no server URL".into()))?;
-    Ok(DiscoveryStep::Follow(Request::new(resolve_relative(
-        resource.final_uri(),
-        &server,
+    Ok(DiscoveryStep::Follow(Request::new(format!(
+        "https://images.memorix.nl/{server}/topviewjson/memorix/{image}"
     ))))
 }
 
@@ -346,9 +275,4 @@ fn number(value: &Value, name: &str) -> Result<u32, DiscoveryError> {
         .and_then(|number| u32::try_from(number).ok())
         .filter(|number| *number > 0)
         .ok_or_else(|| DiscoveryError::Session(format!("TopViewer metadata has invalid {name}")))
-}
-
-fn decode_javascript_string(value: &str) -> String {
-    serde_json::from_str::<String>(&format!("\"{value}\""))
-        .unwrap_or_else(|_| value.replace("\\/", "/"))
 }

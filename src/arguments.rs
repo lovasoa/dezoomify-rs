@@ -60,10 +60,6 @@ pub struct Arguments {
     #[arg(long = "image-index")]
     pub image_index: Option<usize>,
 
-    /// Select a zero-based page for multi-page `XLimage` viewers such as KBR.
-    #[arg(long)]
-    pub page: Option<usize>,
-
     /// Degree of parallelism to use. At most this number of
     /// tiles will be downloaded at the same time.
     #[arg(
@@ -166,7 +162,6 @@ impl Default for Arguments {
             max_height: None,
             zoom_level: None,
             image_index: None,
-            page: None,
             parallelism: 16,
             retries: 1,
             compression: 5,
@@ -348,12 +343,6 @@ fn test_connect_timeout_option() {
         "https://example.com/info.json",
     ]);
     assert_eq!(args.connect_timeout, Duration::from_millis(123));
-}
-
-#[test]
-fn test_page_option() {
-    let args = Arguments::parse_from(["dezoomify-rs", "--page", "3", "https://example.com"]);
-    assert_eq!(args.page, Some(3));
 }
 
 #[test]

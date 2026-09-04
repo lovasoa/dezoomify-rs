@@ -4,7 +4,6 @@ use std::sync::{Arc, LazyLock};
 
 use image_properties::ImageProperties;
 use regex::{Regex, bytes::Regex as BytesRegex};
-use url::Url;
 
 use crate::Vec2d;
 use crate::core::{
@@ -18,13 +17,9 @@ mod image_properties;
 const ROUTES: &[DiscoveryRoute] = &[
     DiscoveryMatch::UrlPredicate(is_tile_url).map_url(tile_metadata),
     DiscoveryMatch::UrlSuffix("ImageProperties.xml").then(extract_catalog),
-    DiscoveryMatch::UrlPredicate(is_special_zoomify_url).map_url(special_image_properties),
-    DiscoveryMatch::UrlPredicate(is_fluid_broker_url).then(extract_fluid_image_properties_url),
     DiscoveryMatch::ContentPredicate(contains_zoomify_declaration)
         .then(extract_image_properties_url),
-    DiscoveryMatch::ContentPredicate(contains_fluid_accessnumber).then(follow_fluid_broker),
     ngv::ROUTE,
-    DiscoveryMatch::ContentPredicate(contains_iframe).then(follow_iframe),
 ];
 
 pub const SPEC: DezoomerSpec = DezoomerSpec::new("zoomify", ROUTES).preferring(is_zoomify_url);
@@ -34,13 +29,6 @@ static SHOW_IMAGE_RE: LazyLock<BytesRegex> = LazyLock::new(|| {
         .expect("constant Zoomify showImage pattern")
 });
 
-static FLASH_IMAGE_PATH_RE: LazyLock<BytesRegex> = LazyLock::new(|| {
-    BytesRegex::new(
-        r#"(?i)\bzoomifyImagePath\s*=\s*(?:["'](?P<image>[^"']*)["']|(?P<bare>[^'"&\s]+))"#,
-    )
-    .expect("constant Zoomify FlashVars pattern")
-});
-
 static TILE_SERVICE_RE: LazyLock<BytesRegex> = LazyLock::new(|| {
     BytesRegex::new(
         r#"(?is)\btype["']?\s*:\s*["']zoomifytileservice["'].*?\btilesUrl["']?\s*:\s*["'](?P<image>[^"']+)"#,
@@ -48,33 +36,9 @@ static TILE_SERVICE_RE: LazyLock<BytesRegex> = LazyLock::new(|| {
     .expect("constant Zoomify tile service pattern")
 });
 
-static OPENLAYERS_SOURCE_RE: LazyLock<BytesRegex> = LazyLock::new(|| {
-    BytesRegex::new(
-        r#"(?is)<[^>]*\bclass\s*=\s*["'][^"']*\bete-openlayers-src\b[^"']*["'][^>]*>\s*(?P<image>.*?)\s*</[^>]+>"#,
-    )
-    .expect("constant OpenLayers source pattern")
-});
-
-static URL_ELEMENT_RE: LazyLock<BytesRegex> = LazyLock::new(|| {
-    BytesRegex::new(r"(?is)<url\b[^>]*>\s*(?P<image>.*?)\s*</url\s*>")
-        .expect("constant Zoomify URL element pattern")
-});
-
-static ACCESSNUMBER_RE: LazyLock<BytesRegex> = LazyLock::new(|| {
-    BytesRegex::new(r#"(?i)\baccessnumber\s*=\s*(?P<id>[^"&\s']+)"#)
-        .expect("constant Fluid Engage access number pattern")
-});
-
-static FLUID_IMAGE_PATH_RE: LazyLock<BytesRegex> = LazyLock::new(|| {
-    BytesRegex::new(
-        r#"(?is)<imagefile\b[^>]*\bformat\s*=\s*["']?zoomify["']?[^>]*>\s*(?P<image>.*?)\s*</imagefile\s*>"#,
-    )
-    .expect("constant Fluid Engage image path pattern")
-});
-
-static IFRAME_RE: LazyLock<BytesRegex> = LazyLock::new(|| {
-    BytesRegex::new(r#"(?is)<i?frame\b[^>]*\bsrc\s*=\s*["'](?P<iframe>[^"']+)["']"#)
-        .expect("constant iframe source pattern")
+static SCRIPT_RE: LazyLock<BytesRegex> = LazyLock::new(|| {
+    BytesRegex::new(r"(?is)<script\b[^>]*>(?P<content>.*?)</script\s*>")
+        .expect("constant script block pattern")
 });
 
 static HTML_BASE_RE: LazyLock<BytesRegex> = LazyLock::new(|| {
@@ -91,87 +55,7 @@ fn is_tile_url(uri: &str) -> bool {
 }
 
 fn is_zoomify_url(uri: &str) -> bool {
-    uri.contains("/ImageProperties.xml")
-        || ngv::prefers(uri)
-        || is_tile_url(uri)
-        || is_special_zoomify_url(uri)
-}
-
-fn is_special_zoomify_url(uri: &str) -> bool {
-    uri.contains("biblio.unibe.ch/web-apps/maps/zoomify.php")
-        || uri.contains("bspe-p-pub.paris.fr/MDBGED/zoomify-BFS.aspx")
-        || uri.contains("artandarchitecture.org.uk/images/zoom/")
-}
-
-fn special_image_properties(input: &str) -> Result<Request, DiscoveryError> {
-    let url = Url::parse(input)
-        .map_err(|_| DiscoveryError::Session("invalid special Zoomify URL".into()))?;
-    Ok(Request::new(format!(
-        "{}/zoomify/ImageProperties.xml",
-        url.origin().ascii_serialization()
-    )))
-}
-
-fn is_fluid_broker_url(uri: &str) -> bool {
-    uri.to_ascii_lowercase()
-        .contains("/scripts/xmlbroker.new.php")
-}
-
-fn contains_fluid_accessnumber(contents: &[u8]) -> bool {
-    ACCESSNUMBER_RE.is_match(contents)
-}
-
-fn follow_fluid_broker(
-    _: &DiscoveryContext<'_>,
-    resource: crate::core::DiscoveryResource<'_>,
-) -> Result<DiscoveryStep, DiscoveryError> {
-    let access_number = ACCESSNUMBER_RE
-        .captures(resource.bytes())
-        .and_then(|captures| capture_text(&captures, "id"))
-        .ok_or_else(|| DiscoveryError::Session("Fluid page lacks an access number".into()))?;
-    let broker =
-        format!("/scripts/XMLBroker.new.php?Lang=2&contentType=IMAGES&contentID={access_number}");
-    Ok(DiscoveryStep::Follow(Request::new(resolve_relative(
-        resource.final_uri(),
-        &broker,
-    ))))
-}
-
-fn extract_fluid_image_properties_url(
-    _: &DiscoveryContext<'_>,
-    resource: crate::core::DiscoveryResource<'_>,
-) -> Result<DiscoveryStep, DiscoveryError> {
-    let image_path = FLUID_IMAGE_PATH_RE
-        .captures(resource.bytes())
-        .and_then(|captures| capture_text(&captures, "image"))
-        .map(|path| path.trim().to_owned())
-        .filter(|path| !path.is_empty())
-        .ok_or_else(|| {
-            DiscoveryError::Session("Fluid XML does not declare a Zoomify image path".into())
-        })?;
-    let image_uri = resolve_relative(resource.final_uri(), &image_path);
-    Ok(DiscoveryStep::Follow(Request::new(append_path_component(
-        &image_uri,
-        "ImageProperties.xml",
-    ))))
-}
-
-fn contains_iframe(contents: &[u8]) -> bool {
-    IFRAME_RE.is_match(contents)
-}
-
-fn follow_iframe(
-    _: &DiscoveryContext<'_>,
-    resource: crate::core::DiscoveryResource<'_>,
-) -> Result<DiscoveryStep, DiscoveryError> {
-    let iframe = IFRAME_RE
-        .captures(resource.bytes())
-        .and_then(|captures| capture_text(&captures, "iframe"))
-        .ok_or_else(|| DiscoveryError::Session("Zoomify page lacks an iframe URL".into()))?;
-    Ok(DiscoveryStep::Follow(Request::new(resolve_relative(
-        resource.final_uri(),
-        &iframe,
-    ))))
+    uri.contains("/ImageProperties.xml") || ngv::prefers(uri) || is_tile_url(uri)
 }
 
 fn extract_image_properties_url(
@@ -203,10 +87,9 @@ mod ngv;
 
 fn contains_zoomify_declaration(contents: &[u8]) -> bool {
     SHOW_IMAGE_RE.is_match(contents)
-        || FLASH_IMAGE_PATH_RE.is_match(contents)
-        || TILE_SERVICE_RE.is_match(contents)
-        || OPENLAYERS_SOURCE_RE.is_match(contents)
-        || URL_ELEMENT_RE.is_match(contents)
+        || script_blocks(contents)
+            .iter()
+            .any(|(_, script)| TILE_SERVICE_RE.is_match(script))
 }
 
 fn append_path_component(uri: &str, component: &str) -> String {
@@ -219,35 +102,30 @@ fn extract_image_path(html: &[u8]) -> Option<String> {
     let show_image = SHOW_IMAGE_RE
         .captures_iter(html)
         .find_map(|captures| Some((captures.get(0)?.start(), capture_text(&captures, "image")?)));
-    let flash = FLASH_IMAGE_PATH_RE
-        .captures_iter(html)
-        .find_map(|captures| {
-            Some((
-                captures.get(0)?.start(),
-                capture_text(&captures, "image").or_else(|| capture_text(&captures, "bare"))?,
-            ))
-        });
-    let tile_service = TILE_SERVICE_RE
-        .captures_iter(html)
-        .filter_map(|captures| Some((captures.get(0)?.start(), capture_text(&captures, "image")?)))
-        .min_by_key(|(offset, _)| *offset);
-    if let Some((_, path)) = [show_image, flash, tile_service]
+    let tile_service = script_blocks(html).into_iter().find_map(|(start, script)| {
+        let captures = TILE_SERVICE_RE.captures(script)?;
+        let offset = start + captures.get(0)?.start();
+        Some((offset, capture_text(&captures, "image")?))
+    });
+    [show_image, tile_service]
         .into_iter()
         .flatten()
         .min_by_key(|(offset, _)| *offset)
-    {
-        return Some(path);
-    }
-    OPENLAYERS_SOURCE_RE
-        .captures(html)
-        .and_then(|captures| capture_text(&captures, "image"))
-        .or_else(|| {
-            URL_ELEMENT_RE
-                .captures(html)
-                .and_then(|captures| capture_text(&captures, "image"))
+        .map(|(_, path)| path)
+}
+
+/// Byte ranges of `<script>…</script>` contents with their document offsets.
+///
+/// Tile-service configurations are only meaningful inside script code;
+/// matching outside would pick up documentation snippets.
+fn script_blocks(html: &[u8]) -> Vec<(usize, &[u8])> {
+    SCRIPT_RE
+        .captures_iter(html)
+        .filter_map(|captures| {
+            let content = captures.name("content")?;
+            Some((content.start(), content.as_bytes()))
         })
-        .map(|path| path.trim().to_owned())
-        .filter(|path| !path.is_empty())
+        .collect()
 }
 
 fn capture_text(captures: &regex::bytes::Captures<'_>, name: &str) -> Option<String> {
@@ -466,109 +344,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_path_elements_are_supported() {
-        for page in [
-            br#"<span class="ete-openlayers-src">/zoomify</span>"#.as_slice(),
-            br"<url>/zoomify</url>",
-        ] {
-            assert_eq!(
-                discover_viewer("https://fixtures.test/viewer.html", page),
-                (
-                    "https://fixtures.test/zoomify/ImageProperties.xml".into(),
-                    "https://fixtures.test/zoomify/TileGroup0/0-0-0.jpg".into(),
-                )
-            );
-        }
-    }
-
-    #[test]
-    fn fluid_access_number_uses_the_xml_broker() {
-        let input = "https://fixtures.test/zoomify/fluid.html";
-        let mut operation = operation(input);
-        assert_eq!(
-            provide_next(&mut operation, b"var accessnumber=fixture-access-number\";"),
-            input
-        );
-        let broker = operation.missing_resources().unwrap().pop().unwrap();
-        assert_eq!(
-            broker.request.uri,
-            "https://fixtures.test/scripts/XMLBroker.new.php?Lang=2&contentType=IMAGES&contentID=fixture-access-number"
-        );
-        operation
-            .provide(ResourceResponse::new(
-                broker.id,
-                br#"<response><imagefile format="zoomify">/zoomify</imagefile></response>"#,
-            ))
-            .unwrap();
-        assert_eq!(
-            provide_next(&mut operation, XML),
-            "https://fixtures.test/zoomify/ImageProperties.xml"
-        );
-        assert_eq!(
-            first_tile(operation),
-            "https://fixtures.test/zoomify/TileGroup0/0-0-0.jpg"
-        );
-    }
-
-    #[test]
-    fn iframe_pages_follow_the_embedded_viewer() {
-        let input = "https://fixtures.test/zoomify/iframe-parent.html";
-        let mut operation = operation(input);
-        assert_eq!(
-            provide_next(
-                &mut operation,
-                br#"<iframe src="/zoomify/iframe-child.html"></iframe>"#
-            ),
-            input
-        );
-        assert_eq!(
-            provide_next(
-                &mut operation,
-                br#"<script>showImage("viewer", "/zoomify");</script>"#,
-            ),
-            "https://fixtures.test/zoomify/iframe-child.html"
-        );
-        assert_eq!(
-            provide_next(&mut operation, XML),
-            "https://fixtures.test/zoomify/ImageProperties.xml"
-        );
-        assert_eq!(
-            first_tile(operation),
-            "https://fixtures.test/zoomify/TileGroup0/0-0-0.jpg"
-        );
-    }
-
-    #[test]
-    fn known_zoomify_sites_map_to_their_image_properties() {
-        for (input, expected) in [
-            (
-                "https://biblio.unibe.ch/web-apps/maps/zoomify.php?col=ryh&pic=Ryh_7906_6",
-                "https://biblio.unibe.ch/zoomify/ImageProperties.xml",
-            ),
-            (
-                "https://bspe-p-pub.paris.fr/MDBGED/zoomify-BFS.aspx?edid=23143&edfindex=0",
-                "https://bspe-p-pub.paris.fr/zoomify/ImageProperties.xml",
-            ),
-            (
-                "https://www.artandarchitecture.org.uk/images/zoom/c462969579cd09dd4ccb690d0e43018757fa2df2.html",
-                "https://www.artandarchitecture.org.uk/zoomify/ImageProperties.xml",
-            ),
-        ] {
-            let mut operation = operation(input);
-            assert_eq!(
-                operation
-                    .missing_resources()
-                    .unwrap()
-                    .pop()
-                    .unwrap()
-                    .request
-                    .uri,
-                expected
-            );
-        }
-    }
-
-    #[test]
     fn redirected_metadata_keeps_the_requested_tile_base() {
         let mut operation = operation("https://origin.example/book/ImageProperties.xml");
         let metadata = provide_next_at(
@@ -602,8 +377,6 @@ mod tests {
     #[test]
     fn extracts_general_zoomify_declarations() {
         for (page, expected) in [
-            (r#"zoomifyImagePath=/zoomify";"#, "/zoomify"),
-            (r#"zoomifyImagePath = "/zoomify";"#, "/zoomify"),
             (r#"showImage("viewer", "/zoomify");"#, "/zoomify"),
             (r#"showImage(viewer, "/zoomify");"#, "/zoomify"),
             (
@@ -611,7 +384,7 @@ mod tests {
                 "https://example.com/proxy/IMAGE_ID/",
             ),
             (
-                r#"{"type": "zoomifytileservice", "tilesUrl": "/zoomify"}"#,
+                r#"<script>var config = {"type": "zoomifytileservice", "tilesUrl": "/zoomify"};</script>"#,
                 "/zoomify",
             ),
         ] {
@@ -620,6 +393,13 @@ mod tests {
                 Some(expected)
             );
         }
+        // Configuration snippets displayed outside scripts are ignored.
+        assert_eq!(
+            extract_image_path(
+                br#"<pre>{"type": "zoomifytileservice", "tilesUrl": "/displayed-not-executed"}</pre>"#
+            ),
+            None
+        );
     }
 
     #[test]

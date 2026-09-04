@@ -63,26 +63,13 @@ async fn get_images_from_uri(
     resolver: &NativeDiscoveryDriver,
     uri: &str,
 ) -> Result<ImageCatalog, ZoomError> {
-    let discovery_uri = discovery_uri(uri, args.page);
-    let registry = registry_for_cli(&args.dezoomer, &discovery_uri).ok_or_else(|| {
-        ZoomError::NoSuchDezoomer {
+    let registry =
+        registry_for_cli(&args.dezoomer, uri).ok_or_else(|| ZoomError::NoSuchDezoomer {
             name: args.dezoomer.clone(),
-        }
-    })?;
-    discover_images(resolver, &registry, &discovery_uri)
+        })?;
+    discover_images(resolver, &registry, uri)
         .await
         .map_err(|message| ZoomError::Dezoomer { message })
-}
-
-fn discovery_uri(uri: &str, page: Option<usize>) -> String {
-    let Some(page) = page else {
-        return uri.to_owned();
-    };
-    if !(uri.starts_with("http://") || uri.starts_with("https://")) {
-        return uri.to_owned();
-    }
-    let separator = if uri.contains('#') { '&' } else { '#' };
-    format!("{uri}{separator}dezoomify-page={page}")
 }
 
 /// Validates a user input line as a level index
@@ -1128,19 +1115,6 @@ mod tests {
         assert_eq!(parse_level_index("abc", 5), None); // Invalid number
         assert_eq!(parse_level_index("", 5), None); // Empty string
         assert_eq!(parse_level_index("2", 1), None); // Index too high
-    }
-
-    #[test]
-    fn page_selection_is_carried_without_changing_the_requested_url() {
-        assert_eq!(
-            discovery_uri("https://kbr.be/multi/scanViewer/index.html", Some(3)),
-            "https://kbr.be/multi/scanViewer/index.html#dezoomify-page=3"
-        );
-        assert_eq!(discovery_uri("local.txt", Some(3)), "local.txt");
-        assert_eq!(
-            discovery_uri("https://example.test/image#viewer", Some(3)),
-            "https://example.test/image#viewer&dezoomify-page=3"
-        );
     }
 
     #[test]

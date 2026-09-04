@@ -54,6 +54,14 @@ live_dezoomer!(
     "https://www.ngv.vic.gov.au/explore/collection/work/3867/"
 );
 live_dezoomer!(
+    zoomify_express_viewer,
+    "https://romanlaptev.github.io/codebase/js/plugins/zoomify/febr_js.html"
+);
+live_dezoomer!(
+    zoomify_tile_service,
+    "https://openseadragon.github.io/examples/tilesource-zoomify/"
+);
+live_dezoomer!(
     deep_zoom,
     "https://openseadragon.github.io/example-images/highsmith/highsmith.dzi"
 );
@@ -121,9 +129,14 @@ live_dezoomer!(
     "https://images.memorix.nl/wba/topviewjson/memorix/6eb5a89b-b76c-5039-3999-aabfd7a0c7c9"
 );
 live_dezoomer!(
+    topviewer_media_api,
+    "https://webservices.memorix.nl/mediabank/media/1216f2dc-2308-11e0-acba-74f6d356987f?apiKey=69111262-af4a-11e3-9967-3860770fff49&entities%5B0%5D=d7c76800-a22b-5f1c-e991-15b3dd0d4f2f"
+);
+live_dezoomer!(
     fsi,
     "https://fsi-site.neptunelabs.com/fsi/server?type=info&source=images%2Fsamples%2Fthumbnails%2Fzoom_default_skin.tif"
 );
+live_dezoomer!(fsi_viewer_page, "https://www.neptunelabs.com/fsi-server/");
 live_dezoomer!(
     hungaricana,
     "https://gallery.hungaricana.hu/en/SzerencsKepeslap/1168634/?img=0"
@@ -141,6 +154,10 @@ live_dezoomer!(
 live_dezoomer!(
     arcgis,
     "https://wmts.ngi.be/arcgis/rest/services/20k__%7BD67270FA-BDEC-4A9F-95D1-BEC0C75BA45E%7D__default__404000/MapServer"
+);
+live_dezoomer!(
+    arcgis_basemap_url,
+    "http://www.cartesius.be/arcgis/home/webmap/viewer.html?basemapUrl=https://wmts.ngi.be/arcgis/rest/services/20k__%7BD67270FA-BDEC-4A9F-95D1-BEC0C75BA45E%7D__default__404000/MapServer&lang=nl"
 );
 live_dezoomer!(
     lizardtech,
