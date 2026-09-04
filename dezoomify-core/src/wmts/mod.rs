@@ -76,25 +76,16 @@ fn parse_document(bytes: &[u8]) -> Result<XmlElement, DiscoveryError> {
                 append_element(&mut root, &mut stack, element)?;
             }
             Event::Text(text) => {
-                let decoded = text.decode().map_err(|error| {
-                    DiscoveryError::Session(format!("invalid WMTS text: {error}"))
-                })?;
-                let unescaped = quick_xml::escape::unescape(&decoded).map_err(|error| {
+                let unescaped = quick_xml::escape::unescape(&text).map_err(|error| {
                     DiscoveryError::Session(format!("invalid WMTS text escape: {error}"))
                 })?;
                 append_text(&mut stack, unescaped.as_ref())?;
             }
             Event::CData(text) => {
-                let decoded = text.decode().map_err(|error| {
-                    DiscoveryError::Session(format!("invalid WMTS text: {error}"))
-                })?;
-                append_text(&mut stack, decoded.as_ref())?;
+                append_text(&mut stack, &text)?;
             }
             Event::GeneralRef(reference) => {
-                let decoded = reference.decode().map_err(|error| {
-                    DiscoveryError::Session(format!("invalid WMTS reference: {error}"))
-                })?;
-                let escaped = format!("&{decoded};");
+                let escaped = format!("&{};", reference.as_ref());
                 let unescaped = quick_xml::escape::unescape(&escaped).map_err(|error| {
                     DiscoveryError::Session(format!("invalid WMTS reference: {error}"))
                 })?;
@@ -115,17 +106,14 @@ fn parse_document(bytes: &[u8]) -> Result<XmlElement, DiscoveryError> {
 }
 
 fn element_from_start(start: &BytesStart<'_>) -> Result<XmlElement, DiscoveryError> {
-    let name = String::from_utf8(start.local_name().as_ref().to_vec())
-        .map_err(|_| DiscoveryError::Session("invalid WMTS XML element name".into()))?;
+    let name = start.local_name().into_inner().to_string();
     let mut attributes = Vec::new();
     for attribute in start.attributes() {
         let attribute = attribute.map_err(|error| {
             DiscoveryError::Session(format!("invalid WMTS XML attribute: {error}"))
         })?;
-        let name = String::from_utf8(attribute.key.local_name().as_ref().to_vec())
-            .map_err(|_| DiscoveryError::Session("invalid WMTS XML attribute name".into()))?;
-        let value = attribute
-            .decode_and_unescape_value(start.decoder())
+        let name = attribute.key.local_name().into_inner().to_string();
+        let value = quick_xml::escape::unescape(&attribute.value)
             .map_err(|error| {
                 DiscoveryError::Session(format!("invalid WMTS XML attribute value: {error}"))
             })?
