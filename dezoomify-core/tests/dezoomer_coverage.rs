@@ -968,6 +968,7 @@ fn part_three_direct_protocols_generate_expected_tiles() {
         tile_urls(image.levels.last().unwrap()).last().unwrap(),
         "https://fixtures.test/xl/sample.imgi?cmd=tile&x=1&y=1&z=1"
     );
+    assert_eq!(image.title.as_deref(), Some("sample"));
 
     let image = ready_image(
         discover(
@@ -983,6 +984,7 @@ fn part_three_direct_protocols_generate_expected_tiles() {
         tile_urls(image.levels.last().unwrap()).last().unwrap(),
         "https://fixtures.test/topviewer/sample-file/13.jpg"
     );
+    assert_eq!(image.title.as_deref(), Some("sample-file"));
 
     let image = ready_image(
         discover(
@@ -998,6 +1000,7 @@ fn part_three_direct_protocols_generate_expected_tiles() {
         tile_urls(image.levels.last().unwrap())[0],
         "https://fixtures.test/fsi/server?type=image&source=image&width=512&height=512&rect=0,0,1,1"
     );
+    assert_eq!(image.title.as_deref(), Some("image"));
 
     let image = ready_image(
         discover(
@@ -1013,6 +1016,7 @@ fn part_three_direct_protocols_generate_expected_tiles() {
         tile_urls(image.levels.last().unwrap()).last().unwrap(),
         "https://fixtures.test/lizardtech/iserv/getimage?cat=North%20America%20and%20United%20States&item=NorthAmerica%2FUS1566a.sid&wid=512&hei=512&oif=jpeg&lev=0&cp=0.75,0.75"
     );
+    assert_eq!(image.title.as_deref(), Some("US1566a"));
 
     let image = ready_image(
         discover(
@@ -1028,6 +1032,7 @@ fn part_three_direct_protocols_generate_expected_tiles() {
         tile_urls(image.levels.last().unwrap())[0],
         "https://fixtures.test/image/tiler/square/fixture/0/0/0"
     );
+    assert_eq!(image.title, None);
 
     let image = ready_image(
         discover(
@@ -1043,6 +1048,7 @@ fn part_three_direct_protocols_generate_expected_tiles() {
         tile_urls(image.levels.last().unwrap())[0]
             .starts_with("https://fixtures.test/hungaricana/image/sample.ecw/")
     );
+    assert_eq!(image.title.as_deref(), Some("sample"));
 
     let image = ready_image(
         discover(
@@ -1071,6 +1077,7 @@ fn part_three_direct_protocols_generate_expected_tiles() {
     );
     let level = image.levels.last().unwrap();
     assert_eq!(level.source.image_size(), Some(Vec2d { x: 768, y: 768 }));
+    assert_eq!(image.title.as_deref(), Some("Fixture Basemap"));
     assert_eq!(
         tile_urls(level).last().unwrap(),
         "https://fixtures.test/arcgis/MapServer/tile/7/3/4?token=fixture"
@@ -1088,6 +1095,12 @@ fn xlimage_exposes_server_zoom_levels() {
         .unwrap(),
     );
     assert_eq!(image.levels.len(), 3);
+    assert!(image.levels.iter().all(|level| {
+        level
+            .title
+            .as_deref()
+            .is_some_and(|title| title.starts_with("XLimage level "))
+    }));
     assert_eq!(
         image.levels[0].source.image_size(),
         Some(Vec2d { x: 250, y: 175 })
@@ -1330,6 +1343,7 @@ fn pnav_probe_resolves_scaled_crop_grid_without_repeating_the_probe() {
         .unwrap(),
     );
     assert_eq!(image.format.as_str(), "pnav");
+    assert_eq!(image.title.as_deref(), Some("image"));
 }
 
 #[test]

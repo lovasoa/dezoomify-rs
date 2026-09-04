@@ -86,14 +86,21 @@ fn catalog(url: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
     let item = item
         .filter(|item| !item.is_empty())
         .ok_or_else(|| DiscoveryError::Session("LizardTech XML has no image item".into()))?;
+    let title = image_title(&item);
     let levels = build_levels(width, height, &origin, &catalog_name, &item)?;
     Ok(ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
         id: StableId::new("lizardtech:image"),
-        title: Some("LizardTech ImageServer".into()),
+        title,
         format: StableId::new("lizardtech"),
         levels,
         ..Default::default()
     })]))
+}
+
+fn image_title(item: &str) -> Option<String> {
+    let file = item.rsplit('/').next()?;
+    let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);
+    (!stem.is_empty()).then(|| stem.to_owned())
 }
 
 fn build_levels(

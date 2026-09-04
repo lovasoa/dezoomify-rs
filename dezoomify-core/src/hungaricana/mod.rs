@@ -212,11 +212,17 @@ fn catalog(url: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
     .map_err(|error| DiscoveryError::Session(format!("invalid Hungaricana grid: {error}")))?;
     Ok(ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
         id: StableId::new("hungaricana:image"),
-        title: Some(path.clone()),
+        title: image_title(&path),
         format: StableId::new("hungaricana"),
         levels: vec![LevelDescriptor::new(source)],
         ..Default::default()
     })]))
+}
+
+fn image_title(path: &str) -> Option<String> {
+    let file = path.rsplit('/').next()?;
+    let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);
+    (!stem.is_empty()).then(|| stem.to_owned())
 }
 
 #[derive(Debug, Deserialize)]

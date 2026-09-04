@@ -1,6 +1,7 @@
 {
   "type": "MapServer",
   "singleFusedMapCache": true,
+  "mapName": "Fixture Basemap",
   "tileInfo": {
     "rows": 256,
     "cols": 256,
