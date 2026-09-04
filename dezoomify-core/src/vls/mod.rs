@@ -10,6 +10,7 @@ use crate::core::{
     CatalogEntry, DezoomerSpec, DiscoveryError, DiscoveryMatch, Grid, ImageCatalog,
     ImageDescriptor, LevelDescriptor, Request, StableId,
 };
+use crate::web_page::page_title;
 
 static VIEW_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)/(?:thumbview|pageview|zoom)/\d+(?:[?#].*)?$")
@@ -101,7 +102,7 @@ fn catalog(url: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
     .map_err(|error| DiscoveryError::Session(format!("invalid VLS grid: {error}")))?;
     Ok(ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
         id: StableId::new("vls:image"),
-        title: None,
+        title: page_title(&page),
         format: StableId::new("vls"),
         levels: vec![LevelDescriptor::new(source)],
         ..Default::default()

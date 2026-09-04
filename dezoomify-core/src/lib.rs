@@ -40,6 +40,7 @@ pub mod zoomify;
 
 mod json_utils;
 mod template;
+mod web_page;
 
 pub use vec2d::Vec2d;
 

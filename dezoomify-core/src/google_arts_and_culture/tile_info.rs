@@ -1,12 +1,12 @@
-use std::collections::HashMap;
 use std::default::Default;
 use std::str::FromStr;
-use std::sync::LazyLock;
 
 use regex::Regex;
 use serde::Deserialize;
 
 use custom_error::custom_error;
+
+use crate::web_page::decode_html_entities;
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct TileInfo {
@@ -48,71 +48,6 @@ impl PageInfo {
             .nth(3)
             .expect("Google Arts base_url is malformed")
     }
-}
-
-fn decode_html_entities(text: &str) -> String {
-    // Create a static HashMap for common HTML entities
-    static HTML_ENTITIES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
-        let mut m = HashMap::new();
-        m.insert("amp", "&");
-        m.insert("lt", "<");
-        m.insert("gt", ">");
-        m.insert("quot", "\"");
-        m.insert("apos", "'");
-        m.insert("nbsp", "\u{00A0}");
-        m.insert("iexcl", "¡");
-        m.insert("cent", "¢");
-        m.insert("pound", "£");
-        m.insert("curren", "¤");
-        m.insert("yen", "¥");
-        m.insert("brvbar", "¦");
-        m.insert("sect", "§");
-        m.insert("uml", "¨");
-        m.insert("copy", "©");
-        m.insert("ordf", "ª");
-        m.insert("laquo", "«");
-        m.insert("not", "¬");
-        m.insert("shy", "\u{00AD}");
-        m.insert("reg", "®");
-        m.insert("macr", "¯");
-        m.insert("deg", "°");
-        m
-    });
-
-    let entity_regex = Regex::new(r"&([a-zA-Z][a-zA-Z0-9]*|#[0-9]+|#x[0-9a-fA-F]+);").unwrap();
-
-    entity_regex
-        .replace_all(text, |caps: &regex::Captures| {
-            let entity = &caps[1];
-
-            // Handle named entities
-            if let Some(&replacement) = HTML_ENTITIES.get(entity) {
-                return replacement.to_string();
-            }
-
-            // Handle numeric entities like &#123; or &#x1A;
-            if let Some(stripped) = entity.strip_prefix('#') {
-                if let Some(hex_stripped) = entity.strip_prefix("#x") {
-                    // Hexadecimal
-                    if let Ok(code) = u32::from_str_radix(hex_stripped, 16)
-                        && let Some(ch) = std::char::from_u32(code)
-                    {
-                        return ch.to_string();
-                    }
-                } else {
-                    // Decimal
-                    if let Ok(code) = stripped.parse::<u32>()
-                        && let Some(ch) = std::char::from_u32(code)
-                    {
-                        return ch.to_string();
-                    }
-                }
-            }
-
-            // If we can't decode it, return the original entity
-            format!("&{entity};")
-        })
-        .to_string()
 }
 
 fn get_name_from_gap_html(html: &str) -> String {

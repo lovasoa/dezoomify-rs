@@ -13,13 +13,11 @@ use crate::core::{
     ProbeContinuation, Request, StableId, TileId, TileRole, TileSourceError, TileSpec,
     resolve_relative,
 };
+use crate::web_page::page_title;
 
 const TILE_SIZE: u32 = 512;
 static META_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)<meta\b[^>]*>").expect("constant pnav meta tag pattern"));
-static TITLE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?is)<title\b[^>]*>([^<]*)</title>").expect("constant pnav title pattern")
-});
 static ATTRIBUTE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)([A-Za-z_:][A-Za-z0-9_.:-]*)\s*=\s*[\"']([^\"']*)[\"']"#)
         .expect("constant pnav attribute pattern")
@@ -130,29 +128,6 @@ fn complete_from_json(
             ..Default::default()
         }),
     ])))
-}
-
-fn page_title(page: &str) -> Option<String> {
-    META_RE
-        .captures_iter(page)
-        .find_map(|captures| {
-            let tag = captures.get(0)?.as_str();
-            let key = attribute(tag, "property").or_else(|| attribute(tag, "name"))?;
-            let is_title =
-                key.eq_ignore_ascii_case("og:title") || key.eq_ignore_ascii_case("twitter:title");
-            if !is_title {
-                return None;
-            }
-            let title = attribute(tag, "content")?.replace("&amp;", "&");
-            let title = title.trim();
-            (!title.is_empty()).then(|| title.to_owned())
-        })
-        .or_else(|| {
-            TITLE_RE.captures(page).and_then(|captures| {
-                let title = captures.get(1)?.as_str().trim();
-                (!title.is_empty()).then(|| title.to_owned())
-            })
-        })
 }
 
 fn json_url(image: &str) -> Result<String, DiscoveryError> {
@@ -311,25 +286,5 @@ mod tests {
                 .iter()
                 .any(|request| request.contains("w=512&h=188"))
         );
-    }
-
-    #[test]
-    fn page_title_prefers_open_graph_metadata() {
-        assert_eq!(
-            page_title(concat!(
-                "<meta property=\"og:image\" content=\"https://fixtures.test/a.jpg\">",
-                "<meta property=\"og:title\" content=\"Негатив: У фонтанов\">"
-            )),
-            Some("Негатив: У фонтанов".to_owned())
-        );
-        assert_eq!(
-            page_title("<meta name=\"twitter:title\" content=\"Fallback &amp; Co\">"),
-            Some("Fallback & Co".to_owned())
-        );
-        assert_eq!(
-            page_title("<title>Plain page title</title>"),
-            Some("Plain page title".to_owned())
-        );
-        assert_eq!(page_title("<title>   </title><meta name=\"x\">"), None);
     }
 }

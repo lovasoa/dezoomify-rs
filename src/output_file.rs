@@ -15,6 +15,15 @@ pub fn reserve_output_file(path: &Path) -> Result<(), ZoomError> {
     Ok(())
 }
 
+/// Renders an image title as the stem of an output file name.
+///
+/// Titles commonly use `": "` as a separator ("Negative: Fountain scene");
+/// the sanitizer would replace the colon by an underscore, so it is turned
+/// into a dash first to keep the file name readable.
+fn filename_from_title(title: &str) -> String {
+    sanitize(&title.replace(": ", " - "))
+}
+
 pub fn get_outname(
     outfile: Option<&Path>,
     zoom_name: Option<&str>,
@@ -41,7 +50,7 @@ pub fn get_outname(
         }
     } else {
         let base = zoom_name
-            .map(sanitize)
+            .map(filename_from_title)
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "dezoomified".into());
         let mut path = base_dir.to_path_buf();
@@ -155,6 +164,18 @@ mod tests {
             ),
             (None, Some(String::new()), None, base("dezoomified.png")),
             (None, None, None, base("dezoomified.png")),
+            (
+                None,
+                Some("Author: Title".to_string()),
+                None,
+                base("Author - Title.png"),
+            ),
+            (
+                None,
+                Some("col:on title".to_string()),
+                None,
+                base("col_on title.png"),
+            ),
             (
                 None,
                 None,

@@ -12,6 +12,7 @@ use crate::core::{
     DiscoveryResource, DiscoveryRoute, DiscoveryStep, Grid, ImageCatalog, ImageDescriptor,
     LevelDescriptor, Request, StableId, resolve_relative,
 };
+use crate::web_page::decode_html_entities;
 
 static THUMBNAIL_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
@@ -345,16 +346,6 @@ fn number(value: &Value, name: &str) -> Result<u32, DiscoveryError> {
         .and_then(|number| u32::try_from(number).ok())
         .filter(|number| *number > 0)
         .ok_or_else(|| DiscoveryError::Session(format!("TopViewer metadata has invalid {name}")))
-}
-
-fn decode_html_entities(value: &str) -> String {
-    value
-        .replace("&amp;", "&")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&apos;", "'")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
 }
 
 fn decode_javascript_string(value: &str) -> String {
