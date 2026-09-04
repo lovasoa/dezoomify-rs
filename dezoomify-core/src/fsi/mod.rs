@@ -58,7 +58,8 @@ fn follow_page_server(
     _: &DiscoveryContext<'_>,
     resource: DiscoveryResource<'_>,
 ) -> Result<DiscoveryStep, DiscoveryError> {
-    let page = resource.text_lossy();
+    // Server URLs are embedded in HTML, where query separators are escaped.
+    let page = resource.text_lossy().replace("&amp;", "&");
     let server = SERVER_RE
         .captures_iter(&page)
         .find_map(|captures| {

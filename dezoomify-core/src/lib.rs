@@ -29,7 +29,6 @@ pub mod iiif;
 pub mod iipimage;
 pub mod krpano;
 pub mod lizardtech;
-pub mod nypl;
 pub mod pnav;
 pub mod topviewer;
 pub mod vec2d;
