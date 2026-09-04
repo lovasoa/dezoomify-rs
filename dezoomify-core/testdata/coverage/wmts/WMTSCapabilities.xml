@@ -1,0 +1,26 @@
+<Capabilities xmlns="http://www.opengis.net/wmts/1.0" xmlns:ows="http://www.opengis.net/ows/1.1">
+  <Contents>
+    <Layer>
+      <ows:Identifier>fixture</ows:Identifier>
+      <ows:BoundingBox crs="urn:ogc:def:crs:EPSG::3857">
+        <ows:LowerCorner>0 0</ows:LowerCorner>
+        <ows:UpperCorner>512 512</ows:UpperCorner>
+      </ows:BoundingBox>
+      <Style isDefault="true"><ows:Identifier>default</ows:Identifier></Style>
+      <ResourceURL format="image/jpeg" resourceType="tile" template="https://fixtures.test/wmts/{TileMatrixSet}/{TileMatrix}/{TileRow}/{TileCol}.jpg" />
+    </Layer>
+    <TileMatrixSet>
+      <ows:Identifier>EPSG3857</ows:Identifier>
+      <ows:SupportedCRS>urn:ogc:def:crs:EPSG::3857</ows:SupportedCRS>
+      <TileMatrix>
+        <ows:Identifier>0</ows:Identifier>
+        <ScaleDenominator>714.2857142857143</ScaleDenominator>
+        <TopLeftCorner>0 512</TopLeftCorner>
+        <TileWidth>256</TileWidth>
+        <TileHeight>256</TileHeight>
+        <MatrixWidth>32</MatrixWidth>
+        <MatrixHeight>32</MatrixHeight>
+      </TileMatrix>
+    </TileMatrixSet>
+  </Contents>
+</Capabilities>

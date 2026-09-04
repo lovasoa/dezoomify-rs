@@ -1,0 +1,12 @@
+{
+  "media": [
+    {
+      "asset": [
+        {
+          "uuid": "fixture-media",
+          "topview": "https://fixtures.test/topviewer/data.json"
+        }
+      ]
+    }
+  ]
+}

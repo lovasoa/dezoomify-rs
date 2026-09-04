@@ -79,6 +79,8 @@ pub enum ProcessingRecipe {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum TileRole {
     Output,
+    /// A probe which must not be added to the output canvas.
+    Probe,
     /// A successful probe is output; a missing probe is not an output failure.
     ProbeAndOutput,
 }

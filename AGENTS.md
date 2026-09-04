@@ -1,7 +1,7 @@
 # AGENTS.md
 
 dezoomify-rs downloads zoomable images (Zoomify, IIIF, Deep Zoom, krpano,
-Google Arts & Culture, IIPImage, generic URL templates, ...)
+Google Arts & Culture, IIPImage, WMTS, ArcGIS, generic URL templates, ...)
 and reassembles them into a single image file.
 
 ## Layout
@@ -40,8 +40,9 @@ One workspace, two crates. Dependencies from app to core only.
    receive typed resources and return the next declarative action; they never
    implement acquisition states. `immediate` is reserved for URI-only formats
    such as generic URL templates.
-2. Fixed grids: implement `RectangularSource` and wrap it in
-   `KnownTilePlan::rectangular` ([`tile_plan.rs`](dezoomify-core/src/core/tile_plan.rs)).
+2. Fixed grids: construct a validated `Grid` with a `GridRequests` policy
+   ([`tile_plan.rs`](dezoomify-core/src/core/tile_plan.rs)). Probe-driven
+   sources use `AdaptiveProgram` and `AdaptiveSource` instead.
 3. Keep the dezoomer's name and URL hints in that co-located `DezoomerSpec`,
    then list the const in `BUILTINS`
    ([`dezoomify-core/src/core/registry.rs`](dezoomify-core/src/core/registry.rs)).

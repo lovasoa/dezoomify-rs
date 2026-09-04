@@ -2,8 +2,8 @@
 
 use super::discovery::{DezoomerSpec, DiscoveryLimits, DiscoveryOperation};
 use crate::{
-    bulk_text, custom_yaml, dzi, generic, google_arts_and_culture, iiif, iipimage, krpano, nypl,
-    zoomify,
+    arcgis, bulk_text, custom_yaml, dzi, fsi, generic, google_arts_and_culture, hungaricana, iiif,
+    iipimage, krpano, lizardtech, nypl, pnav, topviewer, vls, wmts, xlimage, zoomify,
 };
 
 /// Every built-in dezoomer, in candidate priority order.
@@ -17,6 +17,15 @@ const BUILTINS: &[DezoomerSpec] = &[
     krpano::SPEC,
     iipimage::SPEC,
     nypl::SPEC,
+    xlimage::SPEC,
+    topviewer::SPEC,
+    fsi::SPEC,
+    lizardtech::SPEC,
+    vls::SPEC,
+    hungaricana::SPEC,
+    wmts::SPEC,
+    arcgis::SPEC,
+    pnav::SPEC,
     bulk_text::SPEC,
 ];
 

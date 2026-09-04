@@ -15,7 +15,7 @@ static IMAGE_PATH: LazyLock<BytesRegex> = LazyLock::new(|| {
 });
 
 pub(super) const ROUTE: DiscoveryRoute =
-    DiscoveryMatch::ContentPredicate(contains_image_path).then(follow_image_path);
+    DiscoveryMatch::UrlPredicate(is_work_page).then(follow_image_path);
 
 pub(super) fn prefers(uri: &str) -> bool {
     is_work_page(uri)
@@ -23,10 +23,6 @@ pub(super) fn prefers(uri: &str) -> bool {
 
 pub(super) fn is_work_page(uri: &str) -> bool {
     uri.contains("ngv.vic.gov.au/explore/collection/work")
-}
-
-pub(super) fn contains_image_path(contents: &[u8]) -> bool {
-    IMAGE_PATH.is_match(contents)
 }
 
 pub(super) fn follow_image_path(

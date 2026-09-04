@@ -1,7 +1,8 @@
 //! Resolution of generic origin-anchored solid tile rectangles.
 
 use std::collections::HashMap;
-use std::sync::LazyLock;
+use std::fmt;
+use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
 
@@ -81,6 +82,52 @@ pub struct DiscoverableGrid {
     template: Template<Dimension>,
 }
 
+/// A probe-driven source whose first tile determines a regular output grid.
+///
+/// The source owns only the pure program which creates the first probe. The
+/// host supplies the decoded tile dimensions through [`ProbeContinuation`],
+/// after which the program can resolve to a normal [`Grid`].
+#[derive(Clone)]
+pub struct AdaptiveSource {
+    level: StableId,
+    program: Arc<dyn AdaptiveProgram>,
+}
+
+impl fmt::Debug for AdaptiveSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AdaptiveSource")
+            .field("level", &self.level)
+            .field("program", &self.program)
+            .finish()
+    }
+}
+
+/// A pure program which starts a probe-driven source.
+pub trait AdaptiveProgram: fmt::Debug + Send + Sync {
+    fn start(&self) -> DiscoverableStep;
+}
+
+impl AdaptiveSource {
+    #[must_use]
+    pub fn new(level: StableId, program: impl AdaptiveProgram + 'static) -> Self {
+        Self {
+            level,
+            program: Arc::new(program),
+        }
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> &StableId {
+        &self.level
+    }
+
+    #[must_use]
+    pub fn start(&self) -> DiscoverableStep {
+        self.program.start()
+    }
+}
+
 impl DiscoverableGrid {
     #[must_use]
     pub fn new(level: StableId, template: String) -> Self {
@@ -111,46 +158,72 @@ pub enum DiscoverableStep {
         previously_output: Vec<Vec2d>,
     },
     Empty,
+    Error(TileSourceError),
 }
 
 pub struct ProbeContinuation {
-    search: GenericSearch,
-    point: Vec2d,
+    next: Box<dyn FnOnce(ObservationResult) -> Result<DiscoverableStep, TileSourceError> + Send>,
 }
 
 impl ProbeContinuation {
-    pub fn submit(
+    pub fn new<F>(next: F) -> Self
+    where
+        F: FnOnce(ObservationResult) -> Result<DiscoverableStep, TileSourceError> + Send + 'static,
+    {
+        Self {
+            next: Box::new(next),
+        }
+    }
+
+    pub fn submit(self, result: ObservationResult) -> Result<DiscoverableStep, TileSourceError> {
+        (self.next)(result)
+    }
+}
+
+impl fmt::Debug for ProbeContinuation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("probe continuation")
+    }
+}
+
+impl GenericSearch {
+    fn submit(
         mut self,
+        point: Vec2d,
         result: ObservationResult,
     ) -> Result<DiscoverableStep, TileSourceError> {
+        let can_output = point == Vec2d::default() || self.tile_size.is_some();
         let success = match result {
             ObservationResult::Available { size }
                 if size.x > 0 && size.y > 0 && size != Vec2d::square(1) =>
             {
-                self.search.tile_size.get_or_insert(size);
+                self.tile_size.get_or_insert(size);
                 true
             }
             ObservationResult::Available { size } if size == Vec2d::square(1) => false,
             ObservationResult::Available { .. } => return Err(TileSourceError::InvalidDimensions),
             ObservationResult::Missing => false,
         };
-        let first = self.search.observed.is_empty();
-        self.search.observed.insert(self.point, success);
+        if success && can_output {
+            self.output_points.push(point);
+        }
+        let first = self.observed.is_empty();
+        self.observed.insert(point, success);
         if first {
-            self.search.next_point = Dichotomy2d::first();
+            self.next_point = Dichotomy2d::first();
         } else {
-            let mut next = self.search.bounds.next(success);
+            let mut next = self.bounds.next(success);
             while let Some(point) = next {
-                if let Some(previous) = self.search.observed.get(&point) {
-                    next = self.search.bounds.next(*previous);
+                if let Some(previous) = self.observed.get(&point) {
+                    next = self.bounds.next(*previous);
                 } else {
-                    self.search.next_point = point;
-                    return Ok(self.search.next_step());
+                    self.next_point = point;
+                    return Ok(self.next_step());
                 }
             }
-            return self.search.resolve();
+            return self.resolve();
         }
-        Ok(self.search.next_step())
+        Ok(self.next_step())
     }
 }
 
@@ -177,6 +250,7 @@ struct GenericSearch {
     source: DiscoverableGrid,
     bounds: Dichotomy2d,
     observed: HashMap<Vec2d, bool>,
+    output_points: Vec<Vec2d>,
     next_point: Vec2d,
     next_id: u64,
     tile_size: Option<Vec2d>,
@@ -188,30 +262,39 @@ impl GenericSearch {
             source,
             bounds: Dichotomy2d::default(),
             observed: HashMap::new(),
+            output_points: Vec::new(),
             next_point: Vec2d::default(),
             next_id: 0,
             tile_size: None,
         }
     }
 
-    fn next_step(mut self) -> DiscoverableStep {
+    fn next_step(self) -> DiscoverableStep {
         let point = self.next_point;
         let size = self.tile_size.unwrap_or_default();
+        let Some(destination) = point.checked_mul(size) else {
+            return DiscoverableStep::Error(TileSourceError::ArithmeticOverflow);
+        };
+        let id = self.next_id;
+        let template = self.source.template.clone();
+        let mut search = self;
+        search.next_id = search.next_id.saturating_add(1);
+        let role = if point == Vec2d::default() || search.tile_size.is_some() {
+            TileRole::ProbeAndOutput
+        } else {
+            TileRole::Probe
+        };
         let tile = TileSpec {
-            id: TileId::new(self.source.level.clone(), self.next_id),
-            request: Request::new(render_template(&self.source.template, point.x, point.y)),
-            destination: point * size,
+            id: TileId::new(search.source.level.clone(), id),
+            request: Request::new(render_template(&template, point.x, point.y)),
+            destination,
             expected_size: None,
             processing: super::model::ProcessingRecipe::None,
-            role: TileRole::ProbeAndOutput,
+            role,
         };
-        self.next_id += 1;
         DiscoverableStep::Probe {
             tile,
-            continuation: ProbeContinuation {
-                search: self,
-                point,
-            },
+            continuation: ProbeContinuation::new(move |result| search.submit(point, result)),
         }
     }
 
@@ -241,10 +324,11 @@ impl GenericSearch {
                 .ok_or(TileSourceError::ArithmeticOverflow)?,
         };
         let previously_output = self
-            .observed
-            .iter()
-            .filter_map(|(point, available)| available.then_some(*point * tile_size))
-            .collect();
+            .output_points
+            .into_iter()
+            .map(|point| point.checked_mul(tile_size))
+            .collect::<Option<Vec<_>>>()
+            .ok_or(TileSourceError::ArithmeticOverflow)?;
         Grid::new(
             self.source.level,
             image_size,
@@ -342,7 +426,7 @@ impl Dichotomy2d {
                     let diagonal = search.guess();
                     transition = Some(Self::Orientation(diagonal));
                     Some(Vec2d {
-                        x: diagonal + 1,
+                        x: diagonal.saturating_add(1),
                         y: diagonal,
                     })
                 },
@@ -350,7 +434,7 @@ impl Dichotomy2d {
             ),
             Self::Orientation(diagonal) => {
                 let search = Dichotomy {
-                    min: *diagonal + u32::from(success),
+                    min: diagonal.saturating_add(u32::from(success)),
                     max: None,
                 };
                 let next = search.guess();
@@ -431,6 +515,7 @@ mod tests {
                     return;
                 }
                 DiscoverableStep::Empty => panic!("origin exists"),
+                DiscoverableStep::Error(error) => panic!("unexpected adaptive error: {error}"),
             };
         }
         panic!("generic search did not resolve");
@@ -446,8 +531,34 @@ mod tests {
                 }
                 DiscoverableStep::Empty => return,
                 DiscoverableStep::Resolved { .. } => panic!("missing tiles must not resolve"),
+                DiscoverableStep::Error(error) => panic!("unexpected adaptive error: {error}"),
             };
         }
         panic!("generic search did not become empty");
+    }
+
+    #[test]
+    fn coordinate_overflow_becomes_an_adaptive_error() {
+        let DiscoverableStep::Probe { continuation, .. } =
+            DiscoverableGrid::new("level".into(), "{{X}},{{Y}}".into()).start()
+        else {
+            panic!("generic search must begin with a probe")
+        };
+        let DiscoverableStep::Probe { continuation, .. } = continuation
+            .submit(ObservationResult::Available {
+                size: Vec2d::square(u32::MAX),
+            })
+            .unwrap()
+        else {
+            panic!("generic search must continue probing")
+        };
+        assert!(matches!(
+            continuation
+                .submit(ObservationResult::Available {
+                    size: Vec2d::square(u32::MAX),
+                })
+                .unwrap(),
+            DiscoverableStep::Error(TileSourceError::ArithmeticOverflow)
+        ));
     }
 }

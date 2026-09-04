@@ -16,17 +16,26 @@
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::missing_panics_doc)]
 
+pub mod arcgis;
 pub mod bulk_text;
 pub mod core;
 pub mod custom_yaml;
 pub mod dzi;
+pub mod fsi;
 pub mod generic;
 pub mod google_arts_and_culture;
+pub mod hungaricana;
 pub mod iiif;
 pub mod iipimage;
 pub mod krpano;
+pub mod lizardtech;
 pub mod nypl;
+pub mod pnav;
+pub mod topviewer;
 pub mod vec2d;
+pub mod vls;
+pub mod wmts;
+pub mod xlimage;
 pub mod zoomify;
 
 mod json_utils;

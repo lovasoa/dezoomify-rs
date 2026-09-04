@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use image::{ColorType, ImageFormat, Rgba};
 use log::debug;
@@ -76,7 +76,7 @@ impl ZifTiffEncoder {
         } else {
             None
         };
-        if codec == Codec::Jpeg {
+        if codec == Codec::Jpeg && channels == 3 {
             color_model = ColorModel::YCbCr;
         }
         let ycbcr_subsampling = jpeg.map(|info| info.subsampling);
@@ -132,10 +132,16 @@ impl ZifTiffEncoder {
     }
 
     fn decode_or_fall_back(&mut self, tile: &EncodedTile) -> io::Result<()> {
-        if self.source_pyramid {
+        if is_zif_destination(&self.destination) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "source-pyramid TIFF requires passthrough-compatible JPEG tiles; use --largest for decoded TIFF output",
+                "zif output requires passthrough-compatible JPEG tiles; use a .tiff extension for decoded fallback output",
+            ));
+        }
+        if self.source_pyramid && self.tile_size.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "cannot switch from zif passthrough to decoded TIFF after writing tiles",
             ));
         }
         let decoded = load_tile_with_metadata(tile.position, &tile.bytes)
@@ -148,6 +154,9 @@ impl Encoder for ZifTiffEncoder {
     fn begin_level(&mut self, level: SourceLevel) -> io::Result<()> {
         self.source_pyramid = true;
         self.current_level = level.index;
+        if self.fallback.is_some() {
+            return Ok(());
+        }
         if let Some(tile_size) = level.tile_size {
             self.declared_tile_size = Some(tile_size);
         }
@@ -159,6 +168,12 @@ impl Encoder for ZifTiffEncoder {
     }
 
     fn add_tile(&mut self, tile: Tile) -> io::Result<()> {
+        if self.source_pyramid && self.fallback.is_some() && self.current_level != 0 {
+            return Ok(());
+        }
+        if let Some(fallback) = &mut self.fallback {
+            return fallback.add_tile(tile);
+        }
         if self.tile_size.is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
@@ -166,11 +181,7 @@ impl Encoder for ZifTiffEncoder {
             ));
         }
         if self.fallback.is_none() {
-            if self
-                .destination
-                .extension()
-                .is_some_and(|extension| extension == "zif")
-            {
+            if is_zif_destination(&self.destination) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "zif output requires passthrough-compatible JPEG tiles; use a .tiff extension for decoded fallback output",
@@ -190,6 +201,9 @@ impl Encoder for ZifTiffEncoder {
     }
 
     fn add_encoded_tile(&mut self, tile: EncodedTile) -> io::Result<()> {
+        if self.source_pyramid && self.fallback.is_some() && self.current_level != 0 {
+            return Ok(());
+        }
         if self.fallback.is_some() || self.force_decoded_fallback {
             return self.decode_or_fall_back(&tile);
         }
@@ -199,13 +213,13 @@ impl Encoder for ZifTiffEncoder {
         let Ok((mut color_model, channels)) = color_from_encoded_tile(&tile) else {
             return self.decode_or_fall_back(&tile);
         };
-        if codec == Codec::Jpeg {
+        if codec == Codec::Jpeg && channels == 3 {
             color_model = ColorModel::YCbCr;
         }
         let jpeg = if codec == Codec::Jpeg {
             match parse_jpeg_tile_info(&tile.bytes) {
                 Ok(jpeg) => Some(jpeg),
-                Err(err) if self.source_pyramid => return Err(err),
+                Err(err) if self.source_pyramid && self.tile_size.is_some() => return Err(err),
                 Err(_) => return self.decode_or_fall_back(&tile),
             }
         } else {
@@ -366,15 +380,19 @@ fn parse_jpeg_start_of_frame(segment: &[u8]) -> io::Result<JpegTileInfo> {
     })
 }
 
-fn decoded_fallback_destination(destination: &std::path::Path) -> PathBuf {
-    if destination
-        .extension()
-        .is_some_and(|extension| extension == "zif")
-    {
+fn decoded_fallback_destination(destination: &Path) -> PathBuf {
+    if is_zif_destination(destination) {
         destination.with_extension("tiff")
     } else {
         destination.to_owned()
     }
+}
+
+fn is_zif_destination(destination: &Path) -> bool {
+    destination
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("zif"))
 }
 
 fn codec_for_format(format: ImageFormat) -> io::Result<Codec> {
@@ -454,6 +472,39 @@ mod tests {
         let tile = image.level_tiles(0).unwrap().next().unwrap();
         let stored = reader.fetch(tile.range()).unwrap();
         assert_eq!(stored.bytes(), bytes.as_slice());
+    }
+
+    #[test]
+    fn writes_grayscale_jpeg_tiles_without_changing_their_channel_count() {
+        let mut encoded = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut encoded, 95)
+            .write_image(&vec![128; 16 * 16], 16, 16, image::ExtendedColorType::L8)
+            .unwrap();
+        let bytes = Arc::new(encoded);
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("grayscale.tiff");
+        let mut output_encoder =
+            ZifTiffEncoder::new(destination.clone(), Vec2d { x: 16, y: 16 }).unwrap();
+
+        output_encoder
+            .add_encoded_tile(EncodedTile {
+                position: Vec2d::default(),
+                bytes: Arc::clone(&bytes),
+                format: ImageFormat::Jpeg,
+                size: Vec2d { x: 16, y: 16 },
+                color_type: ColorType::L8,
+            })
+            .unwrap();
+        output_encoder.finalize().unwrap();
+
+        let mut reader = RangeReader::open(&destination).unwrap();
+        let image = reader.read_zif().unwrap();
+        assert_eq!(image.channels(), 1);
+        let tile = image.level_tiles(0).unwrap().next().unwrap();
+        assert_eq!(
+            reader.fetch(tile.range()).unwrap().bytes(),
+            bytes.as_slice()
+        );
     }
 
     #[test]

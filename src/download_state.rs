@@ -4,7 +4,9 @@ use crate::arguments::Arguments;
 use crate::encoder::tile_buffer::TileBuffer;
 use crate::errors::{TileDownloadError, ZoomError};
 use crate::max_size_in_rect;
-use crate::network::{TileDownloader, client as network_client, user_header_names};
+use crate::network::{
+    TileDownloader, client as network_client, client_cache_headers, user_header_names,
+};
 use crate::throttler::Throttler;
 use crate::tile::{EncodedTile, Tile, load_encoded_tile, load_tile_with_metadata};
 use dezoomify_core::Vec2d;
@@ -206,7 +208,7 @@ impl<'a> TileDownloadCoordinator<'a> {
                         .map_err(|error| WorkError::Download(*error))
                 }
             })
-            .buffer_unordered(self.args.parallelism);
+            .buffer_unordered(self.args.parallelism.max(1));
 
         let mut observations = Vec::new();
         while let Some(tile_result) = stream.next().await {
@@ -218,12 +220,19 @@ impl<'a> TileDownloadCoordinator<'a> {
                     if success {
                         state.set_tile_size(tile.size());
                     }
-                    (spec, success.then_some(tile), success)
+                    let keep_tile = success && spec.role != TileRole::Probe;
+                    (spec, keep_tile.then_some(tile), success)
                 }
                 Err(WorkError::Download(error)) => {
                     let spec = error.tile_spec;
                     let tile = (spec.role == TileRole::Output)
-                        .then(|| empty_tile_for(spec.destination, state.tile_size, canvas_size))
+                        .then(|| {
+                            empty_tile_for(
+                                spec.destination,
+                                spec.expected_size.or(state.tile_size),
+                                canvas_size,
+                            )
+                        })
                         .flatten();
                     (spec, tile, false)
                 }
@@ -246,6 +255,7 @@ impl<'a> TileDownloadCoordinator<'a> {
             if success {
                 match spec.role {
                     TileRole::Output => state.record_output_success(),
+                    TileRole::Probe => {}
                     TileRole::ProbeAndOutput => state.record_probe_output_success(),
                 }
             }
@@ -283,7 +293,7 @@ impl<'a> TileDownloadCoordinator<'a> {
                         .map_err(|error| WorkError::Download(*error))
                 }
             })
-            .buffer_unordered(self.args.parallelism);
+            .buffer_unordered(self.args.parallelism.max(1));
 
         let mut observations = Vec::new();
         while let Some(tile_result) = stream.next().await {
@@ -296,7 +306,8 @@ impl<'a> TileDownloadCoordinator<'a> {
                     if success {
                         state.set_tile_size(tile.size);
                     }
-                    (spec, success.then_some(tile), success)
+                    let keep_tile = success && spec.role != TileRole::Probe;
+                    (spec, keep_tile.then_some(tile), success)
                 }
                 Err(WorkError::Download(error)) => (error.tile_spec, None, false),
                 Err(WorkError::Source(error)) => {
@@ -318,6 +329,7 @@ impl<'a> TileDownloadCoordinator<'a> {
             if success {
                 match spec.role {
                     TileRole::Output => state.record_output_success(),
+                    TileRole::Probe => {}
                     TileRole::ProbeAndOutput => state.record_probe_output_success(),
                 }
             }
@@ -331,7 +343,7 @@ impl<'a> TileDownloadCoordinator<'a> {
 }
 
 fn probe_succeeded(role: TileRole, size: Vec2d) -> bool {
-    role != TileRole::ProbeAndOutput || size != Vec2d::square(1)
+    role == TileRole::Output || size != Vec2d::square(1)
 }
 
 #[derive(Debug)]
@@ -348,6 +360,7 @@ fn create_tile_downloader(args: &Arguments) -> Result<TileDownloader, ZoomError>
         retry_delay: args.retry_delay,
         tile_storage_folder: args.tile_storage_folder.clone(),
         user_header_names: user_header_names(args.headers()),
+        client_cache_headers: client_cache_headers(args),
     })
 }
 
@@ -414,6 +427,7 @@ mod tests {
     #[test]
     fn one_by_one_probe_tiles_are_missing_placeholders() {
         assert!(!probe_succeeded(TileRole::ProbeAndOutput, Vec2d::square(1)));
+        assert!(!probe_succeeded(TileRole::Probe, Vec2d::square(1)));
         assert!(probe_succeeded(TileRole::Output, Vec2d::square(1)));
         assert!(probe_succeeded(
             TileRole::ProbeAndOutput,

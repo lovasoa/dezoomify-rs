@@ -1,7 +1,6 @@
 use serde::Deserialize;
 
 use crate::Vec2d;
-use std::convert::TryInto;
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct ImageProperties {
@@ -31,6 +30,9 @@ impl ImageProperties {
 
     pub(crate) fn is_full_resolution_only(&self) -> bool {
         let tile_size = self.tile_size();
+        if tile_size.x == 0 || tile_size.y == 0 {
+            return false;
+        }
         let full_resolution_tiles = self.size().ceil_div(tile_size).area();
         if u64::from(self.num_tiles) != full_resolution_tiles {
             return false;
@@ -43,7 +45,7 @@ impl ImageProperties {
             let tiles_x = u64::from(self.width).div_ceil(u64::from(tile_size.x) * divisor);
             let tiles_y = u64::from(self.height).div_ceil(u64::from(tile_size.y) * divisor);
             pyramid_tiles += tiles_x * tiles_y;
-            divisor *= 2;
+            divisor = divisor.saturating_mul(2);
         }
         pyramid_tiles != u64::from(self.num_tiles)
     }
@@ -61,6 +63,12 @@ impl ImageProperties {
     pub fn levels_with_warnings(&self) -> (Vec<ZoomLevelInfo>, Vec<String>) {
         // Reimplementation of the algorithm of zoomify.js
         let tile_size = self.tile_size();
+        if tile_size.x == 0 || tile_size.y == 0 {
+            return (
+                Vec::new(),
+                vec!["Zoomify tile size must be greater than zero".into()],
+            );
+        }
         let mut level_divisor = 1_u64;
         let mut level_tiles = Vec::new();
         let mut tiles_before = Vec::new();
@@ -85,15 +93,18 @@ impl ImageProperties {
             });
             level_divisor *= 2;
         }
-        let computed_tile_count = tiles_before.iter().sum::<u32>();
-        if computed_tile_count != self.num_tiles {
+        let computed_tile_count = tiles_before
+            .iter()
+            .map(|&count| u64::from(count))
+            .sum::<u64>();
+        if computed_tile_count != u64::from(self.num_tiles) {
             level_tiles.clear();
             tiles_before.clear();
             let mut size = self.size();
-            let mut level_size_ratio = Vec2d { x: 2, y: 2 };
+            let mut divisor = 1_u64;
             loop {
                 let size_in_tiles = size.ceil_div(tile_size);
-                tiles_before.push(size_in_tiles.area().try_into().unwrap());
+                tiles_before.push(u32::try_from(size_in_tiles.area()).unwrap_or(u32::MAX));
                 level_tiles.push(ZoomLevelInfo {
                     size,
                     tile_size,
@@ -102,29 +113,39 @@ impl ImageProperties {
                 if size.x <= tile_size.x && size.y <= tile_size.y {
                     break;
                 }
-                size = self.size() / level_size_ratio;
-                if !size.x.is_multiple_of(2) {
-                    size.x += 1;
+                divisor = divisor.saturating_mul(2);
+                let raw_x = (u64::from(self.width) / divisor).max(1);
+                let raw_y = (u64::from(self.height) / divisor).max(1);
+                let mut next_x = u32::try_from(raw_x).unwrap_or(u32::MAX);
+                let mut next_y = u32::try_from(raw_y).unwrap_or(u32::MAX);
+                if !next_x.is_multiple_of(2) && (next_x > tile_size.x || tile_size.x > 1) {
+                    next_x = next_x.saturating_add(1);
                 }
-                if !size.y.is_multiple_of(2) {
-                    size.y += 1;
+                if !next_y.is_multiple_of(2) && (next_y > tile_size.y || tile_size.y > 1) {
+                    next_y = next_y.saturating_add(1);
                 }
-                level_size_ratio = level_size_ratio * Vec2d { x: 2, y: 2 };
+                size = Vec2d {
+                    x: next_x,
+                    y: next_y,
+                };
             }
         }
-        let computed_tile_count = tiles_before.iter().sum::<u32>();
-        if computed_tile_count != self.num_tiles && !full_resolution_only {
+        let computed_tile_count = tiles_before
+            .iter()
+            .map(|&count| u64::from(count))
+            .sum::<u64>();
+        if computed_tile_count != u64::from(self.num_tiles) && !full_resolution_only {
             warnings.push(format!(
                 "Zoomify tile count mismatch: computed {computed_tile_count}, metadata declares {}",
                 self.num_tiles
             ));
         }
         level_tiles.reverse();
-        let mut total_tiles_before = 0;
+        let mut total_tiles_before = 0_u32;
         let levels_before = level_tiles.iter_mut().zip(tiles_before.iter().rev());
         for (level, &before) in levels_before {
             level.tiles_before = total_tiles_before;
-            total_tiles_before += before;
+            total_tiles_before = total_tiles_before.saturating_add(before);
         }
         (level_tiles, warnings)
     }
@@ -260,4 +281,29 @@ fn test_levels_recount() {
         },
     ];
     assert_eq!(actual_levels, expected_levels);
+}
+
+#[test]
+fn malformed_tile_counts_do_not_overflow_level_reconstruction() {
+    let props = ImageProperties {
+        width: u32::MAX,
+        height: u32::MAX,
+        tile_size: 1,
+        num_tiles: 0,
+    };
+    let result = std::panic::catch_unwind(|| props.levels_with_warnings());
+    assert!(result.is_ok());
+}
+
+#[test]
+fn zero_tile_size_is_reported_without_dividing_by_zero() {
+    let props = ImageProperties {
+        width: 100,
+        height: 100,
+        tile_size: 0,
+        num_tiles: 0,
+    };
+    let (levels, warnings) = props.levels_with_warnings();
+    assert!(levels.is_empty());
+    assert_eq!(warnings, ["Zoomify tile size must be greater than zero"]);
 }

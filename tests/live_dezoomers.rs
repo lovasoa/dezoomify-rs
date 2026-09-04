@@ -116,3 +116,41 @@ live_dezoomer!(
     custom_yaml,
     "https://raw.githubusercontent.com/lovasoa/dezoomify-rs/master/tiles.yaml"
 );
+live_dezoomer!(
+    topviewer,
+    "https://images.memorix.nl/wba/topviewjson/memorix/6eb5a89b-b76c-5039-3999-aabfd7a0c7c9"
+);
+live_dezoomer!(
+    fsi,
+    "https://fsi-site.neptunelabs.com/fsi/server?type=info&source=images%2Fsamples%2Fthumbnails%2Fzoom_default_skin.tif"
+);
+live_dezoomer!(
+    hungaricana,
+    "https://gallery.hungaricana.hu/en/SzerencsKepeslap/1168634/?img=0"
+);
+live_dezoomer!(
+    vls,
+    "https://digital.blb-karlsruhe.de/blbhs/content/zoom/2410801",
+    "-H",
+    "Cookie: js_enabled=2"
+);
+live_dezoomer!(
+    wmts,
+    "https://server.arcgisonline.com/arcgis/rest/services/World_Imagery/MapServer/WMTS/1.0.0/WMTSCapabilities.xml"
+);
+live_dezoomer!(
+    arcgis,
+    "https://wmts.ngi.be/arcgis/rest/services/20k__%7BD67270FA-BDEC-4A9F-95D1-BEC0C75BA45E%7D__default__404000/MapServer"
+);
+live_dezoomer!(
+    lizardtech,
+    "http://cartweb.geography.ua.edu/lizardtech/iserv/calcrgn?cat=North%20America%20and%20United%20States&item=NorthAmerica/US1566a.sid&wid=500&hei=400&props=item(Name,Description),cat(Name,Description)&style=default/view.xsl&plugin=true"
+);
+live_dezoomer!(
+    xlimage,
+    "http://uffizicloud.centrica.it/7711/closer/hi-res/A1456.imgf?cmd=info"
+);
+live_dezoomer!(
+    pnav,
+    "https://collection.ethnomuseum.ru/entity/OBJECT/32945"
+);

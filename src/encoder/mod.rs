@@ -53,30 +53,36 @@ fn encoder_for_name(
     size: Vec2d,
     compression: u8,
 ) -> Result<Box<dyn Encoder>, ZoomError> {
-    let extension = destination.extension().unwrap_or_default();
+    let extension = destination
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default();
     let quality = 100u8.saturating_sub(compression);
 
-    if extension == "png" {
+    if extension.eq_ignore_ascii_case("png") {
         debug!("Using the streaming png encoder");
         Ok(Box::new(png_encoder::PngEncoder::new(
             destination,
             size,
             compression,
         )?))
-    } else if extension == "iiif" {
+    } else if extension.eq_ignore_ascii_case("iiif") {
         debug!("Using the iiif tiling encoder");
         Ok(Box::new(iiif_encoder::IiifEncoder::new(
             destination,
             size,
             quality,
         )?))
-    } else if extension == "tiff" || extension == "tif" || extension == "zif" {
+    } else if extension.eq_ignore_ascii_case("tiff")
+        || extension.eq_ignore_ascii_case("tif")
+        || extension.eq_ignore_ascii_case("zif")
+    {
         debug!("Using the zif-tiff passthrough encoder");
         Ok(Box::new(zif_tiff_encoder::ZifTiffEncoder::new(
             destination,
             size,
         )?))
-    } else if extension == "jpeg" || extension == "jpg" {
+    } else if extension.eq_ignore_ascii_case("jpeg") || extension.eq_ignore_ascii_case("jpg") {
         debug!("Using the jpeg encoder with a quality of {quality}");
         Ok(Box::new(canvas::Canvas::<Rgb<u8>>::new_jpeg(
             destination,

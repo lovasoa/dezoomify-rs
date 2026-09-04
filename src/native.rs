@@ -33,13 +33,6 @@ pub(crate) struct NativeDiscoveryDriver {
 }
 
 impl NativeDiscoveryDriver {
-    pub(crate) fn new(http: reqwest::Client) -> Self {
-        Self {
-            http,
-            user_header_names: HashSet::new(),
-        }
-    }
-
     pub(crate) fn with_user_headers(
         http: reqwest::Client,
         user_header_names: HashSet<String>,

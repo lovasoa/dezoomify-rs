@@ -60,9 +60,18 @@ pub struct Arguments {
     #[arg(long = "image-index")]
     pub image_index: Option<usize>,
 
+    /// Select a zero-based page for multi-page `XLimage` viewers such as KBR.
+    #[arg(long)]
+    pub page: Option<usize>,
+
     /// Degree of parallelism to use. At most this number of
     /// tiles will be downloaded at the same time.
-    #[arg(short = 'n', long = "parallelism", default_value = "16")]
+    #[arg(
+        short = 'n',
+        long = "parallelism",
+        default_value = "16",
+        value_parser = parse_positive_usize
+    )]
     pub parallelism: usize,
 
     /// Number of new attempts to make when a tile load fails
@@ -157,6 +166,7 @@ impl Default for Arguments {
             max_height: None,
             zoom_level: None,
             image_index: None,
+            page: None,
             parallelism: 16,
             retries: 1,
             compression: 5,
@@ -256,6 +266,15 @@ fn parse_header(s: &str) -> Result<(String, String), &'static str> {
     }
 }
 
+fn parse_positive_usize(s: &str) -> Result<usize, &'static str> {
+    let value = s
+        .parse()
+        .map_err(|_| "parallelism must be a positive integer")?;
+    (value > 0)
+        .then_some(value)
+        .ok_or("parallelism must be a positive integer")
+}
+
 fn parse_duration(s: &str) -> Result<Duration, &'static str> {
     let err_msg = "Invalid duration. \
                         A duration is a number followed by a unit, such as '10ms' or '5s'";
@@ -313,6 +332,14 @@ fn test_parse_duration() {
 }
 
 #[test]
+fn test_parallelism_must_be_positive() {
+    assert_eq!(parse_positive_usize("1"), Ok(1));
+    assert!(parse_positive_usize("0").is_err());
+    assert!(parse_positive_usize("not-a-number").is_err());
+    assert!(Arguments::try_parse_from(["dezoomify-rs", "--parallelism", "0"]).is_err());
+}
+
+#[test]
 fn test_connect_timeout_option() {
     let args = Arguments::parse_from([
         "dezoomify-rs",
@@ -321,6 +348,12 @@ fn test_connect_timeout_option() {
         "https://example.com/info.json",
     ]);
     assert_eq!(args.connect_timeout, Duration::from_millis(123));
+}
+
+#[test]
+fn test_page_option() {
+    let args = Arguments::parse_from(["dezoomify-rs", "--page", "3", "https://example.com"]);
+    assert_eq!(args.page, Some(3));
 }
 
 #[test]

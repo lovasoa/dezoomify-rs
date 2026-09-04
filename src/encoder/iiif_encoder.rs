@@ -56,7 +56,7 @@ impl Encoder for IiifEncoder {
     fn add_tile(&mut self, tile: Tile) -> io::Result<()> {
         if let Some(level) = self.current_level {
             self.direct_tile_saver
-                .save_tile_at_scale(level.scale_factor, &tile)
+                .save_tile_at_scale(level.scale_factor, level.size, &tile)
         } else {
             self.retiler.add_tile(&tile)
         }
@@ -136,13 +136,26 @@ struct IIIFTileSaver {
 }
 
 impl IIIFTileSaver {
-    fn save_tile_at_scale(&self, scale_factor: u32, tile: &Tile) -> io::Result<()> {
-        self.save_tile_region(
-            tile.position * scale_factor,
-            tile.size() * scale_factor,
-            tile.size(),
-            tile,
-        )
+    fn save_tile_at_scale(
+        &self,
+        scale_factor: u32,
+        image_size: Vec2d,
+        tile: &Tile,
+    ) -> io::Result<()> {
+        let scale = Vec2d::square(scale_factor);
+        let full_position = tile.position.checked_mul(scale).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "IIIF tile position overflow")
+        })?;
+        let full_extent = tile
+            .size()
+            .checked_mul(scale)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "IIIF tile size overflow"))?;
+        let full_size = full_position
+            .checked_add(full_extent)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "IIIF tile extent overflow"))?
+            .min(image_size)
+            - full_position;
+        self.save_tile_region(full_position, full_size, tile.size(), tile)
     }
 
     fn save_tile_region(
@@ -230,5 +243,38 @@ mod tests {
         assert_eq!(info["tiles"][0]["width"], 2);
         assert_eq!(info["tiles"][0]["height"], 2);
         assert_eq!(info["tiles"][0]["scaleFactors"], serde_json::json!([1, 2]));
+    }
+
+    #[test]
+    fn clips_scaled_source_tiles_to_the_full_image_size() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let destination = temp_dir.path().join("odd.iiif");
+        let full_size = Vec2d { x: 1001, y: 1001 };
+        let mut encoder = IiifEncoder::new(destination.clone(), full_size, 90).unwrap();
+
+        encoder
+            .begin_level(SourceLevel {
+                index: 0,
+                size: full_size,
+                scale_factor: 2,
+                tile_size: Some(Vec2d { x: 512, y: 512 }),
+                has_overlapping_tiles: false,
+            })
+            .unwrap();
+        encoder
+            .add_tile(Tile::empty(Vec2d::default(), Vec2d { x: 501, y: 501 }))
+            .unwrap();
+        encoder.finalize().unwrap();
+
+        assert!(
+            destination
+                .join("0,0,1001,1001/501,501/0/default.jpg")
+                .is_file()
+        );
+        assert!(
+            !destination
+                .join("0,0,1002,1002/501,501/0/default.jpg")
+                .exists()
+        );
     }
 }

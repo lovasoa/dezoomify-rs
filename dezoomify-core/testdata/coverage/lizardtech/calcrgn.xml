@@ -1,0 +1,11 @@
+<ImageServer host="fixtures.test" path="lizardtech/iserv" version="9.5.0.4547">
+  <Request command="calcrgn">
+    <Parameter name="cat">North America and United States</Parameter>
+    <Parameter name="item">NorthAmerica/US1566a.sid</Parameter>
+  </Request>
+  <Response>
+    <Catalog name="North America and United States">
+      <Image width="1024" height="1024" name="US1566a.sid" parent="NorthAmerica" numlevels="10" />
+    </Catalog>
+  </Response>
+</ImageServer>
