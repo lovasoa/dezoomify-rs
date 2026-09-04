@@ -1032,7 +1032,7 @@ fn part_three_direct_protocols_generate_expected_tiles() {
         tile_urls(image.levels.last().unwrap())[0],
         "https://fixtures.test/image/tiler/square/fixture/0/0/0"
     );
-    assert_eq!(image.title, None);
+    assert_eq!(image.title.as_deref(), Some("Fixture Volume"));
 
     let image = ready_image(
         discover(
