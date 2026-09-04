@@ -87,11 +87,16 @@ fn tile_parameters(input: &str) -> Result<String, DiscoveryError> {
 }
 
 fn catalog(url: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
-    let metadata: Metadata = serde_json::from_slice(bytes).map_err(|error| {
+    let mut metadata: Metadata = serde_json::from_slice(bytes).map_err(|error| {
         DiscoveryError::Session(format!(
             "unable to parse ArcGIS MapServer metadata: {error}"
         ))
     })?;
+    let title = metadata
+        .map_name
+        .take()
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty());
     let (tile_info, extent) = validate_metadata(metadata)?;
     let service: Arc<str> = service_url(url)?.into();
     let parameters: Arc<str> = tile_parameters(url)?.into();
@@ -103,7 +108,7 @@ fn catalog(url: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
     }
     Ok(ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
         id: StableId::new("arcgis:image"),
-        title: Some("ArcGIS MapServer".into()),
+        title,
         format: StableId::new("arcgis"),
         levels,
         ..Default::default()
@@ -272,6 +277,8 @@ struct Metadata {
     service_type: Option<String>,
     #[serde(rename = "singleFusedMapCache", default)]
     single_fused_map_cache: bool,
+    #[serde(rename = "mapName", default)]
+    map_name: Option<String>,
     #[serde(rename = "tileInfo")]
     tile_info: Option<TileInfo>,
     #[serde(rename = "fullExtent")]

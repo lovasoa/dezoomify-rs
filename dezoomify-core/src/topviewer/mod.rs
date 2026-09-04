@@ -295,13 +295,9 @@ fn catalog(url: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
         .ok_or_else(|| DiscoveryError::Session("TopViewer metadata has no usable layer".into()))?;
     let first_tile = number(layer, "starttile")?;
     let columns = number(layer, "cols")?;
+    let filepath = view.get("filepath").and_then(Value::as_str);
     let template = resolve_template(url, config)
-        .replace(
-            "{file}",
-            view.get("filepath")
-                .and_then(Value::as_str)
-                .unwrap_or("image"),
-        )
+        .replace("{file}", filepath.unwrap_or("image"))
         .replace("{extension}", "jpg");
     let template: Arc<str> = template.into();
     let source = Grid::with_requests(
@@ -322,11 +318,16 @@ fn catalog(url: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
     .map_err(|error| DiscoveryError::Session(format!("invalid TopViewer grid: {error}")))?;
     Ok(ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
         id: StableId::new("topviewer:image"),
-        title: Some(url.to_owned()),
+        title: filepath.and_then(image_title),
         format: StableId::new("topviewer"),
         levels: vec![LevelDescriptor::new(source)],
         ..Default::default()
     })]))
+}
+
+fn image_title(filepath: &str) -> Option<String> {
+    let file = filepath.rsplit(['/', '\\']).next()?;
+    (!file.is_empty()).then(|| file.to_owned())
 }
 
 fn resolve_template(base: &str, template: &str) -> String {

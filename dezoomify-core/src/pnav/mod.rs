@@ -105,6 +105,7 @@ fn complete_from_json(
         .ok_or_else(|| {
             DiscoveryError::Session("pnav page is missing from discovery history".into())
         })?;
+    let title = image_title(&image);
     let source = AdaptiveSource::new(
         StableId::new("pnav:level"),
         PnavProgram {
@@ -116,12 +117,23 @@ fn complete_from_json(
     Ok(DiscoveryStep::Complete(ImageCatalog::new([
         CatalogEntry::Ready(ImageDescriptor {
             id: StableId::new("pnav:image"),
-            title: Some("pnav image".into()),
+            title,
             format: StableId::new("pnav"),
             levels: vec![LevelDescriptor::new(source)],
             ..Default::default()
         }),
     ])))
+}
+
+fn image_title(image_url: &str) -> Option<String> {
+    let file = image_url.rsplit('/').next()?;
+    let stem = file
+        .rsplit_once('.')
+        .filter(|(_, extension)| {
+            extension.eq_ignore_ascii_case("jpg") || extension.eq_ignore_ascii_case("jpeg")
+        })
+        .map_or(file, |(stem, _)| stem);
+    (!stem.is_empty()).then(|| stem.to_owned())
 }
 
 fn json_url(image: &str) -> Result<String, DiscoveryError> {
@@ -280,5 +292,18 @@ mod tests {
                 .iter()
                 .any(|request| request.contains("w=512&h=188"))
         );
+    }
+
+    #[test]
+    fn image_title_is_the_og_image_file_stem() {
+        assert_eq!(
+            image_title("https://fixtures.test/fixtures/pnav/image.jpg"),
+            Some("image".to_owned())
+        );
+        assert_eq!(
+            image_title("https://fixtures.test/pictures/Artwork.JPEG"),
+            Some("Artwork".to_owned())
+        );
+        assert_eq!(image_title("https://fixtures.test/pictures/"), None);
     }
 }

@@ -138,14 +138,26 @@ fn catalog(url: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
     }
     let origin: Arc<str> = image_origin(url).into();
     let levels = build_levels(&metadata, &origin)?;
+    let title = image_title(&origin);
 
     Ok(ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
         id: StableId::new("xlimage:image"),
-        title: Some("XLimage".into()),
+        title,
         format: StableId::new("xlimage"),
         levels,
         ..Default::default()
     })]))
+}
+
+fn image_title(origin: &str) -> Option<String> {
+    origin
+        .split('?')
+        .filter(|part| part.to_ascii_lowercase().contains(".img"))
+        .filter_map(|part| part.rsplit('/').next())
+        .find_map(|file| {
+            let stem = file.split('.').next()?;
+            (!stem.is_empty()).then(|| stem.to_owned())
+        })
 }
 
 fn build_levels(
@@ -175,7 +187,13 @@ fn build_levels(
             },
         )
         .map_err(|error| DiscoveryError::Session(format!("invalid XLimage grid: {error}")))?;
-        levels.push(LevelDescriptor::new(source).with_scale_factor(Some(zoom)));
+        levels.push(
+            LevelDescriptor::new(source)
+                .with_scale_factor(Some(zoom))
+                .with_title(Some(format!(
+                    "XLimage level {zoom} ({width: >5}×{height: >5} pixels)"
+                ))),
+        );
 
         if zoom >= metadata.maxzoom {
             break;
@@ -228,5 +246,18 @@ mod tests {
                 "https://kbr.be/multi/abc_defViewer/xml.php?/multi/abc_def/004.imgi?cmd=info"
             );
         }
+    }
+
+    #[test]
+    fn image_title_is_the_img_file_stem() {
+        assert_eq!(
+            image_title("https://uffizicloud.centrica.it/7711/closer/hi-res/A1456.imgf"),
+            Some("A1456".to_owned())
+        );
+        assert_eq!(
+            image_title("https://kbr.be/multi/abc_defViewer/xml.php?/multi/abc_def/004.imgi"),
+            Some("004".to_owned())
+        );
+        assert_eq!(image_title("https://fixtures.test/xl/viewer.php"), None);
     }
 }

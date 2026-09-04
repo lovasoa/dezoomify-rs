@@ -101,7 +101,7 @@ fn catalog(url: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
     .map_err(|error| DiscoveryError::Session(format!("invalid VLS grid: {error}")))?;
     Ok(ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
         id: StableId::new("vls:image"),
-        title: Some(format!("VLS image {id}")),
+        title: None,
         format: StableId::new("vls"),
         levels: vec![LevelDescriptor::new(source)],
         ..Default::default()

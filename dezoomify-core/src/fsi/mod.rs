@@ -83,6 +83,7 @@ fn catalog(url: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
         .split_once('?')
         .map_or(url, |(origin, _)| origin)
         .to_owned();
+    let title = image_title(&source);
     let source = Grid::with_requests(
         StableId::new("fsi:level"),
         Vec2d {
@@ -114,7 +115,7 @@ fn catalog(url: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
     .map_err(|error| DiscoveryError::Session(format!("invalid FSI grid: {error}")))?;
     Ok(ImageCatalog::new([CatalogEntry::Ready(ImageDescriptor {
         id: StableId::new("fsi:image"),
-        title: Some("FSI image".into()),
+        title,
         format: StableId::new("fsi"),
         levels: vec![LevelDescriptor::new(source)],
         ..Default::default()
@@ -128,6 +129,12 @@ fn number(regex: &Regex, bytes: &[u8], name: &str) -> Result<u32, DiscoveryError
         .and_then(|value| value.as_str().parse().ok())
         .filter(|number| *number > 0)
         .ok_or_else(|| DiscoveryError::Session(format!("FSI metadata has invalid {name}")))
+}
+
+fn image_title(source: &str) -> Option<String> {
+    let file = source.rsplit('/').next()?;
+    let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);
+    (!stem.is_empty()).then(|| stem.to_owned())
 }
 
 fn ratio(numerator: u32, denominator: u32) -> f64 {
