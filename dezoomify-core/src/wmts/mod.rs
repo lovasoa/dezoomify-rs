@@ -564,10 +564,8 @@ fn build_levels(context: &WmtsContext) -> Result<Vec<LevelDescriptor>, Discovery
                 },
             )
             .map_err(|error| DiscoveryError::Session(format!("invalid WMTS grid: {error}")))?;
-            Ok(LevelDescriptor::new(source).with_title(Some(format!(
-                "WMTS matrix {} ({}x{} pixels)",
-                matrix.identifier, width, height
-            ))))
+            Ok(LevelDescriptor::new(source)
+                .with_title(Some(format!("WMTS matrix {}", matrix.identifier))))
         })
         .collect()
 }

@@ -190,9 +190,7 @@ fn build_levels(
         levels.push(
             LevelDescriptor::new(source)
                 .with_scale_factor(Some(zoom))
-                .with_title(Some(format!(
-                    "XLimage level {zoom} ({width: >5}×{height: >5} pixels)"
-                ))),
+                .with_title(Some(format!("XLimage level {zoom}"))),
         );
 
         if zoom >= metadata.maxzoom {

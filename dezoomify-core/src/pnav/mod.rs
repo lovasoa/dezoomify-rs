@@ -17,6 +17,9 @@ use crate::core::{
 const TILE_SIZE: u32 = 512;
 static META_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)<meta\b[^>]*>").expect("constant pnav meta tag pattern"));
+static TITLE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?is)<title\b[^>]*>([^<]*)</title>").expect("constant pnav title pattern")
+});
 static ATTRIBUTE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)([A-Za-z_:][A-Za-z0-9_.:-]*)\s*=\s*[\"']([^\"']*)[\"']"#)
         .expect("constant pnav attribute pattern")
@@ -98,14 +101,18 @@ fn complete_from_json(
             "pnav image dimensions must be positive".into(),
         ));
     }
-    let image = context
+    let page = context
         .resources()
         .rev()
-        .find_map(|page| extract_image_url(&page.text_lossy(), page.final_uri()))
+        .find(|page| extract_image_url(&page.text_lossy(), page.final_uri()).is_some())
         .ok_or_else(|| {
             DiscoveryError::Session("pnav page is missing from discovery history".into())
         })?;
-    let title = image_title(&image);
+    let page_text = page.text_lossy();
+    let image = extract_image_url(&page_text, page.final_uri()).ok_or_else(|| {
+        DiscoveryError::Session("pnav page is missing from discovery history".into())
+    })?;
+    let title = page_title(&page_text);
     let source = AdaptiveSource::new(
         StableId::new("pnav:level"),
         PnavProgram {
@@ -125,15 +132,27 @@ fn complete_from_json(
     ])))
 }
 
-fn image_title(image_url: &str) -> Option<String> {
-    let file = image_url.rsplit('/').next()?;
-    let stem = file
-        .rsplit_once('.')
-        .filter(|(_, extension)| {
-            extension.eq_ignore_ascii_case("jpg") || extension.eq_ignore_ascii_case("jpeg")
+fn page_title(page: &str) -> Option<String> {
+    META_RE
+        .captures_iter(page)
+        .find_map(|captures| {
+            let tag = captures.get(0)?.as_str();
+            let key = attribute(tag, "property").or_else(|| attribute(tag, "name"))?;
+            let is_title =
+                key.eq_ignore_ascii_case("og:title") || key.eq_ignore_ascii_case("twitter:title");
+            if !is_title {
+                return None;
+            }
+            let title = attribute(tag, "content")?.replace("&amp;", "&");
+            let title = title.trim();
+            (!title.is_empty()).then(|| title.to_owned())
         })
-        .map_or(file, |(stem, _)| stem);
-    (!stem.is_empty()).then(|| stem.to_owned())
+        .or_else(|| {
+            TITLE_RE.captures(page).and_then(|captures| {
+                let title = captures.get(1)?.as_str().trim();
+                (!title.is_empty()).then(|| title.to_owned())
+            })
+        })
 }
 
 fn json_url(image: &str) -> Result<String, DiscoveryError> {
@@ -295,15 +314,22 @@ mod tests {
     }
 
     #[test]
-    fn image_title_is_the_og_image_file_stem() {
+    fn page_title_prefers_open_graph_metadata() {
         assert_eq!(
-            image_title("https://fixtures.test/fixtures/pnav/image.jpg"),
-            Some("image".to_owned())
+            page_title(concat!(
+                "<meta property=\"og:image\" content=\"https://fixtures.test/a.jpg\">",
+                "<meta property=\"og:title\" content=\"Негатив: У фонтанов\">"
+            )),
+            Some("Негатив: У фонтанов".to_owned())
         );
         assert_eq!(
-            image_title("https://fixtures.test/pictures/Artwork.JPEG"),
-            Some("Artwork".to_owned())
+            page_title("<meta name=\"twitter:title\" content=\"Fallback &amp; Co\">"),
+            Some("Fallback & Co".to_owned())
         );
-        assert_eq!(image_title("https://fixtures.test/pictures/"), None);
+        assert_eq!(
+            page_title("<title>Plain page title</title>"),
+            Some("Plain page title".to_owned())
+        );
+        assert_eq!(page_title("<title>   </title><meta name=\"x\">"), None);
     }
 }

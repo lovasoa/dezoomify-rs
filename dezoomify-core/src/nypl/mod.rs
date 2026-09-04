@@ -93,10 +93,7 @@ fn catalog(uri: &str, bytes: &[u8]) -> Result<ImageCatalog, DiscoveryError> {
                 },
             )
             .map_err(|error| DiscoveryError::Session(format!("invalid NYPL grid: {error}")))?;
-            Ok(LevelDescriptor::new(source).with_title(Some(format!(
-                "NYPL level {index} ({: >5}×{: >5} pixels)",
-                size.x, size.y,
-            ))))
+            Ok(LevelDescriptor::new(source).with_title(Some(format!("NYPL level {index}"))))
         })
         .collect::<Result<Vec<_>, DiscoveryError>>()?;
     levels.sort_by_key(|level| level.source.image_size().map_or(0, Vec2d::area));
