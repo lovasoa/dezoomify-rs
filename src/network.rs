@@ -257,6 +257,7 @@ impl TileDownloader {
                 &self.client_cache_headers,
                 processing,
                 self.user_header_names.is_empty(),
+                &self.user_header_names,
             );
             for (index, path) in paths.iter().enumerate() {
                 match tokio::fs::read(path).await {
@@ -328,6 +329,7 @@ fn tile_cache_paths(
     client_headers: &[(String, String)],
     processing: &ProcessingRecipe,
     allow_legacy_cache: bool,
+    user_header_names: &HashSet<String>,
 ) -> Vec<PathBuf> {
     let mut paths = vec![tile_cache_path_with_context(
         root,
@@ -336,10 +338,18 @@ fn tile_cache_paths(
         processing,
     )];
     // Automatic page Referer headers were not part of the old cache key. Keep
-    // those legacy entries readable, but never reuse them with user or format
-    // headers that may change the response.
+    // those legacy entries readable, but never reuse them when user-supplied
+    // request headers (which may change the response) are present.
+    // Format-generated per-tile headers (e.g. the auto Referer added by
+    // tile_plan.rs) are excluded from this check: they are deterministic from
+    // the URL and were absent from the old cache key, so they must not block
+    // the legacy fallback.
+    let has_user_request_headers = request
+        .headers
+        .keys()
+        .any(|name| user_header_names.contains(&name.to_ascii_lowercase()));
     if allow_legacy_cache
-        && request.headers.is_empty()
+        && !has_user_request_headers
         && matches!(processing, ProcessingRecipe::None)
     {
         paths.push(legacy_tile_cache_path(root, request));
@@ -440,6 +450,7 @@ mod tests {
             &[],
             &ProcessingRecipe::None,
             true,
+            &HashSet::new(),
         );
         assert_eq!(
             paths[0],
@@ -470,6 +481,7 @@ mod tests {
             &cache_headers,
             &ProcessingRecipe::None,
             true,
+            &HashSet::new(),
         );
         tokio::fs::write(&paths[1], b"legacy").await.unwrap();
 
@@ -509,8 +521,55 @@ mod tests {
             )],
             &ProcessingRecipe::None,
             false,
+            &HashSet::new(),
         );
         assert_eq!(paths.len(), 1);
+    }
+
+    #[test]
+    fn format_referer_in_request_does_not_block_legacy_cache_fallback() {
+        // Format-generated per-tile Referer headers (added by tile_plan.rs) must not
+        // prevent the legacy cache fallback, because the old cache format did not include
+        // them. Only user-supplied request headers block legacy fallback.
+        let mut request = Request::new("https://example.test/tile/1/1");
+        request.headers.insert(
+            "Referer".to_owned(),
+            "https://example.test/tile/0/0".to_owned(), // auto-added by format
+        );
+        // No user headers -> legacy fallback should still be tried
+        let paths_no_user_headers = tile_cache_paths(
+            Path::new("/tmp/cache"),
+            &request,
+            &[],
+            &ProcessingRecipe::None,
+            true,
+            &HashSet::new(),
+        );
+        assert_eq!(
+            paths_no_user_headers.len(),
+            2,
+            "format-generated Referer should not block legacy cache fallback"
+        );
+        assert_eq!(
+            paths_no_user_headers[1],
+            Path::new("/tmp/cache").join("https_example.test_tile_1_1")
+        );
+
+        // User supplied Referer -> legacy fallback IS blocked
+        let user_headers = HashSet::from(["referer".to_owned()]);
+        let paths_user_referer = tile_cache_paths(
+            Path::new("/tmp/cache"),
+            &request,
+            &[],
+            &ProcessingRecipe::None,
+            true,
+            &user_headers,
+        );
+        assert_eq!(
+            paths_user_referer.len(),
+            1,
+            "user-supplied Referer must block legacy cache fallback"
+        );
     }
 
     #[test]
