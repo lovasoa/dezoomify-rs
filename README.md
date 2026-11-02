@@ -1,5 +1,5 @@
 > [!CAUTION]
-> dezoomify-rs is not maintained anymore. The new unified dezoomify v3 is entirely based on the old dezoomify-rs codebase and has its own CLI, : https://dezoomify.ophir.dev/beta/
+> dezoomify-rs is not maintained anymore. The new unified dezoomify v3 is entirely based on the old dezoomify-rs codebase and has its own CLI : https://dezoomify.ophir.dev
 
 
 # [dezoomify-rs](https://lovasoa.github.io/dezoomify-rs/)
